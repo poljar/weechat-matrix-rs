@@ -3,6 +3,7 @@ name = "weechat-matrix"
 version = "0.1.0"
 authors = ["Damir Jelić <poljar@termina.org.uk>"]
 edition = "2018"
+license = "ISC"
 
 [lib]
 name = "matrix"
