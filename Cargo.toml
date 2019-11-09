@@ -1,22 +1,23 @@
 [package]
-name = "weechat-rust-sample-plugin"
+name = "weechat-matrix"
 version = "0.1.0"
 authors = ["Damir Jelić <poljar@termina.org.uk>"]
 edition = "2018"
 
 [lib]
-name = "weechat_matrix"
+name = "matrix"
 crate-type = ["dylib"]
 
 [dependencies]
 libc = "*"
 futures-preview = "0.3.0-alpha.18"
+url = "*"
 tokio = "0.2.0-alpha.6"
+async-std = { version = "0.99.11", features = [ "unstable" ] }
+pipe-channel = "*"
 
 matrix-nio = { path = "/home/poljar/werk/priv/nio-rust/" }
 
 weechat = { path = "/home/poljar/werk/misc/rust-weechat/weechat-rs" }
 weechat-sys = { path = "/home/poljar/werk/misc/rust-weechat/weechat-sys" }
-async-std = { version = "0.99.11", features = [ "unstable" ] }
 async-task = { path = "/home/poljar/werk/misc/async-task" }
-pipe-channel = "*"
