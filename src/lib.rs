@@ -135,41 +135,48 @@ async fn sync_loop(mut client: AsyncClient, channel: AsyncSender<Result<ThreadMe
             return;
         },
     }
-
-    let sync_settings = SyncSettings::new().timeout(30000).unwrap();
-    let response = client.sync(sync_settings).await;
-
-    match response {
-        Ok(r) => {
-            for (room_id, room) in r.rooms.join {
-                for event in room.state.events {
-                    let event = match event.into_result() {
-                        Ok(e) => e,
-                        Err(e) => continue,
-                    };
-                    channel.send(Ok((ThreadMessage::SyncState(room_id.to_string(), event)))).await;
-                }
-
-                for event in room.timeline.events {
-                    let event = match event.into_result() {
-                        Ok(e) => e,
-                        Err(e) => continue,
-                    };
-                    channel.send(Ok((ThreadMessage::SyncEvent(room_id.to_string(), event)))).await;
-                }
-            }
-        },
-        Err(e) => {
-            let err = format!("{:?}", e.to_string());
-            channel.send(Err(err)).await;
-            ()
-        }
-    }
+    let mut sync_token = None;
 
     loop {
-        async_std::task::sleep(Duration::from_secs(3)).await;
-    }
+        let sync_settings = SyncSettings::new().timeout(30000).unwrap();
+        let sync_settings = if let Some(ref token) = sync_token {
+            sync_settings.token(token)
+        } else {
+            sync_settings
+        };
 
+        let response = client.sync(sync_settings).await;
+
+        match response {
+            Ok(r) => {
+                sync_token = Some(r.next_batch);
+
+                for (room_id, room) in r.rooms.join {
+                    for event in room.state.events {
+                        let event = match event.into_result() {
+                            Ok(e) => e,
+                            Err(e) => continue,
+                        };
+                        channel.send(Ok((ThreadMessage::SyncState(room_id.to_string(), event)))).await;
+                    }
+
+                    for event in room.timeline.events {
+                        let event = match event.into_result() {
+                            Ok(e) => e,
+                            Err(e) => continue,
+                        };
+                        channel.send(Ok((ThreadMessage::SyncEvent(room_id.to_string(), event)))).await;
+                    }
+                }
+            },
+            Err(e) => {
+                let err = format!("{:?}", e.to_string());
+                channel.send(Err(err)).await;
+                async_std::task::sleep(Duration::from_secs(3)).await;
+                ()
+            }
+        }
+    }
 }
 
 async fn send_loop (mut client: AsyncClient, channel: AsyncReceiver<ServerMessage>) {
