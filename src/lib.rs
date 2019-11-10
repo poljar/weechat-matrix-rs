@@ -176,7 +176,21 @@ async fn send_loop (mut client: AsyncClient, channel: AsyncReceiver<ServerMessag
     while let Some(message) = channel.recv().await {
         match message {
             ServerMessage::ShutDown => return,
-            _ => async_std::task::sleep(Duration::from_secs(3)).await,
+            ServerMessage::RoomSend(room_id, message) => {
+                let content = MessageEventContent::Text(TextMessageEventContent {
+                    body: message.to_owned(),
+                    format: None,
+                    formatted_body: None,
+                    relates_to: None,
+                });
+
+                let ret = client.room_send(&room_id, content).await;
+
+                match ret {
+                    Ok(r) => (),
+                    Err(e) => (),
+                }
+            }
         }
     }
 }
@@ -224,10 +238,11 @@ impl WeechatPlugin for Matrix {
 
         let (tx, rx) = async_channel(10);
 
-        let server = MatrixServer::new(&homeserver, tx);
-        let mut servers = HashMap::new();
-        servers.insert("localhost".to_owned(), server);
+        let server_name = "localhost";
 
+        let server = MatrixServer::new(server_name, &homeserver, tx);
+        let mut servers = HashMap::new();
+        servers.insert(server_name.to_owned(), server);
 
         runtime.spawn(async move {
             send_loop(send_client, rx).await;

@@ -4,8 +4,10 @@ use url::Url;
 use matrix_nio::Room;
 use matrix_nio::events::collections::all::{RoomEvent, StateEvent};
 use matrix_nio::events::room::member::{MemberEvent, MembershipState};
+use matrix_nio::events::room::message::{MessageEvent, MessageEventContent, TextMessageEventContent};
 
 use crate::{PLUGIN_NAME};
+use crate::{spawn_weechat, plugin};
 use weechat::{Weechat, Buffer, WeechatBuffer};
 use std::borrow::Cow;
 
@@ -17,6 +19,7 @@ pub(crate) struct RoomMember {
 }
 
 pub(crate) struct RoomBuffer {
+    server_name: String,
     homeserver: Url,
     room_id: String,
     prev_batch: Option<String>,
@@ -26,7 +29,7 @@ pub(crate) struct RoomBuffer {
 }
 
 impl RoomBuffer {
-    pub fn new(homeserver: &Url, room_id: &str, own_user_id: &str) -> Self {
+    pub fn new(server_name: &str, homeserver: &Url, room_id: &str, own_user_id: &str) -> Self {
         let weechat = unsafe { Weechat::weechat() };
 
         let buffer = weechat.buffer_new(
@@ -38,6 +41,7 @@ impl RoomBuffer {
         );
 
         RoomBuffer {
+            server_name: server_name.to_owned(),
             homeserver: homeserver.clone(),
             room_id: room_id.to_owned(),
             prev_batch: None,
@@ -52,7 +56,16 @@ impl RoomBuffer {
         weechat.buffer_search(PLUGIN_NAME, &self.room_id)
     }
 
-    pub fn input_callback(data: &mut String, buffer: Buffer, _input: Cow<str>) {
+    pub fn input_callback(room_id: &mut String, buffer: Buffer, input: Cow<str>) {
+        let room_id = room_id.clone();
+        let input = input.into_owned();
+
+        let task = async move {
+            let plugin = plugin();
+            let mut server = plugin.servers.get_mut("localhost").unwrap();
+            server.send_message(&room_id, &input).await;
+        };
+        spawn_weechat(task);
     }
 
     pub fn close_callback(data: &String, buffer: Buffer) {

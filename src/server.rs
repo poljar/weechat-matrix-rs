@@ -9,7 +9,7 @@ use crate::room_buffer::RoomBuffer;
 
 pub enum ServerMessage {
     ShutDown,
-    RoomSend,
+    RoomSend(String, String),
 }
 
 pub(crate) struct ServerConfig {
@@ -22,6 +22,7 @@ pub(crate) struct ServerUser {
 }
 
 pub(crate) struct MatrixServer {
+    server_name: String,
     connected: bool,
     homeserver: Url,
     room_buffers: HashMap<String, RoomBuffer>,
@@ -31,8 +32,9 @@ pub(crate) struct MatrixServer {
 }
 
 impl MatrixServer {
-    pub fn new(homeserver: &Url, channel: AsyncSender<ServerMessage>) -> Self {
+    pub fn new(name: &str, homeserver: &Url, channel: AsyncSender<ServerMessage>) -> Self {
         MatrixServer {
+            server_name: name.to_owned(),
             connected: false,
             homeserver: homeserver.clone(),
             room_buffers: HashMap::new(),
@@ -50,9 +52,14 @@ impl MatrixServer {
         self.server_user = Some(server_user);
     }
 
+    pub async fn send_message(&self, room_id: &str, message: &str) {
+        self.client_channel.send(ServerMessage::RoomSend(room_id.to_owned(), message.to_owned())).await;
+    }
+
     pub(crate) fn get_or_create_room(&mut self, room_id: &str) -> &mut RoomBuffer {
         if !self.room_buffers.contains_key(room_id) {
             let buffer = RoomBuffer::new(
+                    &self.server_name,
                     &self.homeserver,
                     room_id,
                     &self
