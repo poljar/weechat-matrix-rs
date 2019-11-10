@@ -96,9 +96,26 @@ impl RoomBuffer {
         self.room.receive_state_event(&event);
     }
 
+    pub fn handle_text_message(&mut self, sender: &str, timestamp: u64, content: &TextMessageEventContent) {
+        let buffer = self.get_weechat_buffer().unwrap();
+        let timestamp = timestamp / 1000;
+        let message = format!("{}\t{}", sender, content.body);
+        buffer.print_date_tags(timestamp as i64, &[], &message);
+    }
+
+    pub fn handle_room_message(&mut self, event: &MessageEvent) {
+        let sender = &event.sender;
+        let timestamp: u64 = event.origin_server_ts.into();
+        match &event.content {
+            MessageEventContent::Text(t) => self.handle_text_message(&sender.to_string(), timestamp, t),
+            _ => (),
+        }
+    }
+
     pub fn handle_room_event(&mut self, event: RoomEvent) {
         match &event {
             RoomEvent::RoomMember(e) => self.handle_membership_event(e),
+            RoomEvent::RoomMessage(m) => self.handle_room_message(m),
             event => {self.room.receive_timeline_event(event);},
         }
     }
