@@ -280,8 +280,8 @@ impl Drop for Matrix {
 weechat_plugin!(
     Matrix,
     name: "matrix",
-    author: "poljar",
-    description: "",
+    author: "Damir Jelić <poljar@termina.org.uk>",
+    description: "Matrix protocol",
     version: "0.1.0",
     license: "ISC"
 );
