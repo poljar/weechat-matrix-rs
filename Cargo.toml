@@ -10,12 +10,12 @@ name = "matrix"
 crate-type = ["dylib"]
 
 [dependencies]
-libc = "*"
-futures-preview = "0.3.0-alpha.18"
-url = "*"
+libc = "0.2.65"
+futures = "0.3.1"
+url = "2.1.0"
 tokio = "0.2.0-alpha.6"
-async-std = { version = "0.99.11", features = [ "unstable" ] }
-pipe-channel = "*"
+async-std = { version = "1.0.1", features = [ "unstable" ] }
+pipe-channel = "1.2.2"
 
 matrix-nio = { path = "/home/poljar/werk/priv/nio-rust/" }
 
