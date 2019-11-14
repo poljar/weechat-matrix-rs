@@ -14,4 +14,3 @@ install-dir:
 
 lint:
 	cargo clippy
-

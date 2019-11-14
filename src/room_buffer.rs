@@ -1,15 +1,17 @@
 use std::convert::TryInto;
 
-use url::Url;
-use matrix_nio::Room;
 use matrix_nio::events::collections::all::{RoomEvent, StateEvent};
 use matrix_nio::events::room::member::{MemberEvent, MembershipState};
-use matrix_nio::events::room::message::{MessageEvent, MessageEventContent, TextMessageEventContent};
+use matrix_nio::events::room::message::{
+    MessageEvent, MessageEventContent, TextMessageEventContent,
+};
+use matrix_nio::Room;
+use url::Url;
 
-use crate::{PLUGIN_NAME};
-use crate::{spawn_weechat, plugin};
-use weechat::{Weechat, Buffer, WeechatBuffer};
+use crate::PLUGIN_NAME;
+use crate::{plugin, spawn_weechat};
 use std::borrow::Cow;
+use weechat::{Buffer, Weechat};
 
 pub(crate) struct RoomMember {
     nick: String,
@@ -29,7 +31,12 @@ pub(crate) struct RoomBuffer {
 }
 
 impl RoomBuffer {
-    pub fn new(server_name: &str, homeserver: &Url, room_id: &str, own_user_id: &str) -> Self {
+    pub fn new(
+        server_name: &str,
+        homeserver: &Url,
+        room_id: &str,
+        own_user_id: &str,
+    ) -> Self {
         let weechat = unsafe { Weechat::weechat() };
 
         let buffer = weechat.buffer_new(
@@ -56,7 +63,11 @@ impl RoomBuffer {
         weechat.buffer_search(PLUGIN_NAME, &self.room_id)
     }
 
-    pub fn input_callback(room_id: &mut String, buffer: Buffer, input: Cow<str>) {
+    pub fn input_callback(
+        room_id: &mut String,
+        buffer: Buffer,
+        input: Cow<str>,
+    ) {
         let room_id = room_id.clone();
         let input = input.into_owned();
 
@@ -68,11 +79,9 @@ impl RoomBuffer {
         spawn_weechat(task);
     }
 
-    pub fn close_callback(data: &String, buffer: Buffer) {
-    }
+    pub fn close_callback(data: &String, buffer: Buffer) {}
 
-    pub fn handle_membership_state(&mut self, event: MembershipState) {
-    }
+    pub fn handle_membership_state(&mut self, event: MembershipState) {}
 
     pub fn handle_membership_event(&mut self, event: &MemberEvent) {
         let buffer = self.get_weechat_buffer().unwrap();
@@ -84,7 +93,12 @@ impl RoomBuffer {
             _ => return (),
         };
 
-        let message = format!("{} ({}) has {} the room", content.displayname.as_ref().unwrap_or(&"".to_string()), event.state_key, message);
+        let message = format!(
+            "{} ({}) has {} the room",
+            content.displayname.as_ref().unwrap_or(&"".to_string()),
+            event.state_key,
+            message
+        );
         let timestamp: u64 = event.origin_server_ts.into();
         let timestamp = timestamp / 1000;
 
@@ -96,7 +110,12 @@ impl RoomBuffer {
         self.room.receive_state_event(&event);
     }
 
-    pub fn handle_text_message(&mut self, sender: &str, timestamp: u64, content: &TextMessageEventContent) {
+    pub fn handle_text_message(
+        &mut self,
+        sender: &str,
+        timestamp: u64,
+        content: &TextMessageEventContent,
+    ) {
         let buffer = self.get_weechat_buffer().unwrap();
         let timestamp = timestamp / 1000;
         let message = format!("{}\t{}", sender, content.body);
@@ -107,7 +126,9 @@ impl RoomBuffer {
         let sender = &event.sender;
         let timestamp: u64 = event.origin_server_ts.into();
         match &event.content {
-            MessageEventContent::Text(t) => self.handle_text_message(&sender.to_string(), timestamp, t),
+            MessageEventContent::Text(t) => {
+                self.handle_text_message(&sender.to_string(), timestamp, t)
+            }
             _ => (),
         }
     }
@@ -116,7 +137,9 @@ impl RoomBuffer {
         match &event {
             RoomEvent::RoomMember(e) => self.handle_membership_event(e),
             RoomEvent::RoomMessage(m) => self.handle_room_message(m),
-            event => {self.room.receive_timeline_event(event);},
+            event => {
+                self.room.receive_timeline_event(event);
+            }
         }
     }
 }
