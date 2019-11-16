@@ -1,11 +1,28 @@
-use async_std::sync::Sender as AsyncSender;
+use async_std::sync::{Receiver, Sender};
 use std::collections::HashMap;
+use std::time::Duration;
 use url::Url;
 
 use matrix_nio::api::r0::session::login::Response as LoginResponse;
-use matrix_nio::events::collections::all::{RoomEvent, StateEvent};
 
+use matrix_nio::{
+    self,
+    events::{
+        collections::all::{RoomEvent, StateEvent},
+        room::message::{MessageEventContent, TextMessageEventContent},
+    },
+    AsyncClient, SyncSettings,
+};
+use weechat::Weechat;
+
+use crate::plugin;
 use crate::room_buffer::RoomBuffer;
+
+pub enum ThreadMessage {
+    LoginMessage(LoginResponse),
+    SyncState(String, StateEvent),
+    SyncEvent(String, RoomEvent),
+}
 
 pub enum ServerMessage {
     ShutDown,
@@ -27,14 +44,14 @@ pub(crate) struct MatrixServer {
     room_buffers: HashMap<String, RoomBuffer>,
     config: ServerConfig,
     server_user: Option<ServerUser>,
-    client_channel: AsyncSender<ServerMessage>,
+    client_channel: Sender<ServerMessage>,
 }
 
 impl MatrixServer {
     pub fn new(
         name: &str,
         homeserver: &Url,
-        channel: AsyncSender<ServerMessage>,
+        channel: Sender<ServerMessage>,
     ) -> Self {
         MatrixServer {
             server_name: name.to_owned(),
@@ -44,6 +61,138 @@ impl MatrixServer {
             config: ServerConfig {},
             server_user: None,
             client_channel: channel,
+        }
+    }
+
+    pub async fn sync_loop(
+        mut client: AsyncClient,
+        channel: Sender<Result<ThreadMessage, String>>,
+    ) {
+        let sender_client = client.clone();
+
+        let ret = client.login("example", "wordpass", None).await;
+
+        match ret {
+            Ok(response) => {
+                channel
+                    .send(Ok(ThreadMessage::LoginMessage(response)))
+                    .await
+            }
+            Err(e) => {
+                channel.send(Err("No logging in".to_string())).await;
+                return;
+            }
+        }
+        let mut sync_token = None;
+
+        loop {
+            let sync_settings = SyncSettings::new().timeout(30000).unwrap();
+            let sync_settings = if let Some(ref token) = sync_token {
+                sync_settings.token(token)
+            } else {
+                sync_settings
+            };
+
+            let response = client.sync(sync_settings).await;
+
+            match response {
+                Ok(r) => {
+                    sync_token = Some(r.next_batch);
+
+                    for (room_id, room) in r.rooms.join {
+                        for event in room.state.events {
+                            let event = match event.into_result() {
+                                Ok(e) => e,
+                                Err(e) => continue,
+                            };
+                            channel
+                                .send(Ok(ThreadMessage::SyncState(
+                                    room_id.to_string(),
+                                    event,
+                                )))
+                                .await;
+                        }
+
+                        for event in room.timeline.events {
+                            let event = match event.into_result() {
+                                Ok(e) => e,
+                                Err(e) => continue,
+                            };
+                            channel
+                                .send(Ok(ThreadMessage::SyncEvent(
+                                    room_id.to_string(),
+                                    event,
+                                )))
+                                .await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    let err = format!("{:?}", e.to_string());
+                    channel.send(Err(err)).await;
+                    async_std::task::sleep(Duration::from_secs(3)).await;
+                }
+            }
+        }
+    }
+
+    pub async fn sync_receiver(
+        receiver: Receiver<Result<ThreadMessage, String>>,
+    ) {
+        let weechat = unsafe { Weechat::weechat() };
+        let plugin = plugin();
+
+        let mut server = plugin.servers.get_mut("localhost").unwrap();
+
+        loop {
+            let ret = match receiver.recv().await {
+                Some(m) => m,
+                None => {
+                    weechat.print("Error receiving message");
+                    return;
+                }
+            };
+
+            match ret {
+                Ok(message) => match message {
+                    ThreadMessage::LoginMessage(r) => server.receive_login(r),
+                    ThreadMessage::SyncEvent(r, e) => {
+                        server.receive_joined_timeline_event(&r, e)
+                    }
+                    ThreadMessage::SyncState(r, e) => {
+                        server.receive_joined_state_event(&r, e)
+                    }
+                    _ => (),
+                },
+                Err(e) => weechat.print(&format!("Ruma error {}", e)),
+            };
+        }
+    }
+
+    pub async fn send_loop(
+        mut client: AsyncClient,
+        channel: Receiver<ServerMessage>,
+    ) {
+        while let Some(message) = channel.recv().await {
+            match message {
+                ServerMessage::ShutDown => return,
+                ServerMessage::RoomSend(room_id, message) => {
+                    let content =
+                        MessageEventContent::Text(TextMessageEventContent {
+                            body: message.to_owned(),
+                            format: None,
+                            formatted_body: None,
+                            relates_to: None,
+                        });
+
+                    let ret = client.room_send(&room_id, content).await;
+
+                    match ret {
+                        Ok(r) => (),
+                        Err(e) => (),
+                    }
+                }
+            }
         }
     }
 
