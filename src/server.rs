@@ -1,5 +1,6 @@
 use async_std::sync::channel as async_channel;
 use async_std::sync::{Receiver, Sender};
+use async_task::JoinHandle;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -50,6 +51,7 @@ pub struct LoginState {
 
 struct ConnectedState {
     client_channel: Sender<ServerMessage>,
+    sync_receiver: JoinHandle<(), ()>,
     homeserver: Url,
     runtime: Runtime,
 }
@@ -95,13 +97,14 @@ impl MatrixServer {
 
         let (tx, rx) = async_channel(1000);
         runtime.spawn(MatrixServer::sync_loop(client, tx));
-        spawn_weechat(MatrixServer::sync_receiver(rx));
+        let sync_receiver_handle =
+            spawn_weechat(MatrixServer::sync_receiver(rx));
 
         let (client_sender, client_receiver) = async_channel(10);
-
         runtime.spawn(MatrixServer::send_loop(send_client, client_receiver));
 
         self.connected_state = Some(ConnectedState {
+            sync_receiver: sync_receiver_handle,
             client_channel: client_sender,
             homeserver,
             runtime,
@@ -112,6 +115,7 @@ impl MatrixServer {
         let connected_state = self.connected_state.take();
         if let Some(s) = connected_state {
             s.runtime.shutdown_now();
+            s.sync_receiver.cancel();
         }
     }
 

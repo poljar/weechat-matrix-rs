@@ -1,4 +1,4 @@
-use async_task;
+use async_task::JoinHandle;
 use pipe_channel::{channel, Receiver, Sender};
 use std::collections::VecDeque;
 use std::future::Future;
@@ -33,10 +33,10 @@ static mut _FUTURE_QUEUE: Option<FutureQueue> = None;
 
 type FutureQueue = Arc<Mutex<VecDeque<Job>>>;
 
-pub fn spawn_weechat<F, T>(future: F)
+pub fn spawn_weechat<F, R>(future: F) -> JoinHandle<R, ()>
 where
-    F: Future<Output = T> + 'static,
-    T: 'static,
+    F: Future<Output = R> + 'static,
+    R: 'static,
 {
     let weechat = unsafe { Weechat::weechat() };
 
@@ -83,8 +83,9 @@ where
         weechat_notify.send(()).unwrap();
     };
 
-    let (task, _handle) = async_task::spawn(future, schedule, ());
+    let (task, handle) = async_task::spawn(future, schedule, ());
     task.schedule();
+    handle
 }
 
 pub fn cleanup_executor() {
