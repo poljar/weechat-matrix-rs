@@ -89,7 +89,7 @@ impl RoomBuffer {
         let message = match content.membership {
             MembershipState::Join => "joined",
             MembershipState::Leave => "left",
-            _ => return (),
+            _ => return,
         };
 
         let message = format!(

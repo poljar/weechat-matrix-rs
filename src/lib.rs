@@ -3,48 +3,54 @@ mod room_buffer;
 mod server;
 
 use std::collections::HashMap;
-use tokio::runtime::Runtime;
+use std::time::Duration;
 
 use weechat::{
     weechat_plugin, ArgsWeechat, Weechat, WeechatPlugin, WeechatResult,
 };
 
-use crate::executor::cleanup_executor;
+use crate::executor::{cleanup_executor, spawn_weechat};
 use crate::server::MatrixServer;
 
 const PLUGIN_NAME: &str = "matrix";
 
 struct Matrix {
-    tokio: Option<Runtime>,
     servers: HashMap<String, MatrixServer>,
+}
+
+impl Matrix {
+    fn autoconnect(&mut self) {
+        for server in self.servers.values_mut() {
+            server.connect();
+        }
+    }
 }
 
 impl WeechatPlugin for Matrix {
     fn init(weechat: &Weechat, _args: ArgsWeechat) -> WeechatResult<Self> {
-        let runtime = Runtime::new().unwrap();
-
         let server_name = "localhost";
 
         let mut server = MatrixServer::new(server_name);
         let mut servers = HashMap::new();
 
-        server.connect(&runtime);
         servers.insert(server_name.to_owned(), server);
 
-        Ok(Matrix {
-            tokio: Some(runtime),
-            servers,
-        })
+        spawn_weechat(async move {
+            async_std::task::sleep(Duration::from_secs(1)).await;
+            let matrix = plugin();
+            matrix.autoconnect();
+        });
+
+        Ok(Matrix { servers })
     }
 }
 
 impl Drop for Matrix {
     fn drop(&mut self) {
-        let runtime = self.tokio.take();
-
-        if let Some(r) = runtime {
-            r.shutdown_now();
+        for server in self.servers.values_mut() {
+            server.disconnect();
         }
+
         cleanup_executor();
     }
 }

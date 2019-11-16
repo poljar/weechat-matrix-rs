@@ -51,6 +51,7 @@ pub struct LoginState {
 struct ConnectedState {
     client_channel: Sender<ServerMessage>,
     homeserver: Url,
+    runtime: Runtime,
 }
 
 pub(crate) struct MatrixServer {
@@ -78,8 +79,9 @@ impl MatrixServer {
         &self.server_name
     }
 
-    pub fn connect(&mut self, runtime: &Runtime) {
+    pub fn connect(&mut self) {
         let homeserver = Url::parse("http://localhost:8008").unwrap();
+        let runtime = Runtime::new().unwrap();
 
         let config = AsyncClientConfig::new()
             .proxy("http://localhost:8080")
@@ -102,7 +104,15 @@ impl MatrixServer {
         self.connected_state = Some(ConnectedState {
             client_channel: client_sender,
             homeserver,
+            runtime,
         });
+    }
+
+    pub fn disconnect(&mut self) {
+        let connected_state = self.connected_state.take();
+        if let Some(s) = connected_state {
+            s.runtime.shutdown_now();
+        }
     }
 
     pub async fn sync_loop(
