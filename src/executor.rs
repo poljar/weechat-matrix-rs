@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use weechat::{FdHook, FdHookMode, Weechat};
 
-fn spawn_cb(future_queue: &FutureQueue, receiver: &mut Receiver<()>) {
+fn executor_cb(future_queue: &FutureQueue, receiver: &mut Receiver<()>) {
     receiver
         .recv()
         .expect("Executor channel has been dropped before unhooking");
@@ -15,6 +15,10 @@ fn spawn_cb(future_queue: &FutureQueue, receiver: &mut Receiver<()>) {
         .expect("Future queue has been dropped before unhooking");
 
     let task = queue.pop_front();
+
+    // Drop the lock here so we can spawn new futures from the currently running
+    // one.
+    drop(queue);
 
     if let Some(task) = task {
         task.run();
@@ -48,7 +52,7 @@ where
             let fd_hook = weechat.hook_fd(
                 receiver,
                 FdHookMode::Read,
-                spawn_cb,
+                executor_cb,
                 Some(queue),
             );
             _FUTURE_HOOK = Some(fd_hook);
