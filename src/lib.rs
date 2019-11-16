@@ -1,27 +1,22 @@
+mod executor;
 mod room_buffer;
 mod server;
 
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use url::Url;
 
-use pipe_channel::{channel, Receiver, Sender};
 use tokio::runtime::Runtime;
 
 use async_std;
 use async_std::sync::channel as async_channel;
 use async_std::sync::Receiver as AsyncReceiver;
 use async_std::sync::Sender as AsyncSender;
-use async_task;
 use std::collections::HashMap;
-use std::collections::VecDeque;
-use std::future::Future;
 
 use server::{MatrixServer, ServerMessage};
 
 use weechat::{
-    weechat_plugin, ArgsWeechat, FdHook, FdHookMode, Weechat, WeechatPlugin,
-    WeechatResult,
+    weechat_plugin, ArgsWeechat, Weechat, WeechatPlugin, WeechatResult,
 };
 
 use matrix_nio::api::r0::session::login::Response as LoginResponse;
@@ -29,12 +24,12 @@ use matrix_nio::{
     self,
     events::{
         collections::all::{RoomEvent, StateEvent},
-        room::message::{
-            MessageEvent, MessageEventContent, TextMessageEventContent,
-        },
+        room::message::{MessageEventContent, TextMessageEventContent},
     },
     AsyncClient, AsyncClientConfig, SyncSettings,
 };
+
+use crate::executor::{cleanup_executor, spawn_weechat};
 
 pub enum ThreadMessage {
     LoginMessage(LoginResponse),
@@ -47,78 +42,6 @@ const PLUGIN_NAME: &str = "matrix";
 struct Matrix {
     tokio: Option<Runtime>,
     servers: HashMap<String, MatrixServer>,
-}
-
-fn spawn_cb(future_queue: &FutureQueue, receiver: &mut Receiver<()>) {
-    receiver.recv().unwrap();
-
-    let mut queue = future_queue.lock().unwrap();
-    let task = queue.pop_front();
-
-    if let Some(task) = task {
-        task.run();
-    }
-}
-
-type Job = async_task::Task<()>;
-
-static mut _FUTURE_HOOK: Option<FdHook<FutureQueue, Receiver<()>>> = None;
-static mut _SENDER: Option<Arc<Mutex<Sender<()>>>> = None;
-static mut _FUTURE_QUEUE: Option<FutureQueue> = None;
-
-type FutureQueue = Arc<Mutex<VecDeque<Job>>>;
-
-fn spawn_weechat<F, T>(future: F)
-where
-    F: Future<Output = T> + 'static,
-    T: 'static,
-{
-    let weechat = unsafe { Weechat::weechat() };
-
-    unsafe {
-        if _FUTURE_HOOK.is_none() {
-            let (sender, receiver) = channel();
-            let sender = Arc::new(Mutex::new(sender));
-            _SENDER = Some(sender);
-            let queue = Arc::new(Mutex::new(VecDeque::new()));
-            _FUTURE_QUEUE = Some(queue.clone());
-
-            let fd_hook = weechat.hook_fd(
-                receiver,
-                FdHookMode::Read,
-                spawn_cb,
-                Some(queue),
-            );
-            _FUTURE_HOOK = Some(fd_hook);
-        }
-    }
-
-    let weechat_notify = unsafe {
-        if let Some(s) = &_SENDER {
-            s.clone()
-        } else {
-            panic!("Future queue wasn't initialized")
-        }
-    };
-
-    let queue: FutureQueue = unsafe {
-        if let Some(q) = &_FUTURE_QUEUE {
-            q.clone()
-        } else {
-            panic!("Future queue wasn't initialized")
-        }
-    };
-
-    let schedule = move |task| {
-        let mut weechat_notify = weechat_notify.lock().unwrap();
-        let mut queue = queue.lock().unwrap();
-
-        queue.push_back(task);
-        weechat_notify.send(()).unwrap();
-    };
-
-    let (task, _handle) = async_task::spawn(future, schedule, ());
-    task.schedule();
 }
 
 async fn sync_loop(
@@ -163,10 +86,10 @@ async fn sync_loop(
                             Err(e) => continue,
                         };
                         channel
-                            .send(Ok((ThreadMessage::SyncState(
+                            .send(Ok(ThreadMessage::SyncState(
                                 room_id.to_string(),
                                 event,
-                            ))))
+                            )))
                             .await;
                     }
 
@@ -176,10 +99,10 @@ async fn sync_loop(
                             Err(e) => continue,
                         };
                         channel
-                            .send(Ok((ThreadMessage::SyncEvent(
+                            .send(Ok(ThreadMessage::SyncEvent(
                                 room_id.to_string(),
                                 event,
-                            ))))
+                            )))
                             .await;
                     }
                 }
@@ -188,7 +111,6 @@ async fn sync_loop(
                 let err = format!("{:?}", e.to_string());
                 channel.send(Err(err)).await;
                 async_std::task::sleep(Duration::from_secs(3)).await;
-                ()
             }
         }
     }
@@ -301,12 +223,7 @@ impl Drop for Matrix {
         if let Some(r) = runtime {
             r.shutdown_now();
         }
-
-        unsafe {
-            _FUTURE_HOOK.take();
-            _SENDER.take();
-            _FUTURE_QUEUE.take();
-        }
+        cleanup_executor();
     }
 }
 
