@@ -1,5 +1,3 @@
-use std::convert::TryInto;
-
 use matrix_nio::events::collections::all::{RoomEvent, StateEvent};
 use matrix_nio::events::room::member::{MemberEvent, MembershipState};
 use matrix_nio::events::room::message::{
@@ -8,8 +6,9 @@ use matrix_nio::events::room::message::{
 use matrix_nio::Room;
 use url::Url;
 
+use crate::executor::spawn_weechat;
+use crate::plugin;
 use crate::PLUGIN_NAME;
-use crate::{plugin, spawn_weechat};
 use std::borrow::Cow;
 use weechat::{Buffer, Weechat};
 

@@ -1,6 +1,8 @@
+use async_std::sync::channel as async_channel;
 use async_std::sync::{Receiver, Sender};
 use std::collections::HashMap;
 use std::time::Duration;
+use tokio::runtime::Runtime;
 use url::Url;
 
 use matrix_nio::api::r0::session::login::Response as LoginResponse;
@@ -11,10 +13,12 @@ use matrix_nio::{
         collections::all::{RoomEvent, StateEvent},
         room::message::{MessageEventContent, TextMessageEventContent},
     },
-    AsyncClient, SyncSettings,
+    AsyncClient, AsyncClientConfig, SyncSettings,
 };
+
 use weechat::Weechat;
 
+use crate::executor::spawn_weechat;
 use crate::plugin;
 use crate::room_buffer::RoomBuffer;
 
@@ -24,52 +28,87 @@ pub enum ThreadMessage {
     SyncEvent(String, RoomEvent),
 }
 
+#[derive(Debug)]
+pub enum ServerError {
+    StartError(String),
+}
+
 pub enum ServerMessage {
     ShutDown,
     RoomSend(String, String),
 }
 
-pub(crate) struct ServerConfig {}
-
 #[derive(Default)]
-pub(crate) struct ServerUser {
+pub struct ServerConfig {
+    homeserver: Option<Url>,
+}
+
+pub struct LoginState {
     user_id: String,
     device_id: String,
+}
+
+struct ConnectedState {
+    client_channel: Sender<ServerMessage>,
+    homeserver: Url,
 }
 
 pub(crate) struct MatrixServer {
     server_name: String,
     connected: bool,
-    homeserver: Url,
     room_buffers: HashMap<String, RoomBuffer>,
     config: ServerConfig,
-    server_user: Option<ServerUser>,
-    client_channel: Sender<ServerMessage>,
+    login_state: Option<LoginState>,
+    connected_state: Option<ConnectedState>,
 }
 
 impl MatrixServer {
-    pub fn new(
-        name: &str,
-        homeserver: &Url,
-        channel: Sender<ServerMessage>,
-    ) -> Self {
+    pub fn new(name: &str) -> Self {
         MatrixServer {
             server_name: name.to_owned(),
             connected: false,
-            homeserver: homeserver.clone(),
             room_buffers: HashMap::new(),
-            config: ServerConfig {},
-            server_user: None,
-            client_channel: channel,
+            config: ServerConfig { homeserver: None },
+            login_state: None,
+            connected_state: None,
         }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.server_name
+    }
+
+    pub fn connect(&mut self, runtime: &Runtime) {
+        let homeserver = Url::parse("http://localhost:8008").unwrap();
+
+        let config = AsyncClientConfig::new()
+            .proxy("http://localhost:8080")
+            .unwrap()
+            .disable_ssl_verification();
+
+        let client =
+            AsyncClient::new_with_config(homeserver.clone(), None, config)
+                .unwrap();
+        let send_client = client.clone();
+
+        let (tx, rx) = async_channel(1000);
+        runtime.spawn(MatrixServer::sync_loop(client, tx));
+        spawn_weechat(MatrixServer::sync_receiver(rx));
+
+        let (client_sender, client_receiver) = async_channel(10);
+
+        runtime.spawn(MatrixServer::send_loop(send_client, client_receiver));
+
+        self.connected_state = Some(ConnectedState {
+            client_channel: client_sender,
+            homeserver,
+        });
     }
 
     pub async fn sync_loop(
         mut client: AsyncClient,
         channel: Sender<Result<ThreadMessage, String>>,
     ) {
-        let sender_client = client.clone();
-
         let ret = client.login("example", "wordpass", None).await;
 
         match ret {
@@ -83,6 +122,7 @@ impl MatrixServer {
                 return;
             }
         }
+
         let mut sync_token = None;
 
         loop {
@@ -142,7 +182,10 @@ impl MatrixServer {
         let weechat = unsafe { Weechat::weechat() };
         let plugin = plugin();
 
-        let mut server = plugin.servers.get_mut("localhost").unwrap();
+        let mut server = match plugin.servers.get_mut("localhost") {
+            Some(s) => s,
+            None => return,
+        };
 
         loop {
             let ret = match receiver.recv().await {
@@ -197,15 +240,18 @@ impl MatrixServer {
     }
 
     pub fn receive_login(&mut self, response: LoginResponse) {
-        let server_user = ServerUser {
+        let login_state = LoginState {
             user_id: response.user_id.to_string(),
             device_id: response.device_id.clone(),
         };
-        self.server_user = Some(server_user);
+        self.login_state = Some(login_state);
     }
 
     pub async fn send_message(&self, room_id: &str, message: &str) {
-        self.client_channel
+        self.connected_state
+            .as_ref()
+            .expect("Sending a message while not connected")
+            .client_channel
             .send(ServerMessage::RoomSend(
                 room_id.to_owned(),
                 message.to_owned(),
@@ -218,16 +264,19 @@ impl MatrixServer {
         room_id: &str,
     ) -> &mut RoomBuffer {
         if !self.room_buffers.contains_key(room_id) {
+            let login_state = self
+                .login_state
+                .as_ref()
+                .expect("Receiving events while not being logged in");
+            let connected_state = self
+                .connected_state
+                .as_ref()
+                .expect("Receiving events while not being connected");
             let buffer = RoomBuffer::new(
                 &self.server_name,
-                &self.homeserver,
+                &connected_state.homeserver,
                 room_id,
-                &self
-                    .server_user
-                    .as_ref()
-                    .expect("Receiving events while not being logged in")
-                    .user_id
-                    .to_string(),
+                &login_state.user_id,
             );
             self.room_buffers.insert(room_id.to_string(), buffer);
         }
