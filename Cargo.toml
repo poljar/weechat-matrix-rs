@@ -16,6 +16,7 @@ url = "2.1.0"
 tokio = "0.2.0-alpha.6"
 async-std = { version = "1.0.1", features = [ "unstable" ] }
 pipe-channel = "1.2.2"
+clap = "2.33.0"
 
 matrix-nio = { path = "/home/poljar/werk/priv/nio-rust/" }
 

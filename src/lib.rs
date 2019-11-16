@@ -1,3 +1,4 @@
+mod commands;
 mod executor;
 mod room_buffer;
 mod server;
@@ -9,6 +10,7 @@ use weechat::{
     weechat_plugin, ArgsWeechat, Weechat, WeechatPlugin, WeechatResult,
 };
 
+use crate::commands::Commands;
 use crate::executor::{cleanup_executor, spawn_weechat};
 use crate::server::MatrixServer;
 
@@ -16,6 +18,7 @@ const PLUGIN_NAME: &str = "matrix";
 
 struct Matrix {
     servers: HashMap<String, MatrixServer>,
+    commands: Commands,
 }
 
 impl Matrix {
@@ -40,8 +43,9 @@ impl WeechatPlugin for Matrix {
             let matrix = plugin();
             matrix.autoconnect();
         });
+        let commands = Commands::hook_all(weechat);
 
-        Ok(Matrix { servers })
+        Ok(Matrix { servers, commands })
     }
 }
 

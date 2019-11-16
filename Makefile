@@ -3,7 +3,7 @@ PREFIX ?= $(WEECHAT_HOME)
 
 .PHONY: install install-dir phony lint
 
-target/debug/libmatrix.so: src/lib.rs src/server.rs src/room_buffer.rs src/executor.rs
+target/debug/libmatrix.so: src/lib.rs src/server.rs src/room_buffer.rs src/executor.rs src/commands.rs
 	cargo build
 
 install: install-dir target/debug/libmatrix.so
