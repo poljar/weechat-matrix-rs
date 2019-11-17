@@ -23,6 +23,8 @@ use crate::executor::spawn_weechat;
 use crate::plugin;
 use crate::room_buffer::RoomBuffer;
 
+const DEFAULT_SYNC_TIMEOUT: i32 = 30000;
+
 pub enum ThreadMessage {
     LoginMessage(LoginResponse),
     SyncState(String, StateEvent),
@@ -140,7 +142,10 @@ impl MatrixServer {
         let mut sync_token = None;
 
         loop {
-            let sync_settings = SyncSettings::new().timeout(30000).unwrap();
+            let sync_settings = SyncSettings::new()
+                .timeout(DEFAULT_SYNC_TIMEOUT)
+                .expect("Invalid sync timeout");
+
             let sync_settings = if let Some(ref token) = sync_token {
                 sync_settings.token(token)
             } else {
