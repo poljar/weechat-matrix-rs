@@ -54,7 +54,6 @@ pub struct LoginState {
 struct ConnectedState {
     client_channel: Sender<ServerMessage>,
     sync_receiver: JoinHandle<(), ()>,
-    homeserver: Url,
     runtime: Runtime,
 }
 
@@ -63,17 +62,32 @@ pub(crate) struct MatrixServer {
     connected: bool,
     room_buffers: HashMap<String, RoomBuffer>,
     config: ServerConfig,
+    client: AsyncClient,
+    homeserver: Url,
     login_state: Option<LoginState>,
     connected_state: Option<ConnectedState>,
 }
 
 impl MatrixServer {
     pub fn new(name: &str) -> Self {
+        let homeserver = Url::parse("http://localhost:8008").unwrap();
+
+        let config = AsyncClientConfig::new()
+            .proxy("http://localhost:8080")
+            .unwrap()
+            .disable_ssl_verification();
+
+        let client =
+            AsyncClient::new_with_config(homeserver.clone(), None, config)
+                .unwrap();
+
         MatrixServer {
             server_name: name.to_owned(),
             connected: false,
             room_buffers: HashMap::new(),
             config: ServerConfig { homeserver: None },
+            client,
+            homeserver,
             login_state: None,
             connected_state: None,
         }
@@ -84,21 +98,12 @@ impl MatrixServer {
     }
 
     pub fn connect(&mut self) {
-        let homeserver = Url::parse("http://localhost:8008").unwrap();
         let runtime = Runtime::new().unwrap();
 
-        let config = AsyncClientConfig::new()
-            .proxy("http://localhost:8080")
-            .unwrap()
-            .disable_ssl_verification();
-
-        let client =
-            AsyncClient::new_with_config(homeserver.clone(), None, config)
-                .unwrap();
-        let send_client = client.clone();
+        let send_client = self.client.clone();
 
         let (tx, rx) = async_channel(1000);
-        runtime.spawn(MatrixServer::sync_loop(client, tx));
+        runtime.spawn(MatrixServer::sync_loop(self.client.clone(), tx));
         let sync_receiver_handle =
             spawn_weechat(MatrixServer::sync_receiver(rx));
 
@@ -108,7 +113,6 @@ impl MatrixServer {
         self.connected_state = Some(ConnectedState {
             sync_receiver: sync_receiver_handle,
             client_channel: client_sender,
-            homeserver,
             runtime,
         });
     }
@@ -133,13 +137,13 @@ impl MatrixServer {
                     .send(Ok(ThreadMessage::LoginMessage(response)))
                     .await
             }
-            Err(e) => {
+            Err(_e) => {
                 channel.send(Err("No logging in".to_string())).await;
                 return;
             }
         }
 
-        let mut sync_token = None;
+        let mut sync_token = client.sync_token();
 
         loop {
             let sync_settings = SyncSettings::new()
@@ -162,7 +166,7 @@ impl MatrixServer {
                         for event in room.state.events {
                             let event = match event.into_result() {
                                 Ok(e) => e,
-                                Err(e) => continue,
+                                Err(_e) => continue,
                             };
                             channel
                                 .send(Ok(ThreadMessage::SyncState(
@@ -175,7 +179,7 @@ impl MatrixServer {
                         for event in room.timeline.events {
                             let event = match event.into_result() {
                                 Ok(e) => e,
-                                Err(e) => continue,
+                                Err(_e) => continue,
                             };
                             channel
                                 .send(Ok(ThreadMessage::SyncEvent(
@@ -201,7 +205,7 @@ impl MatrixServer {
         let weechat = unsafe { Weechat::weechat() };
         let plugin = plugin();
 
-        let mut server = match plugin.servers.get_mut("localhost") {
+        let server = match plugin.servers.get_mut("localhost") {
             Some(s) => s,
             None => return,
         };
@@ -224,7 +228,6 @@ impl MatrixServer {
                     ThreadMessage::SyncState(r, e) => {
                         server.receive_joined_state_event(&r, e)
                     }
-                    _ => (),
                 },
                 Err(e) => weechat.print(&format!("Ruma error {}", e)),
             };
@@ -250,8 +253,8 @@ impl MatrixServer {
                     let ret = client.room_send(&room_id, content).await;
 
                     match ret {
-                        Ok(r) => (),
-                        Err(e) => (),
+                        Ok(_r) => (),
+                        Err(_e) => (),
                     }
                 }
             }
@@ -261,7 +264,7 @@ impl MatrixServer {
     pub fn receive_login(&mut self, response: LoginResponse) {
         let login_state = LoginState {
             user_id: response.user_id.to_string(),
-            device_id: response.device_id.clone(),
+            device_id: response.device_id,
         };
         self.login_state = Some(login_state);
     }
@@ -287,13 +290,9 @@ impl MatrixServer {
                 .login_state
                 .as_ref()
                 .expect("Receiving events while not being logged in");
-            let connected_state = self
-                .connected_state
-                .as_ref()
-                .expect("Receiving events while not being connected");
             let buffer = RoomBuffer::new(
                 &self.server_name,
-                &connected_state.homeserver,
+                &self.homeserver,
                 room_id,
                 &login_state.user_id,
             );
@@ -308,7 +307,7 @@ impl MatrixServer {
         room_id: &str,
         event: StateEvent,
     ) {
-        let mut room = self.get_or_create_room(room_id);
+        let room = self.get_or_create_room(room_id);
         room.handle_state_event(event)
     }
 
@@ -317,7 +316,7 @@ impl MatrixServer {
         room_id: &str,
         event: RoomEvent,
     ) {
-        let mut room = self.get_or_create_room(room_id);
+        let room = self.get_or_create_room(room_id);
         room.handle_room_event(event)
     }
 }
