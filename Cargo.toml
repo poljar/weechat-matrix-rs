@@ -14,12 +14,12 @@ libc = "0.2.65"
 futures = "0.3.1"
 url = "2.1.0"
 tokio = "0.2.0-alpha.6"
-async-std = { version = "1.0.1", features = [ "unstable" ] }
+async-std = { version = "1.1.0", features = [ "unstable" ] }
 pipe-channel = "1.2.2"
 clap = "2.33.0"
 
-matrix-nio = { path = "/home/poljar/werk/priv/nio-rust/" }
+matrix-nio = { git = "https://github.com/poljar/nio-rust" }
 
-weechat = { path = "/home/poljar/werk/misc/rust-weechat/weechat-rs" }
-weechat-sys = { path = "/home/poljar/werk/misc/rust-weechat/weechat-sys" }
-async-task = { path = "/home/poljar/werk/misc/async-task" }
+weechat = { git = "https://github.com/poljar/rust-weechat" }
+weechat-sys = { git = "https://github.com/poljar/rust-weechat" }
+async-task = { git = "https://github.com/poljar/async-task" }
