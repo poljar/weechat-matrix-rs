@@ -76,11 +76,17 @@ where
     };
 
     let schedule = move |task| {
-        let mut weechat_notify = weechat_notify.lock().unwrap();
-        let mut queue = queue.lock().unwrap();
+        let mut weechat_notify = weechat_notify
+            .lock()
+            .expect("Weechat notification sender lock is poisoned");
+        let mut queue = queue.lock().expect(
+            "Lock of the future queue of the Weechat executor is poisoned",
+        );
 
         queue.push_back(task);
-        weechat_notify.send(()).unwrap();
+        weechat_notify
+            .send(())
+            .expect("Can't notify Weechat to run a future");
     };
 
     let (task, handle) = async_task::spawn(future, schedule, ());
