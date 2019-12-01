@@ -22,6 +22,7 @@ use weechat::Weechat;
 use crate::executor::spawn_weechat;
 use crate::plugin;
 use crate::room_buffer::RoomBuffer;
+use crate::Config;
 
 const DEFAULT_SYNC_TIMEOUT: i32 = 30000;
 
@@ -69,7 +70,7 @@ pub(crate) struct MatrixServer {
 }
 
 impl MatrixServer {
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str, config: &Config) -> Self {
         let homeserver = Url::parse("http://localhost:8008").unwrap();
 
         let config = AsyncClientConfig::new()

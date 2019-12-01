@@ -13,10 +13,3 @@ repos:
         language: system
         types: [file, rust]
         entry: cargo fmt -- --check
-
-      - id: test
-        name: test
-        language: system
-        files: '\.rs$'
-        entry: cargo test --lib
-        pass_filenames: false

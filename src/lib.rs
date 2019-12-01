@@ -1,4 +1,5 @@
 mod commands;
+mod config;
 mod executor;
 mod room_buffer;
 mod server;
@@ -11,6 +12,7 @@ use weechat::{
 };
 
 use crate::commands::Commands;
+use crate::config::Config;
 use crate::executor::{cleanup_executor, spawn_weechat};
 use crate::server::MatrixServer;
 
@@ -19,6 +21,7 @@ const PLUGIN_NAME: &str = "matrix";
 struct Matrix {
     servers: HashMap<String, MatrixServer>,
     commands: Commands,
+    config: Config,
 }
 
 impl Matrix {
@@ -31,11 +34,12 @@ impl Matrix {
 
 impl WeechatPlugin for Matrix {
     fn init(weechat: &Weechat, _args: ArgsWeechat) -> WeechatResult<Self> {
+        let commands = Commands::hook_all(weechat);
+        let config = Config::new(weechat);
+
         let server_name = "localhost";
-
-        let mut server = MatrixServer::new(server_name);
+        let server = MatrixServer::new(server_name, &config);
         let mut servers = HashMap::new();
-
         servers.insert(server_name.to_owned(), server);
 
         spawn_weechat(async move {
@@ -43,9 +47,12 @@ impl WeechatPlugin for Matrix {
             let matrix = plugin();
             matrix.autoconnect();
         });
-        let commands = Commands::hook_all(weechat);
 
-        Ok(Matrix { servers, commands })
+        Ok(Matrix {
+            servers,
+            commands,
+            config,
+        })
     }
 }
 
