@@ -2,17 +2,20 @@ use async_std::sync::channel as async_channel;
 use async_std::sync::{Receiver, Sender};
 use async_task::JoinHandle;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use url::Url;
 
 use matrix_nio::api::r0::session::login::Response as LoginResponse;
+use matrix_nio::api::r0::sync::sync_events::IncomingResponse as SyncResponse;
 
 use matrix_nio::{
     self,
     events::{
         collections::all::{RoomEvent, StateEvent},
         room::message::{MessageEventContent, TextMessageEventContent},
+        EventResult,
     },
     AsyncClient, AsyncClientConfig, SyncSettings,
 };
@@ -102,7 +105,6 @@ impl MatrixServer {
         let runtime = Runtime::new().unwrap();
 
         let send_client = self.client.clone();
-
         let (tx, rx) = async_channel(1000);
         runtime.spawn(MatrixServer::sync_loop(self.client.clone(), tx));
         let sync_receiver_handle =
@@ -130,74 +132,62 @@ impl MatrixServer {
         mut client: AsyncClient,
         channel: Sender<Result<ThreadMessage, String>>,
     ) {
-        let ret = client.login("example", "wordpass", None).await;
+        if !client.logged_in() {
+            let ret = client.login("example", "wordpass", None).await;
 
-        match ret {
-            Ok(response) => {
-                channel
-                    .send(Ok(ThreadMessage::LoginMessage(response)))
-                    .await
-            }
-            Err(_e) => {
-                channel.send(Err("No logging in".to_string())).await;
-                return;
+            match ret {
+                Ok(response) => {
+                    channel
+                        .send(Ok(ThreadMessage::LoginMessage(response)))
+                        .await
+                }
+                Err(_e) => {
+                    channel.send(Err("No logging in".to_string())).await;
+                    return;
+                }
             }
         }
 
-        let mut sync_token = client.sync_token();
+        let sync_token = client.sync_token();
+        let sync_settings = SyncSettings::new()
+            .timeout(DEFAULT_SYNC_TIMEOUT)
+            .expect("Invalid sync timeout");
 
-        loop {
-            let sync_settings = SyncSettings::new()
-                .timeout(DEFAULT_SYNC_TIMEOUT)
-                .expect("Invalid sync timeout");
+        let sync_settings = if let Some(t) = sync_token {
+            sync_settings.token(t)
+        } else {
+            sync_settings
+        };
 
-            let sync_settings = if let Some(ref token) = sync_token {
-                sync_settings.token(token)
-            } else {
-                sync_settings
-            };
+        let sync_channel = &channel;
 
-            let response = client.sync(sync_settings).await;
-
-            match response {
-                Ok(r) => {
-                    sync_token = Some(r.next_batch);
-
-                    for (room_id, room) in r.rooms.join {
-                        for event in room.state.events {
-                            let event = match event.into_result() {
-                                Ok(e) => e,
-                                Err(_e) => continue,
-                            };
+        client
+            .sync_forever(sync_settings, async move |response| {
+                let channel = sync_channel;
+                for (room_id, room) in response.rooms.join {
+                    for event in room.state.events {
+                        if let EventResult::Ok(e) = event {
                             channel
                                 .send(Ok(ThreadMessage::SyncState(
                                     room_id.to_string(),
-                                    event,
+                                    e,
                                 )))
                                 .await;
                         }
-
-                        for event in room.timeline.events {
-                            let event = match event.into_result() {
-                                Ok(e) => e,
-                                Err(_e) => continue,
-                            };
+                    }
+                    for event in room.timeline.events {
+                        if let EventResult::Ok(e) = event {
                             channel
                                 .send(Ok(ThreadMessage::SyncEvent(
                                     room_id.to_string(),
-                                    event,
+                                    e,
                                 )))
                                 .await;
                         }
                     }
                 }
-                Err(e) => {
-                    let err = format!("{:?}", e.to_string());
-                    channel.send(Err(err)).await;
-                    async_std::task::sleep(Duration::from_secs(3)).await;
-                }
-            }
-        }
+            })
+            .await;
     }
 
     pub async fn sync_receiver(

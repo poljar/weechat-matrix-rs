@@ -64,7 +64,7 @@ impl RoomBuffer {
 
     pub fn input_callback(
         room_id: &mut String,
-        buffer: Buffer,
+        buffer: &Buffer,
         input: Cow<str>,
     ) {
         let room_id = room_id.clone();
@@ -78,7 +78,7 @@ impl RoomBuffer {
         spawn_weechat(task);
     }
 
-    pub fn close_callback(data: &String, buffer: Buffer) {}
+    pub fn close_callback(data: &String, buffer: &Buffer) {}
 
     pub fn handle_membership_state(&mut self, event: MembershipState) {}
 
