@@ -89,7 +89,7 @@ where
             .expect("Can't notify Weechat to run a future");
     };
 
-    let (task, handle) = async_task::spawn(future, schedule, ());
+    let (task, handle) = async_task::spawn_local(future, schedule, ());
     task.schedule();
     handle
 }
