@@ -8,7 +8,7 @@ use url::Url;
 
 use crate::executor::spawn_weechat;
 use crate::server::Connection;
-use crate::PLUGIN_NAME;
+use crate::{Config, PLUGIN_NAME};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -36,6 +36,7 @@ impl RoomBuffer {
         server_name: &str,
         connected_state: &Rc<RefCell<Option<Connection>>>,
         homeserver: &Url,
+        config: &Config,
         room_id: &str,
         own_user_id: &str,
     ) -> Self {

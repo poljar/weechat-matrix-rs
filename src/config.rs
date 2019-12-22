@@ -8,6 +8,19 @@ use std::rc::{Rc, Weak};
 #[derive(Clone)]
 pub struct Config(Rc<RefCell<weechat::config::Config>>);
 
+#[derive(Clone)]
+pub struct ConfigHandle(Weak<RefCell<weechat::config::Config>>);
+
+impl ConfigHandle {
+    fn upgrade(&self) -> Config {
+        Config(
+            self.0
+                .upgrade()
+                .expect("Config got deleted before plugin unload"),
+        )
+    }
+}
+
 fn server_write_cb(
     _weechat: &Weechat,
     config: &Conf,
@@ -23,7 +36,7 @@ fn server_write_cb(
 impl Config {
     pub fn new(weechat: &Weechat, servers: &Servers) -> Config {
         let mut config = weechat
-            .config_new("matrix-rust", |weechat, conf| {})
+            .config_new("matrix-rust")
             .expect("Can't create new config");
 
         let servers = servers.clone_weak();
@@ -100,7 +113,7 @@ impl Config {
         self.0.borrow_mut()
     }
 
-    pub fn clone_weak(&self) -> Weak<RefCell<weechat::config::Config>> {
-        Rc::downgrade(&self.0)
+    pub fn clone_weak(&self) -> ConfigHandle {
+        ConfigHandle(Rc::downgrade(&self.0))
     }
 }

@@ -56,7 +56,7 @@ pub struct LoginState {
 
 pub struct Connection {
     client_channel: Sender<ServerMessage>,
-    sync_receiver: JoinHandle<(), ()>,
+    response_receiver: JoinHandle<(), ()>,
     runtime: Runtime,
 }
 
@@ -83,6 +83,7 @@ pub(crate) struct InnerServer {
     connected: bool,
     room_buffers: HashMap<String, RoomBuffer>,
     settings: ServerSettings,
+    config: Config,
     homeserver: Url,
     login_state: Option<LoginState>,
     connected_state: Rc<RefCell<Option<Connection>>>,
@@ -115,6 +116,7 @@ impl MatrixServer {
             connected: false,
             room_buffers: HashMap::new(),
             settings: ServerSettings { homeserver: None },
+            config: config.clone(),
             homeserver,
             login_state: None,
             connected_state: Rc::new(RefCell::new(None)),
@@ -171,6 +173,7 @@ impl InnerServer {
                 &self.server_name,
                 &self.connected_state,
                 &self.homeserver,
+                &self.config,
                 room_id,
                 &login_state.user_id,
             );
@@ -214,19 +217,23 @@ impl MatrixServer {
 
         let send_client = self.client.clone();
         let (tx, rx) = async_channel(1000);
-        runtime.spawn(MatrixServer::sync_loop(self.client.clone(), tx));
-        let sync_receiver_handle = spawn_weechat(MatrixServer::sync_receiver(
+        runtime.spawn(MatrixServer::sync_loop(self.client.clone(), tx.clone()));
+        let response_receiver = spawn_weechat(MatrixServer::response_receiver(
             rx,
             Rc::downgrade(&self.inner),
         ));
 
         let (client_sender, client_receiver) = async_channel(10);
-        runtime.spawn(MatrixServer::send_loop(send_client, client_receiver));
+        runtime.spawn(MatrixServer::send_loop(
+            send_client,
+            client_receiver,
+            tx,
+        ));
 
         let mut connected_state = server.connected_state.borrow_mut();
 
         *connected_state = Some(Connection {
-            sync_receiver: sync_receiver_handle,
+            response_receiver,
             client_channel: client_sender,
             runtime,
         });
@@ -239,10 +246,13 @@ impl MatrixServer {
 
         if let Some(s) = state {
             s.runtime.shutdown_now();
-            s.sync_receiver.cancel();
+            s.response_receiver.cancel();
         }
     }
 
+    /// Main client sync loop.
+    /// This runs on the per server tokio executor.
+    /// It communicates with the main Weechat thread using a async channel.
     pub async fn sync_loop(
         mut client: AsyncClient,
         channel: Sender<Result<ThreadMessage, String>>,
@@ -305,7 +315,10 @@ impl MatrixServer {
             .await;
     }
 
-    pub async fn sync_receiver(
+    /// Response receiver loop.
+    /// This runs on the main Weechat thread and listens for responses coming
+    /// from the client running in the tokio executor.
+    pub async fn response_receiver(
         receiver: Receiver<Result<ThreadMessage, String>>,
         server: Weak<RefCell<InnerServer>>,
     ) {
@@ -340,9 +353,12 @@ impl MatrixServer {
         }
     }
 
+    /// Send loop that waits for requests that need to be sent out using our
+    /// Matrix client.
     pub async fn send_loop(
         mut client: AsyncClient,
         channel: Receiver<ServerMessage>,
+        sender: Sender<Result<ThreadMessage, String>>,
     ) {
         while let Some(message) = channel.recv().await {
             match message {
