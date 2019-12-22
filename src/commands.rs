@@ -2,16 +2,16 @@ use clap::App as Argparse;
 use clap::AppSettings as ArgParseSettings;
 use clap::SubCommand;
 
-use crate::plugin;
+use crate::{Servers, ServersHandle};
 use weechat::Weechat;
 use weechat::{ArgsWeechat, Buffer, CommandDescription, CommandHook};
 
 pub struct Commands {
-    matrix: CommandHook<()>,
+    _matrix: CommandHook<ServersHandle>,
 }
 
 impl Commands {
-    pub fn hook_all(weechat: &Weechat) -> Commands {
+    pub fn hook_all(weechat: &Weechat, servers: &Servers) -> Commands {
         let matrix_desc = CommandDescription {
             name: "matrix",
             ..Default::default()
@@ -20,13 +20,17 @@ impl Commands {
         let matrix = weechat.hook_command(
             matrix_desc,
             Commands::matrix_command_cb,
-            None,
+            Some(servers.clone_weak()),
         );
 
-        Commands { matrix }
+        Commands { _matrix: matrix }
     }
 
-    fn matrix_command_cb(_data: &(), buffer: Buffer, args: ArgsWeechat) {
+    fn matrix_command_cb(
+        servers: &ServersHandle,
+        buffer: Buffer,
+        args: ArgsWeechat,
+    ) {
         let weechat = unsafe { Weechat::weechat() };
         let argparse = Argparse::new("matrix")
             .setting(ArgParseSettings::ColorNever)
@@ -41,16 +45,16 @@ impl Commands {
                 return;
             }
         };
-        let mut plugin = plugin();
-
         if let Some(matches) = matches.subcommand_matches("connect") {
-            weechat.print("Connecting");
-            for server in plugin.servers.values_mut() {
+            let servers = servers.upgrade();
+            for server in servers.borrow().values() {
+                weechat.print(&format!("Connecting {}", server.name()));
                 server.connect();
             }
         } else if let Some(matches) = matches.subcommand_matches("disconnect") {
+            let servers = servers.upgrade();
             weechat.print("Disconnecting");
-            for server in plugin.servers.values_mut() {
+            for server in servers.borrow().values() {
                 server.disconnect();
             }
         } else {
