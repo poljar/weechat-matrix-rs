@@ -70,18 +70,23 @@ impl Config {
                     let server_name = option_args[0];
                     let option_name = option_args[1];
 
-                    let servers = servers.upgrade();
+                    {
+                        let servers = servers.upgrade();
+                        let mut servers_borrow = servers.borrow_mut();
 
-                    let mut servers_borrow = servers.borrow_mut();
-
-                    // We are reading the config, if the server doesn't yet exists
-                    // we need to create it before setting the option and running
-                    // the option change callback.
-                    if !servers_borrow.contains_key(server_name) {
-                        let config = Config(config.upgrade().unwrap());
-                        let server =
-                            MatrixServer::new(server_name, &config, section);
-                        servers_borrow.insert(server_name.to_owned(), server);
+                        // We are reading the config, if the server doesn't yet exists
+                        // we need to create it before setting the option and running
+                        // the option change callback.
+                        if !servers_borrow.contains_key(server_name) {
+                            let config = config.upgrade();
+                            let server = MatrixServer::new(
+                                server_name,
+                                &config,
+                                section,
+                            );
+                            servers_borrow
+                                .insert(server_name.to_owned(), server);
+                        }
                     }
 
                     let option = section.search_option(option_name);
