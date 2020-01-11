@@ -103,10 +103,7 @@ impl MatrixServer {
     }
 
     pub fn connect(&mut self) {
-        let runtime = runtime::Builder::new()
-            .threaded_scheduler()
-            .build()
-            .unwrap();
+        let runtime = Runtime::new().unwrap();
 
         let send_client = self.client.clone();
         let (tx, rx) = async_channel(1000);
