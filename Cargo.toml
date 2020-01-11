@@ -19,7 +19,7 @@ async-task = "1.2.1"
 pipe-channel = "1.2.2"
 clap = "2.33.0"
 
-matrix-nio = { path = "/home/poljar/werk/priv/nio-rust/" }
+matrix-nio = { git = "https://github.com/poljar/nio-rust" }
 
-weechat = { path = "/home/poljar/werk/misc/rust-weechat/weechat-rs/" }
-weechat-sys = { path = "/home/poljar/werk/misc/rust-weechat/weechat-sys" }
+weechat = { git = "https://github.com/poljar/rust-weechat/" }
+weechat-sys = { git = "https://github.com/poljar/rust-weechat/" }
