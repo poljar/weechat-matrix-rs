@@ -61,8 +61,6 @@ impl Matrix {
     fn autoconnect(servers: &mut HashMap<String, MatrixServer>) {
         let weechat = unsafe { Weechat::weechat() };
 
-        weechat.print(&format!("Autconnecting servers {:?}", servers.keys()));
-
         for server in servers.values_mut() {
             match server.connect() {
                 Ok(_) => (),
@@ -75,9 +73,6 @@ impl Matrix {
         servers: &mut HashMap<String, MatrixServer>,
         config: &Config,
     ) {
-        let weechat = unsafe { Weechat::weechat() };
-        weechat.print("Creating localhost server");
-
         let server_name = "localhost";
         let mut config_borrow = config.borrow_mut();
         let mut section = config_borrow
