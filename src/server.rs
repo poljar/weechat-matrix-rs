@@ -122,6 +122,21 @@ impl MatrixServer {
         &self.server_name
     }
 
+    pub fn parse_homeserver_url(value: String) -> Result<(), String> {
+        let url = Url::parse(&value);
+
+        match url {
+            Ok(u) => {
+                if u.cannot_be_a_base() {
+                    Err(String::from("The Homeserver URL is missing a schema"))
+                } else {
+                    Ok(())
+                }
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
     fn create_server_conf(
         server_name: &str,
         server_section: &mut ConfigSection,
@@ -140,13 +155,7 @@ impl MatrixServer {
             server_name
         ))
         .set_check_callback(|_, _, value| {
-            let url = Url::parse(value.as_ref());
-
-            if let Ok(u) = url {
-                !u.cannot_be_a_base()
-            } else {
-                false
-            }
+            MatrixServer::parse_homeserver_url(value.to_string()).is_ok()
         })
         .set_change_callback(move |_, option| {
             let server = server.clone();
@@ -174,7 +183,11 @@ impl InnerServer {
         room_id: &str,
     ) -> &mut RoomBuffer {
         if !self.room_buffers.contains_key(room_id) {
-            let homeserver = self.settings.homeserver.as_ref().expect("Creating room buffer while no homeserver");
+            let homeserver = self
+                .settings
+                .homeserver
+                .as_ref()
+                .expect("Creating room buffer while no homeserver");
             let login_state = self
                 .login_state
                 .as_ref()

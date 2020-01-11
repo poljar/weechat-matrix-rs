@@ -1,19 +1,23 @@
-use std::collections::HashMap;
-
 use clap::App as Argparse;
 use clap::AppSettings as ArgParseSettings;
 use clap::{Arg, ArgMatches, SubCommand};
+use url::Url;
 
-use crate::{Servers, ServersHandle};
+use crate::config::{Config, ConfigHandle};
+use crate::{MatrixServer, Servers, ServersHandle};
 use weechat::Weechat;
 use weechat::{ArgsWeechat, Buffer, CommandDescription, CommandHook};
 
 pub struct Commands {
-    _matrix: CommandHook<ServersHandle>,
+    _matrix: CommandHook<(ServersHandle, ConfigHandle)>,
 }
 
 impl Commands {
-    pub fn hook_all(weechat: &Weechat, servers: &Servers) -> Commands {
+    pub fn hook_all(
+        weechat: &Weechat,
+        servers: &Servers,
+        config: &Config,
+    ) -> Commands {
         let matrix_desc = CommandDescription {
             name: "matrix",
             description: "Matrix chat protocol command",
@@ -39,16 +43,45 @@ Use /matrix help [command] to find out more.\n",
         let matrix = weechat.hook_command(
             matrix_desc,
             Commands::matrix_command_cb,
-            Some(servers.clone_weak()),
+            Some((servers.clone_weak(), config.clone_weak())),
         );
 
         Commands { _matrix: matrix }
     }
 
-    fn server_command(buffer: &Buffer, args: &ArgMatches, server: &Servers) {
+    fn server_command(
+        buffer: &Buffer,
+        args: &ArgMatches,
+        servers: &Servers,
+        config: &ConfigHandle,
+    ) {
         match args.subcommand() {
             ("add", Some(subargs)) => {
-                buffer.print("Adding server");
+                let server_name = subargs
+                    .value_of("name")
+                    .expect("Server name not set but was required");
+                let homeserver = subargs
+                    .value_of("homeserver")
+                    .expect("Homeserver not set but was required");
+                let homeserver = Url::parse(homeserver)
+                    .expect("Can't parse Homeserver even if validation passed");
+
+                let config = config.upgrade();
+                let mut config_borrow = config.borrow_mut();
+                let mut section = config_borrow
+                    .search_section_mut("server")
+                    .expect("Can't get server section");
+
+                let server =
+                    MatrixServer::new(server_name, &config, &mut section);
+
+                let mut servers = servers.borrow_mut();
+                servers.insert(server_name.to_owned(), server);
+
+                let homeserver_option = section
+                    .search_option(&format!("{}.homeserver", server_name))
+                    .expect("Homeserver option wasn't created");
+                homeserver_option.set(homeserver.as_str(), true);
             }
             ("delete", Some(subargs)) => {
                 buffer.print("Deleting server");
@@ -58,7 +91,7 @@ Use /matrix help [command] to find out more.\n",
     }
 
     fn matrix_command_cb(
-        servers: &ServersHandle,
+        data: &(ServersHandle, ConfigHandle),
         buffer: Buffer,
         args: ArgsWeechat,
     ) {
@@ -73,8 +106,8 @@ Use /matrix help [command] to find out more.\n",
                     )
                     .arg(
                         Arg::with_name("homeserver")
-                            .value_name("homeserver-address")
-                            .required(true),
+                            .required(true)
+                            .validator(MatrixServer::parse_homeserver_url),
                     ),
             )
             .subcommand(SubCommand::with_name("delete"));
@@ -96,6 +129,7 @@ Use /matrix help [command] to find out more.\n",
                 return;
             }
         };
+        let (servers, config) = data;
         let servers_ref = servers.upgrade();
         let servers = servers_ref;
 
@@ -118,7 +152,7 @@ Use /matrix help [command] to find out more.\n",
                 }
             }
             ("server", Some(subargs)) => {
-                Commands::server_command(&buffer, subargs, &servers);
+                Commands::server_command(&buffer, subargs, &servers, config);
             }
             _ => unreachable!(),
         }

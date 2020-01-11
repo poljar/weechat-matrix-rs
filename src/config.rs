@@ -10,11 +10,11 @@ use std::rc::{Rc, Weak};
 #[derive(Clone)]
 pub struct Config(Rc<RefCell<weechat::config::Config>>);
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ConfigHandle(Weak<RefCell<weechat::config::Config>>);
 
 impl ConfigHandle {
-    fn upgrade(&self) -> Config {
+    pub fn upgrade(&self) -> Config {
         Config(
             self.0
                 .upgrade()

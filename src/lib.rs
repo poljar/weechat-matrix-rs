@@ -91,8 +91,8 @@ impl Matrix {
 impl WeechatPlugin for Matrix {
     fn init(weechat: &Weechat, _args: ArgsWeechat) -> WeechatResult<Self> {
         let servers = Servers::new();
-        let commands = Commands::hook_all(weechat, &servers);
         let config = Config::new(weechat, &servers);
+        let commands = Commands::hook_all(weechat, &servers, &config);
 
         let matrix = Matrix {
             servers: servers.clone(),
