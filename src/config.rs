@@ -1,6 +1,8 @@
 use crate::{MatrixServer, Servers};
-use weechat::config::{Conf, ConfigSection, ConfigSectionSettings};
-use weechat::{OptionChanged, Weechat};
+use weechat::config::{
+    Conf, ConfigSection, ConfigSectionSettings, OptionChanged,
+};
+use weechat::Weechat;
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::{Rc, Weak};
@@ -48,10 +50,9 @@ impl Config {
         let server_section_options = ConfigSectionSettings::new("server")
             .set_write_callback(server_write_cb)
             .set_read_callback(
-                move |weechat, _config, section, option_name, _value| {
+                move |weechat, _config, section, option_name, value| {
                     let config = weak_config.clone();
                     let servers = servers.clone();
-                    weechat.print("Hello server read cb");
 
                     if option_name.is_empty() {
                         return OptionChanged::Error;
@@ -60,15 +61,12 @@ impl Config {
                     let option_args: Vec<&str> =
                         option_name.splitn(2, '.').collect();
 
-                    weechat
-                        .print(&format!("Hello option args {:?}", option_args));
-
                     if option_args.len() != 2 {
                         return OptionChanged::Error;
                     }
 
                     let server_name = option_args[0];
-                    let option_name = option_args[1];
+                    let option = option_args[1];
 
                     {
                         let servers = servers.upgrade();
@@ -91,10 +89,10 @@ impl Config {
 
                     let option = section.search_option(option_name);
 
-                    match option {
-                        // TODO instead of resetting set the option with the value.
-                        Some(o) => o.reset(true),
-                        None => OptionChanged::Error,
+                    if let Some(o) = option {
+                        o.set(value, true)
+                    } else {
+                        OptionChanged::NotFound
                     }
                 },
             );

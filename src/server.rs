@@ -19,7 +19,9 @@ use matrix_nio::{
     AsyncClient, AsyncClientConfig, SyncSettings,
 };
 
-use weechat::config::{BooleanOptionSettings, ConfigSection};
+use weechat::config::{
+    BooleanOptionSettings, ConfigSection, IntegerOptionSettings,
+};
 use weechat::Weechat;
 
 use crate::executor::spawn_weechat;
@@ -145,19 +147,18 @@ impl InnerServer {
             weechat.print("Hello");
         });
 
-        // let server_buffer = IntegerOptionSettings::new(format!(
-        //     "{}.server_buffer",
-        //     self.name()
-        // ))
-        // .string_values(vec!["independent", "merged"]);
+        let server_buffer = IntegerOptionSettings::new(format!(
+            "{}.server_buffer",
+            self.server_name
+        ));
 
         let autoconnect = server_section
             .new_boolean_option(autoconnect)
             .expect("Can't create autoconnect option");
 
-        // let autoconnect = server_section
-        //     .new_integer_option(server_buffer)
-        //     .expect("Can't create autoconnect option");
+        let server_buffer = server_section
+            .new_integer_option(server_buffer)
+            .expect("Can't create autoconnect option");
     }
 
     pub(crate) fn get_or_create_room(
