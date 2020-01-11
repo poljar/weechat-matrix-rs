@@ -4,17 +4,16 @@ use clap::App as Argparse;
 use clap::AppSettings as ArgParseSettings;
 use clap::{SubCommand, Arg, ArgMatches};
 
-use crate::plugin;
-use crate::MatrixServer;
+use crate::{Servers, ServersHandle};
 use weechat::Weechat;
 use weechat::{ArgsWeechat, Buffer, CommandDescription, CommandHook};
 
 pub struct Commands {
-    matrix: CommandHook<()>,
+    _matrix: CommandHook<ServersHandle>,
 }
 
 impl Commands {
-    pub fn hook_all(weechat: &Weechat) -> Commands {
+    pub fn hook_all(weechat: &Weechat, servers: &Servers) -> Commands {
         let matrix_desc = CommandDescription {
             name: "matrix",
             description: "Matrix chat protocol command",
@@ -43,13 +42,13 @@ Use /matrix help [command] to find out more.\n",
         let matrix = weechat.hook_command(
             matrix_desc,
             Commands::matrix_command_cb,
-            None,
+            Some(servers.clone_weak()),
         );
 
-        Commands { matrix }
+        Commands { _matrix: matrix }
     }
 
-    fn server_command(buffer: &Buffer, args: &ArgMatches, server: &mut HashMap<String, MatrixServer>) {
+    fn server_command(buffer: &Buffer, args: &ArgMatches, server: &Servers) {
         match args.subcommand() {
             ("add", Some(subargs)) => {
                 buffer.print("Adding server");
@@ -61,7 +60,11 @@ Use /matrix help [command] to find out more.\n",
         }
     }
 
-    fn matrix_command_cb(_data: &(), buffer: Buffer, args: ArgsWeechat) {
+    fn matrix_command_cb(
+        servers: &ServersHandle,
+        buffer: Buffer,
+        args: ArgsWeechat,
+    ) {
         let weechat = unsafe { Weechat::weechat() };
         let server_command = SubCommand::with_name("server")
             .subcommand(SubCommand::with_name("add")
@@ -89,24 +92,26 @@ Use /matrix help [command] to find out more.\n",
                 return;
             }
         };
-        let plugin = plugin();
-        let mut servers = &mut plugin.servers;
+        let servers_ref = servers.upgrade();
+        let servers = servers_ref;
 
         match matches.subcommand() {
             ("connect", Some(subargs)) => {
                 weechat.print("Connecting");
+                let mut servers = servers.borrow_mut();
                 for server in servers.values_mut() {
                     server.connect();
                 }
             },
             ("disconnect", Some(subargs)) => {
                 weechat.print("Disconnecting");
+                let mut servers = servers.borrow_mut();
                 for server in servers.values_mut() {
                     server.disconnect();
                 }
             },
             ("server", Some(subargs)) => {
-                Commands::server_command(&buffer, subargs, &mut servers);
+                Commands::server_command(&buffer, subargs, &servers);
             },
             _ => unreachable!(),
         }

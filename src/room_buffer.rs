@@ -7,9 +7,11 @@ use matrix_nio::Room;
 use url::Url;
 
 use crate::executor::spawn_weechat;
-use crate::plugin;
-use crate::PLUGIN_NAME;
+use crate::server::Connection;
+use crate::{Config, PLUGIN_NAME};
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
 use weechat::{Buffer, Weechat};
 
 pub(crate) struct RoomMember {
@@ -32,7 +34,9 @@ pub(crate) struct RoomBuffer {
 impl RoomBuffer {
     pub fn new(
         server_name: &str,
+        connected_state: &Rc<RefCell<Option<Connection>>>,
         homeserver: &Url,
+        config: &Config,
         room_id: &str,
         own_user_id: &str,
     ) -> Self {
@@ -41,7 +45,7 @@ impl RoomBuffer {
         let buffer = weechat.buffer_new(
             room_id,
             Some(RoomBuffer::input_callback),
-            Some(room_id.to_string()),
+            Some((Rc::downgrade(connected_state), room_id.to_owned())),
             Some(RoomBuffer::close_callback),
             Some(room_id.to_string()),
         );
@@ -63,17 +67,36 @@ impl RoomBuffer {
     }
 
     pub fn input_callback(
-        room_id: &mut String,
+        data: &mut (Weak<RefCell<Option<Connection>>>, String),
         buffer: &Buffer,
         input: Cow<str>,
     ) {
+        let (state, room_id) = data;
+        let state = state.clone();
         let room_id = room_id.clone();
         let input = input.into_owned();
 
+        {
+            let client_rc = state
+                .upgrade()
+                .expect("Can't upgrade server, server has been deleted?");
+            let client = client_rc.borrow();
+
+            if client.is_none() {
+                buffer.print("Error not connected");
+                return;
+            }
+        }
+
         let task = async move {
-            let plugin = plugin();
-            let mut server = plugin.servers.get_mut("localhost").unwrap();
-            server.send_message(&room_id, &input).await;
+            let client_rc = state
+                .upgrade()
+                .expect("Can't upgrade server, server has been deleted?");
+            let client = client_rc.borrow();
+
+            if let Some(s) = client.as_ref() {
+                s.send_message(&room_id, &input).await;
+            }
         };
         spawn_weechat(task);
     }
@@ -124,6 +147,7 @@ impl RoomBuffer {
     pub fn handle_room_message(&mut self, event: &MessageEvent) {
         let sender = &event.sender;
         let timestamp: u64 = event.origin_server_ts.into();
+
         match &event.content {
             MessageEventContent::Text(t) => {
                 self.handle_text_message(&sender.to_string(), timestamp, t)

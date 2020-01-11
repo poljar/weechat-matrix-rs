@@ -46,6 +46,8 @@ where
             let sender = Arc::new(Mutex::new(sender));
             let queue = Arc::new(Mutex::new(VecDeque::new()));
 
+            weechat.print(&format!("{:?}", _SENDER));
+
             _SENDER = Some(sender);
             _FUTURE_QUEUE = Some(queue.clone());
 
