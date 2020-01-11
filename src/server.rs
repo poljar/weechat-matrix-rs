@@ -4,6 +4,7 @@ use async_task::JoinHandle;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::runtime;
 use tokio::runtime::Runtime;
 use url::Url;
 
@@ -102,7 +103,10 @@ impl MatrixServer {
     }
 
     pub fn connect(&mut self) {
-        let runtime = Runtime::new().unwrap();
+        let runtime = runtime::Builder::new()
+            .threaded_scheduler()
+            .build()
+            .unwrap();
 
         let send_client = self.client.clone();
         let (tx, rx) = async_channel(1000);
@@ -123,7 +127,6 @@ impl MatrixServer {
     pub fn disconnect(&mut self) {
         let connected_state = self.connected_state.take();
         if let Some(s) = connected_state {
-            s.runtime.shutdown_now();
             s.sync_receiver.cancel();
         }
     }

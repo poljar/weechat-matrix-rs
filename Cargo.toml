@@ -12,10 +12,10 @@ crate-type = ["dylib"]
 [dependencies]
 libc = "0.2.66"
 futures = "0.3.1"
-url = "2.1.0"
-tokio = "0.2.0-alpha.6"
-async-std = { version = "1.2.0", features = [ "unstable" ] }
-async-task = { git = "https://github.com/async-rs/async-task/" }
+url = "2.1.1"
+tokio = { version = "0.2.9", features = [ "rt-threaded" ] }
+async-std = { version = "1.4.0", features = [ "unstable" ] }
+async-task = "1.2.1"
 pipe-channel = "1.2.2"
 clap = "2.33.0"
 
