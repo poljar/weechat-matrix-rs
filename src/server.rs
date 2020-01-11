@@ -20,7 +20,7 @@ use matrix_nio::{
 };
 
 use weechat::config::{
-    BooleanOptionSettings, ConfigSection, IntegerOptionSettings,
+    BooleanOptionSettings, ConfigSection, StringOptionSettings,
 };
 use weechat::Weechat;
 
@@ -77,7 +77,6 @@ impl Connection {
 pub(crate) struct MatrixServer {
     server_name: Rc<String>,
     inner: Rc<RefCell<InnerServer>>,
-    client: AsyncClient,
 }
 
 pub(crate) struct InnerServer {
@@ -86,7 +85,7 @@ pub(crate) struct InnerServer {
     room_buffers: HashMap<String, RoomBuffer>,
     settings: ServerSettings,
     config: Config,
-    homeserver: Url,
+    client: Option<AsyncClient>,
     login_state: Option<LoginState>,
     connected_state: Rc<RefCell<Option<Connection>>>,
 }
@@ -97,66 +96,85 @@ impl MatrixServer {
         config: &Config,
         server_section: &mut ConfigSection,
     ) -> Self {
-        let homeserver = Url::parse("http://localhost:8008").unwrap();
-
-        let client_config = AsyncClientConfig::new()
-            .proxy("http://localhost:8080")
-            .unwrap()
-            .disable_ssl_verification();
-
-        let client = AsyncClient::new_with_config(
-            homeserver.clone(),
-            None,
-            client_config,
-        )
-        .unwrap();
-
         let server_name = Rc::new(name.to_owned());
 
-        let mut server = InnerServer {
+        let server = InnerServer {
             server_name: server_name.clone(),
             connected: false,
             room_buffers: HashMap::new(),
             settings: ServerSettings { homeserver: None },
             config: config.clone(),
-            homeserver,
+            client: None,
             login_state: None,
             connected_state: Rc::new(RefCell::new(None)),
         };
-        server.create_server_conf(server_section);
+
+        let server = Rc::new(RefCell::new(server));
+        MatrixServer::create_server_conf(&server_name, server_section, &server);
 
         MatrixServer {
             server_name,
-            client,
-            inner: Rc::new(RefCell::new(server)),
+            inner: server,
         }
     }
 
     pub fn name(&self) -> &str {
         &self.server_name
     }
+
+    fn create_server_conf(
+        server_name: &str,
+        server_section: &mut ConfigSection,
+        server_ref: &Rc<RefCell<InnerServer>>,
+    ) {
+        let server = Rc::downgrade(server_ref);
+        let autoconnect =
+            BooleanOptionSettings::new(format!("{}.autoconnect", server_name));
+
+        server_section
+            .new_boolean_option(autoconnect)
+            .expect("Can't create autoconnect option");
+
+        let homeserver = StringOptionSettings::new(format!(
+            "{}.homeserver",
+            server_name
+        ))
+        .set_check_callback(|_, _, value| {
+            let url = Url::parse(value.as_ref());
+
+            if let Ok(u) = url {
+                !u.cannot_be_a_base()
+            } else {
+                false
+            }
+        })
+        .set_change_callback(move |_, option| {
+            let server = server.clone();
+            let server_ref = server
+                .upgrade()
+                .expect("Server got deleted while server config is alive");
+
+            let mut server = server_ref.borrow_mut();
+            let mut homeserver = Url::parse(option.value().as_ref()).expect(
+                "Can't parse homeserver URL, did the check callback fail?",
+            );
+
+            server.settings.homeserver = Some(homeserver)
+        });
+
+        server_section
+            .new_string_option(homeserver)
+            .expect("Can't create homeserver option");
+    }
 }
 
 impl InnerServer {
-    fn create_server_conf(&mut self, server_section: &mut ConfigSection) {
-        let autoconnect = BooleanOptionSettings::new(format!(
-            "{}.autoconnect",
-            self.server_name
-        ))
-        .set_change_callback(|weechat, option| {
-            weechat.print("Hello");
-        });
-
-        let autoconnect = server_section
-            .new_boolean_option(autoconnect)
-            .expect("Can't create autoconnect option");
-    }
-
     pub(crate) fn get_or_create_room(
         &mut self,
         room_id: &str,
     ) -> &mut RoomBuffer {
         if !self.room_buffers.contains_key(room_id) {
+            let homeserver = self.settings.homeserver.as_ref().expect("Creating room buffer while no homeserver");
             let login_state = self
                 .login_state
                 .as_ref()
@@ -164,7 +182,7 @@ impl InnerServer {
             let buffer = RoomBuffer::new(
                 &self.server_name,
                 &self.connected_state,
-                &self.homeserver,
+                homeserver,
                 &self.config,
                 room_id,
                 &login_state.user_id,
@@ -173,6 +191,11 @@ impl InnerServer {
         }
 
         self.room_buffers.get_mut(room_id).unwrap()
+    }
+
+    /// Is the server connected.
+    pub fn connected(&self) -> bool {
+        self.connected_state.borrow().is_some()
     }
 
     pub(crate) fn receive_joined_state_event(
@@ -200,27 +223,60 @@ impl InnerServer {
         };
         self.login_state = Some(login_state);
     }
+
+    pub fn create_client(&mut self) -> Result<AsyncClient, ServerError> {
+        let homeserver =
+            self.settings.homeserver.as_ref().ok_or_else(|| {
+                ServerError::StartError("Homeserver not configured".to_owned())
+            })?;
+        let client_config = AsyncClientConfig::new()
+            .proxy("http://localhost:8080")
+            .unwrap()
+            .disable_ssl_verification();
+
+        let client = AsyncClient::new_with_config(
+            homeserver.clone(),
+            None,
+            client_config,
+        )
+        .unwrap();
+        self.client = Some(client.clone());
+        Ok(client)
+    }
 }
 
 impl MatrixServer {
-    pub fn connect(&self) {
+    pub fn connect(&self) -> Result<(), ServerError> {
         let runtime = Runtime::new().unwrap();
-        let server = self.inner.borrow_mut();
+        let mut server = self.inner.borrow_mut();
 
-        let send_client = self.client.clone();
+        let client = if let Some(c) = server.client.as_ref() {
+            c.clone()
+        } else {
+            server.create_client()?
+        };
+
+        // Check if the homeserver setting changed and swap our client if it
+        // did.
+        let client = if client.homeserver()
+            != server.settings.homeserver.as_ref().unwrap()
+        {
+            // TODO close all the room buffers of the server here, they don't
+            // belong to our client anymore.
+            server.create_client()?
+        } else {
+            client
+        };
+
         let (tx, rx) = async_channel(1000);
-        runtime.spawn(MatrixServer::sync_loop(self.client.clone(), tx.clone()));
+        runtime.spawn(MatrixServer::sync_loop(client.clone(), tx.clone()));
         let response_receiver = spawn_weechat(MatrixServer::response_receiver(
             rx,
             Rc::downgrade(&self.inner),
         ));
 
         let (client_sender, client_receiver) = async_channel(10);
-        runtime.spawn(MatrixServer::send_loop(
-            send_client,
-            client_receiver,
-            tx,
-        ));
+        runtime.spawn(MatrixServer::send_loop(client, client_receiver, tx));
 
         let mut connected_state = server.connected_state.borrow_mut();
 
@@ -229,6 +285,8 @@ impl MatrixServer {
             client_channel: client_sender,
             runtime,
         });
+
+        Ok(())
     }
 
     pub fn disconnect(&self) {

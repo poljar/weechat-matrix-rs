@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use clap::App as Argparse;
 use clap::AppSettings as ArgParseSettings;
-use clap::{SubCommand, Arg, ArgMatches};
+use clap::{Arg, ArgMatches, SubCommand};
 
 use crate::{Servers, ServersHandle};
 use weechat::Weechat;
@@ -17,22 +17,19 @@ impl Commands {
         let matrix_desc = CommandDescription {
             name: "matrix",
             description: "Matrix chat protocol command",
-            args:
-                "server add <server-name> <hostname>[:<port>] ||\
+            args: "server add <server-name> <hostname>[:<port>] ||\
                  server delete|list|listfull <server-name> ||\
                  connect <server-name> ||\
                  disconnect <server-name> ||\
                  reconnect <server-name> ||\
                  help <matrix-command>",
-            args_description:
-"    server: list, add, or remove Matrix servers
+            args_description: "    server: list, add, or remove Matrix servers
     connect: connect to Matrix servers
  disconnect: disconnect from one or all Matrix servers
   reconnect: reconnect to server(s)
        help: show detailed command help\n
 Use /matrix help [command] to find out more.\n",
-            completion:
-                "server |add|delete|list|listfull ||
+            completion: "server |add|delete|list|listfull ||
                  connect ||
                  disconnect ||
                  reconnect ||
@@ -67,11 +64,18 @@ Use /matrix help [command] to find out more.\n",
     ) {
         let weechat = unsafe { Weechat::weechat() };
         let server_command = SubCommand::with_name("server")
-            .subcommand(SubCommand::with_name("add")
-                .arg(Arg::with_name("name").value_name("server-name")
-                     .required(true))
-                .arg(Arg::with_name("homeserver").value_name("homeserver-address")
-                     .required(true))
+            .subcommand(
+                SubCommand::with_name("add")
+                    .arg(
+                        Arg::with_name("name")
+                            .value_name("server-name")
+                            .required(true),
+                    )
+                    .arg(
+                        Arg::with_name("homeserver")
+                            .value_name("homeserver-address")
+                            .required(true),
+                    ),
             )
             .subcommand(SubCommand::with_name("delete"));
 
@@ -100,19 +104,22 @@ Use /matrix help [command] to find out more.\n",
                 weechat.print("Connecting");
                 let mut servers = servers.borrow_mut();
                 for server in servers.values_mut() {
-                    server.connect();
+                    match server.connect() {
+                        Ok(_) => (),
+                        Err(e) => weechat.print(&format!("{:?}", e)),
+                    }
                 }
-            },
+            }
             ("disconnect", Some(subargs)) => {
                 weechat.print("Disconnecting");
                 let mut servers = servers.borrow_mut();
                 for server in servers.values_mut() {
                     server.disconnect();
                 }
-            },
+            }
             ("server", Some(subargs)) => {
                 Commands::server_command(&buffer, subargs, &servers);
-            },
+            }
             _ => unreachable!(),
         }
     }

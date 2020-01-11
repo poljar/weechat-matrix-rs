@@ -64,7 +64,10 @@ impl Matrix {
         weechat.print(&format!("Autconnecting servers {:?}", servers.keys()));
 
         for server in servers.values_mut() {
-            server.connect();
+            match server.connect() {
+                Ok(_) => (),
+                Err(e) => weechat.print(&format!("{:?}", e)),
+            }
         }
     }
 
