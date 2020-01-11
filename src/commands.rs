@@ -20,24 +20,24 @@ impl Commands {
     ) -> Commands {
         let matrix_desc = CommandDescription {
             name: "matrix",
-            description: "Matrix chat protocol command",
-            args: "server add <server-name> <hostname>[:<port>] ||\
+            description: "Matrix chat protocol command.",
+            args: "server add <server-name> <hostname>[:<port>]||\
                  server delete|list|listfull <server-name> ||\
                  connect <server-name> ||\
                  disconnect <server-name> ||\
                  reconnect <server-name> ||\
-                 help <matrix-command>",
-            args_description: "    server: list, add, or remove Matrix servers
-    connect: connect to Matrix servers
- disconnect: disconnect from one or all Matrix servers
-  reconnect: reconnect to server(s)
-       help: show detailed command help\n
-Use /matrix help [command] to find out more.\n",
+                 help <matrix-command> [<matrix-subcommand>]",
+            args_description: "     server: List, add, or remove Matrix servers.
+    connect: Connect to Matrix servers.
+ disconnect: Disconnect from one or all Matrix servers.
+  reconnect: Reconnect to server(s).
+       help: Show detailed command help.\n
+Use /matrix [command] help to find out more.\n",
             completion: "server |add|delete|list|listfull ||
                  connect ||
                  disconnect ||
                  reconnect ||
-                 help",
+                 help server|connect|disconnect|reconnect"
         };
 
         let matrix = weechat.hook_command(
@@ -97,8 +97,10 @@ Use /matrix help [command] to find out more.\n",
     ) {
         let weechat = unsafe { Weechat::weechat() };
         let server_command = SubCommand::with_name("server")
+            .about("List, add or delete Matrix servers.")
             .subcommand(
                 SubCommand::with_name("add")
+                    .about("Add a new Matrix server.")
                     .arg(
                         Arg::with_name("name")
                             .value_name("server-name")
@@ -110,17 +112,32 @@ Use /matrix help [command] to find out more.\n",
                             .validator(MatrixServer::parse_homeserver_url),
                     ),
             )
-            .subcommand(SubCommand::with_name("delete"));
+            .subcommand(
+                SubCommand::with_name("delete")
+                    .about("Delete an existing Matrix server.")
+                    .arg(
+                        Arg::with_name("name")
+                            .value_name("server-name")
+                            .required(true),
+                    ),
+            );
 
         let argparse = Argparse::new("matrix")
+            .about("Matrix chat protocol command.")
             .global_setting(ArgParseSettings::ColorNever)
             .global_setting(ArgParseSettings::DisableHelpFlags)
             .global_setting(ArgParseSettings::DisableVersion)
             .global_setting(ArgParseSettings::VersionlessSubcommands)
             .setting(ArgParseSettings::SubcommandRequiredElseHelp)
             .subcommand(server_command)
-            .subcommand(SubCommand::with_name("connect"))
-            .subcommand(SubCommand::with_name("disconnect"));
+            .subcommand(
+                SubCommand::with_name("connect")
+                    .about("Connect to Matrix servers."),
+            )
+            .subcommand(
+                SubCommand::with_name("disconnect")
+                    .about("Disconnect from one or all Matrix servers"),
+            );
 
         let matches = match argparse.get_matches_from_safe(args) {
             Ok(m) => m,
