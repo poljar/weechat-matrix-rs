@@ -4,6 +4,7 @@ use clap::{Arg, ArgMatches, SubCommand};
 use url::Url;
 
 use crate::config::{Config, ConfigHandle};
+use crate::PLUGIN_NAME;
 use crate::{MatrixServer, Servers, ServersHandle};
 use weechat::Weechat;
 use weechat::{ArgsWeechat, Buffer, CommandDescription, CommandHook};
@@ -27,7 +28,8 @@ impl Commands {
                  disconnect <server-name> ||\
                  reconnect <server-name> ||\
                  help <matrix-command> [<matrix-subcommand>]",
-            args_description: "     server: List, add, or remove Matrix servers.
+            args_description:
+                "     server: List, add, or remove Matrix servers.
     connect: Connect to Matrix servers.
  disconnect: Disconnect from one or all Matrix servers.
   reconnect: Reconnect to server(s).
@@ -37,7 +39,7 @@ Use /matrix [command] help to find out more.\n",
                  connect ||
                  disconnect ||
                  reconnect ||
-                 help server|connect|disconnect|reconnect"
+                 help server|connect|disconnect|reconnect",
         };
 
         let matrix = weechat.hook_command(
@@ -50,11 +52,12 @@ Use /matrix [command] help to find out more.\n",
     }
 
     fn server_command(
-        buffer: &Buffer,
         args: &ArgMatches,
         servers: &Servers,
         config: &ConfigHandle,
     ) {
+        let weechat = unsafe { Weechat::weechat() };
+
         match args.subcommand() {
             ("add", Some(subargs)) => {
                 let server_name = subargs
@@ -82,9 +85,60 @@ Use /matrix [command] help to find out more.\n",
                     .search_option(&format!("{}.homeserver", server_name))
                     .expect("Homeserver option wasn't created");
                 homeserver_option.set(homeserver.as_str(), true);
+
+                weechat.print(&format!(
+                    "{}: Server {}{}{} has been added.",
+                    PLUGIN_NAME,
+                    weechat.color("chat_server"),
+                    server_name,
+                    weechat.color("reset")
+                ));
             }
             ("delete", Some(subargs)) => {
-                buffer.print("Deleting server");
+                let server_name = subargs
+                    .value_of("name")
+                    .expect("Server name not set but was required");
+
+                let mut servers = servers.borrow_mut();
+                let connected = {
+                    let server = servers.get(server_name);
+
+                    if let Some(s) = server {
+                        s.connected()
+                    } else {
+                        weechat.print(&format!(
+                            "{}: No such server {}{}{} found.",
+                            PLUGIN_NAME,
+                            weechat.color("chat_server"),
+                            server_name,
+                            weechat.color("reset")
+                        ));
+                        return;
+                    }
+                };
+
+                if connected {
+                    weechat.print(&format!(
+                        "{}: Server {}{}{} is still connected.",
+                        PLUGIN_NAME,
+                        weechat.color("chat_server"),
+                        server_name,
+                        weechat.color("reset")
+                    ));
+                    return;
+                }
+
+                let server = servers.remove(server_name).unwrap();
+
+                drop(server);
+
+                weechat.print(&format!(
+                    "{}: Server {}{}{} has been deleted.",
+                    PLUGIN_NAME,
+                    weechat.color("chat_server"),
+                    server_name,
+                    weechat.color("reset")
+                ));
             }
             _ => (),
         }
@@ -169,7 +223,7 @@ Use /matrix [command] help to find out more.\n",
                 }
             }
             ("server", Some(subargs)) => {
-                Commands::server_command(&buffer, subargs, &servers, config);
+                Commands::server_command(subargs, &servers, config);
             }
             _ => unreachable!(),
         }

@@ -81,7 +81,6 @@ pub(crate) struct MatrixServer {
 
 pub(crate) struct InnerServer {
     server_name: Rc<String>,
-    connected: bool,
     room_buffers: HashMap<String, RoomBuffer>,
     settings: ServerSettings,
     config: Config,
@@ -100,7 +99,6 @@ impl MatrixServer {
 
         let server = InnerServer {
             server_name: server_name.clone(),
-            connected: false,
             room_buffers: HashMap::new(),
             settings: ServerSettings { homeserver: None },
             config: config.clone(),
@@ -150,30 +148,52 @@ impl MatrixServer {
             .new_boolean_option(autoconnect)
             .expect("Can't create autoconnect option");
 
-        let homeserver = StringOptionSettings::new(format!(
-            "{}.homeserver",
-            server_name
-        ))
-        .set_check_callback(|_, _, value| {
-            MatrixServer::parse_homeserver_url(value.to_string()).is_ok()
-        })
-        .set_change_callback(move |_, option| {
-            let server = server.clone();
-            let server_ref = server
-                .upgrade()
-                .expect("Server got deleted while server config is alive");
+        let homeserver =
+            StringOptionSettings::new(format!("{}.homeserver", server_name))
+                .set_check_callback(|_, _, value| {
+                    MatrixServer::parse_homeserver_url(value.to_string())
+                        .is_ok()
+                })
+                .set_change_callback(move |_, option| {
+                    let server = server.clone();
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
 
-            let mut server = server_ref.borrow_mut();
-            let mut homeserver = Url::parse(option.value().as_ref()).expect(
+                    let mut server = server_ref.borrow_mut();
+                    let homeserver = Url::parse(option.value().as_ref()).expect(
                 "Can't parse homeserver URL, did the check callback fail?",
             );
 
-            server.settings.homeserver = Some(homeserver)
-        });
+                    server.settings.homeserver = Some(homeserver)
+                });
 
         server_section
             .new_string_option(homeserver)
             .expect("Can't create homeserver option");
+    }
+
+    pub fn connected(&self) -> bool {
+        self.inner.borrow().connected()
+    }
+}
+
+impl Drop for MatrixServer {
+    fn drop(&mut self) {
+        // TODO close all the server buffers.
+        let config = &self.inner.borrow().config;
+        let mut config_borrow = config.borrow_mut();
+
+        let mut section = config_borrow
+            .search_section_mut("server")
+            .expect("Can't get server section");
+
+        for option_name in &["homeserver", "autoconnect"] {
+            let option_name = &format!("{}.{}", self.name(), option_name);
+            section
+                .free_option(option_name)
+                .expect(&format!("Can't free option {}", option_name));
+        }
     }
 }
 
