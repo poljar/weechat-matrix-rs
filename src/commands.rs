@@ -51,6 +51,25 @@ Use /matrix [command] help to find out more.\n",
         Commands { _matrix: matrix }
     }
 
+    fn list_servers(servers: &Servers) {
+        let weechat = unsafe { Weechat::weechat() };
+
+        if servers.borrow().is_empty() {
+            return;
+        }
+
+        weechat.print("\nAll Matrix servers:");
+
+        // TODO print out some stats if the server is connected.
+        for server in servers.borrow().keys() {
+            weechat.print(&format!(
+                "    {}{}",
+                weechat.color("chat_server"),
+                server
+            ));
+        }
+    }
+
     fn server_command(
         args: &ArgMatches,
         servers: &Servers,
@@ -140,7 +159,9 @@ Use /matrix [command] help to find out more.\n",
                     weechat.color("reset")
                 ));
             }
-            _ => (),
+
+            ("list", _) => Commands::list_servers(servers),
+            _ => Commands::list_servers(servers),
         }
     }
 
