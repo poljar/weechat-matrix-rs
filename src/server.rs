@@ -43,7 +43,6 @@ pub enum ServerError {
 }
 
 pub enum ServerMessage {
-    ShutDown,
     RoomSend(String, String),
 }
 
@@ -222,7 +221,7 @@ impl Drop for MatrixServer {
             let option_name = &format!("{}.{}", self.name(), option_name);
             section
                 .free_option(option_name)
-                .expect(&format!("Can't free option {}", option_name));
+                .unwrap_or_else(|_| panic!(format!("Can't free option {}", option_name)));
         }
     }
 }
@@ -496,7 +495,6 @@ impl MatrixServer {
     ) {
         while let Some(message) = channel.recv().await {
             match message {
-                ServerMessage::ShutDown => return,
                 ServerMessage::RoomSend(room_id, message) => {
                     let content =
                         MessageEventContent::Text(TextMessageEventContent {
