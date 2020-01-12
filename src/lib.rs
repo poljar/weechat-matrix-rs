@@ -95,18 +95,22 @@ impl WeechatPlugin for Matrix {
             config: config.clone(),
         };
 
+        {
+            let config_borrow = config.borrow();
+            if config_borrow.read().is_err() {
+                return Err(weechat::Error(-1));
+            }
+        }
+
+        {
+            let mut servers_borrow = servers.borrow_mut();
+            if servers_borrow.is_empty() {
+                Matrix::create_default_server(&mut servers_borrow, &config)
+            }
+        }
+
         spawn_weechat(async move {
-            {
-                let config = config.borrow();
-                config.read().expect("Can't read config");
-            }
-
             let mut servers = servers.borrow_mut();
-
-            if servers.is_empty() {
-                Matrix::create_default_server(&mut servers, &config)
-            }
-
             Matrix::autoconnect(&mut servers);
         });
 
