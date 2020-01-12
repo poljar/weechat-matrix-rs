@@ -16,7 +16,7 @@ use weechat::{
 
 use crate::commands::Commands;
 use crate::config::Config;
-use crate::executor::{cleanup_executor, spawn_weechat};
+use crate::executor::{spawn_weechat, WeechatExecutor};
 use crate::server::MatrixServer;
 
 const PLUGIN_NAME: &str = "matrix";
@@ -127,7 +127,7 @@ impl Drop for Matrix {
             server.disconnect();
         }
 
-        cleanup_executor();
+        WeechatExecutor::free();
     }
 }
 

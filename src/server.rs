@@ -219,9 +219,9 @@ impl Drop for MatrixServer {
 
         for option_name in &["homeserver", "autoconnect"] {
             let option_name = &format!("{}.{}", self.name(), option_name);
-            section
-                .free_option(option_name)
-                .unwrap_or_else(|_| panic!(format!("Can't free option {}", option_name)));
+            section.free_option(option_name).unwrap_or_else(|_| {
+                panic!(format!("Can't free option {}", option_name))
+            });
         }
     }
 }
