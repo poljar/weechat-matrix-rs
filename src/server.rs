@@ -173,8 +173,12 @@ impl MatrixServer {
         let homeserver =
             StringOptionSettings::new(format!("{}.homeserver", server_name))
                 .set_check_callback(|_, _, value| {
-                    MatrixServer::parse_homeserver_url(value.to_string())
-                        .is_ok()
+                    if value.is_empty() {
+                        true
+                    } else {
+                        MatrixServer::parse_homeserver_url(value.to_string())
+                            .is_ok()
+                    }
                 })
                 .set_change_callback(move |_, option| {
                     let server = server.clone();
