@@ -50,6 +50,13 @@ pub enum ServerMessage {
 #[derive(Default)]
 pub struct ServerSettings {
     homeserver: Option<Url>,
+    autoconnect: bool,
+}
+
+impl ServerSettings {
+    pub fn new() -> Self {
+        Default::default()
+    }
 }
 
 pub struct LoginState {
@@ -101,7 +108,7 @@ impl MatrixServer {
         let server = InnerServer {
             server_name: server_name.clone(),
             room_buffers: HashMap::new(),
-            settings: ServerSettings { homeserver: None },
+            settings: ServerSettings::new(),
             config: config.clone(),
             client: None,
             login_state: None,
@@ -142,12 +149,26 @@ impl MatrixServer {
         server_ref: &Rc<RefCell<InnerServer>>,
     ) {
         let server = Rc::downgrade(server_ref);
+        let server_copy = server.clone();
         let autoconnect =
-            BooleanOptionSettings::new(format!("{}.autoconnect", server_name));
+            BooleanOptionSettings::new(format!("{}.autoconnect", server_name))
+            .set_change_callback(move |_, option| {
+                let server = server.clone();
+                let value = option.value();
+
+                let server_ref = server.upgrade().expect(
+                    "Server got deleted while server config is alive",
+                );
+
+                let mut server = server_ref.borrow_mut();
+                server.settings.autoconnect = value;
+            });
 
         server_section
             .new_boolean_option(autoconnect)
             .expect("Can't create autoconnect option");
+
+        let server = server_copy;
 
         let homeserver =
             StringOptionSettings::new(format!("{}.homeserver", server_name))
@@ -176,6 +197,10 @@ impl MatrixServer {
 
     pub fn connected(&self) -> bool {
         self.inner.borrow().connected()
+    }
+
+    pub fn autoconnect(&self) -> bool {
+        self.inner.borrow().settings.autoconnect
     }
 }
 

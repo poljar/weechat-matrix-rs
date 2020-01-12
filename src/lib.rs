@@ -62,9 +62,11 @@ impl Matrix {
         let weechat = unsafe { Weechat::weechat() };
 
         for server in servers.values_mut() {
-            match server.connect() {
-                Ok(_) => (),
-                Err(e) => weechat.print(&format!("{:?}", e)),
+            if server.autoconnect() {
+                match server.connect() {
+                    Ok(_) => (),
+                    Err(e) => weechat.print(&format!("{:?}", e)),
+                }
             }
         }
     }
