@@ -330,6 +330,20 @@ impl MatrixServer {
     pub fn disconnect(&self) {
         let weechat = unsafe { Weechat::weechat() };
 
+        // TODO these messages should go to the server buffer.
+        if !self.connected() {
+            weechat.print(&format!(
+                "{}{}: Server {}{}{} is not connected.",
+                weechat.prefix("error"),
+                PLUGIN_NAME,
+                weechat.color("chat_server"),
+                self.name(),
+                weechat.color("reset")
+            ));
+
+            return;
+        }
+
         let server = self.inner.borrow_mut();
         let mut connected_state = server.connected_state.borrow_mut();
         let state = connected_state.take();
