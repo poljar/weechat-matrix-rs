@@ -27,6 +27,7 @@ use weechat::Weechat;
 use crate::executor::spawn_weechat;
 use crate::room_buffer::RoomBuffer;
 use crate::Config;
+use crate::PLUGIN_NAME;
 
 const DEFAULT_SYNC_TIMEOUT: i32 = 30000;
 
@@ -280,6 +281,10 @@ impl InnerServer {
 
 impl MatrixServer {
     pub fn connect(&self) -> Result<(), ServerError> {
+        if self.connected() {
+            return Ok(());
+        }
+
         let runtime = Runtime::new().unwrap();
         let mut server = self.inner.borrow_mut();
 
@@ -323,6 +328,8 @@ impl MatrixServer {
     }
 
     pub fn disconnect(&self) {
+        let weechat = unsafe { Weechat::weechat() };
+
         let server = self.inner.borrow_mut();
         let mut connected_state = server.connected_state.borrow_mut();
         let state = connected_state.take();
@@ -330,6 +337,8 @@ impl MatrixServer {
         if let Some(s) = state {
             s.response_receiver.cancel();
         }
+
+        weechat.print(&format!("{}: Disconnected from server.", PLUGIN_NAME));
     }
 
     /// Main client sync loop.

@@ -216,11 +216,22 @@ Use /matrix [command] help to find out more.\n",
             .subcommand(server_command)
             .subcommand(
                 SubCommand::with_name("connect")
-                    .about("Connect to Matrix servers."),
+                    .about("Connect to Matrix servers.")
+                    .arg(
+                        Arg::with_name("name")
+                            .value_name("server-name")
+                            .required(true)
+                            .multiple(true),
+                    ),
             )
             .subcommand(
                 SubCommand::with_name("disconnect")
-                    .about("Disconnect from one or all Matrix servers"),
+                    .about("Disconnect from one or all Matrix servers")
+                    .arg(
+                        Arg::with_name("name")
+                            .value_name("server-name")
+                            .required(true),
+                    ),
             );
 
         let matches = match argparse.get_matches_from_safe(args) {
@@ -246,10 +257,25 @@ Use /matrix [command] help to find out more.\n",
                 }
             }
             ("disconnect", Some(subargs)) => {
-                weechat.print("Disconnecting");
                 let mut servers = servers.borrow_mut();
-                for server in servers.values_mut() {
-                    server.disconnect();
+
+                let server_name = subargs
+                    .value_of("name")
+                    .expect("Server name not set but was required");
+
+                let server = servers.get_mut(server_name);
+
+                if let Some(s) = server {
+                    s.disconnect();
+                } else {
+                    weechat.print(&format!(
+                        "{}{}: Server \"{}{}{}\" not found.",
+                        weechat.prefix("error"),
+                        PLUGIN_NAME,
+                        weechat.color("chat_server"),
+                        server_name,
+                        weechat.color("reset")
+                    ));
                 }
             }
             ("server", Some(subargs)) => {
