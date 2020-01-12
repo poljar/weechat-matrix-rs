@@ -174,9 +174,60 @@ Use /matrix [command] help to find out more.\n",
         }
     }
 
+    fn server_not_found(server_name: &str) {
+        let weechat = unsafe { Weechat::weechat() };
+
+        weechat.print(&format!(
+            "{}{}: Server \"{}{}{}\" not found.",
+            weechat.prefix("error"),
+            PLUGIN_NAME,
+            weechat.color("chat_server"),
+            server_name,
+            weechat.color("reset")
+        ));
+    }
+
+    fn connect_command(args: &ArgMatches, servers: &Servers) {
+        let weechat = unsafe { Weechat::weechat() };
+
+        let server_names = args
+            .values_of("name")
+            .expect("Server names not set but were required");
+
+        let mut servers = servers.borrow_mut();
+
+        for server_name in server_names {
+            let server = servers.get_mut(server_name);
+            if let Some(s) = server {
+                match s.connect() {
+                    Ok(_) => (),
+                    Err(e) => weechat.print(&format!("{:?}", e)),
+                }
+            } else {
+                Commands::server_not_found(server_name)
+            }
+        }
+    }
+
+    fn disconnect_command(args: &ArgMatches, servers: &Servers) {
+        let mut servers = servers.borrow_mut();
+
+        let server_name = args
+            .value_of("name")
+            .expect("Server name not set but was required");
+
+        let server = servers.get_mut(server_name);
+
+        if let Some(s) = server {
+            s.disconnect();
+        } else {
+            Commands::server_not_found(server_name)
+        }
+    }
+
     fn matrix_command_cb(
         data: &(ServersHandle, ConfigHandle),
-        buffer: Buffer,
+        _buffer: Buffer,
         args: ArgsWeechat,
     ) {
         let weechat = unsafe { Weechat::weechat() };
@@ -247,54 +298,13 @@ Use /matrix [command] help to find out more.\n",
 
         match matches.subcommand() {
             ("connect", Some(subargs)) => {
-                let server_names = subargs.values_of("name")
-                    .expect("Server names not set but were required");
-
-                let mut servers = servers.borrow_mut();
-
-                for server_name in server_names {
-                    let server = servers.get_mut(server_name);
-                    if let Some(s) = server {
-                        match s.connect() {
-                            Ok(_) => (),
-                            Err(e) => weechat.print(&format!("{:?}", e)),
-                        }
-                    } else {
-                        weechat.print(&format!(
-                            "{}{}: Server \"{}{}{}\" not found.",
-                            weechat.prefix("error"),
-                            PLUGIN_NAME,
-                            weechat.color("chat_server"),
-                            server_name,
-                            weechat.color("reset")
-                        ));
-                    }
-                }
+                Commands::connect_command(subargs, &servers)
             }
             ("disconnect", Some(subargs)) => {
-                let mut servers = servers.borrow_mut();
-
-                let server_name = subargs
-                    .value_of("name")
-                    .expect("Server name not set but was required");
-
-                let server = servers.get_mut(server_name);
-
-                if let Some(s) = server {
-                    s.disconnect();
-                } else {
-                    weechat.print(&format!(
-                        "{}{}: Server \"{}{}{}\" not found.",
-                        weechat.prefix("error"),
-                        PLUGIN_NAME,
-                        weechat.color("chat_server"),
-                        server_name,
-                        weechat.color("reset")
-                    ));
-                }
+                Commands::disconnect_command(subargs, &servers)
             }
             ("server", Some(subargs)) => {
-                Commands::server_command(subargs, &servers, config);
+                Commands::server_command(subargs, &servers, config)
             }
             _ => unreachable!(),
         }

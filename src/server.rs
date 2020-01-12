@@ -152,17 +152,17 @@ impl MatrixServer {
         let server_copy = server.clone();
         let autoconnect =
             BooleanOptionSettings::new(format!("{}.autoconnect", server_name))
-            .set_change_callback(move |_, option| {
-                let server = server.clone();
-                let value = option.value();
+                .set_change_callback(move |_, option| {
+                    let server = server.clone();
+                    let value = option.value();
 
-                let server_ref = server.upgrade().expect(
-                    "Server got deleted while server config is alive",
-                );
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
 
-                let mut server = server_ref.borrow_mut();
-                server.settings.autoconnect = value;
-            });
+                    let mut server = server_ref.borrow_mut();
+                    server.settings.autoconnect = value;
+                });
 
         server_section
             .new_boolean_option(autoconnect)
