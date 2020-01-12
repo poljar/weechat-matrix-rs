@@ -37,7 +37,7 @@ fn server_write_cb(
 
 impl Config {
     pub fn new(weechat: &Weechat, servers: &Servers) -> Config {
-        let mut config = weechat
+        let config = weechat
             .config_new("matrix-rust")
             .expect("Can't create new config");
 
@@ -50,7 +50,7 @@ impl Config {
         let server_section_options = ConfigSectionSettings::new("server")
             .set_write_callback(server_write_cb)
             .set_read_callback(
-                move |weechat, _config, section, option_name, value| {
+                move |_, _config, section, option_name, value| {
                     let config = weak_config.clone();
                     let servers = servers.clone();
 
@@ -66,7 +66,6 @@ impl Config {
                     }
 
                     let server_name = option_args[0];
-                    let option = option_args[1];
 
                     {
                         let servers = servers.upgrade();
