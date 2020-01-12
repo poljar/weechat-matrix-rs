@@ -51,6 +51,93 @@ Use /matrix [command] help to find out more.\n",
         Commands { _matrix: matrix }
     }
 
+    fn add_server(args: &ArgMatches, servers: &Servers, config: &ConfigHandle) {
+        let weechat = unsafe { Weechat::weechat() };
+
+        let server_name = args
+            .value_of("name")
+            .expect("Server name not set but was required");
+        let homeserver = args
+            .value_of("homeserver")
+            .expect("Homeserver not set but was required");
+        let homeserver = Url::parse(homeserver)
+            .expect("Can't parse Homeserver even if validation passed");
+
+        let config = config.upgrade();
+        let mut config_borrow = config.borrow_mut();
+        let mut section = config_borrow
+            .search_section_mut("server")
+            .expect("Can't get server section");
+
+        let server = MatrixServer::new(server_name, &config, &mut section);
+
+        let mut servers = servers.borrow_mut();
+        servers.insert(server_name.to_owned(), server);
+
+        let homeserver_option = section
+            .search_option(&format!("{}.homeserver", server_name))
+            .expect("Homeserver option wasn't created");
+        homeserver_option.set(homeserver.as_str(), true);
+
+        weechat.print(&format!(
+            "{}: Server {}{}{} has been added.",
+            PLUGIN_NAME,
+            weechat.color("chat_server"),
+            server_name,
+            weechat.color("reset")
+        ));
+    }
+
+    fn delete_server(args: &ArgMatches, servers: &Servers) {
+        let weechat = unsafe { Weechat::weechat() };
+
+        let server_name = args
+            .value_of("name")
+            .expect("Server name not set but was required");
+
+        let mut servers = servers.borrow_mut();
+
+        let connected = {
+            let server = servers.get(server_name);
+
+            if let Some(s) = server {
+                s.connected()
+            } else {
+                weechat.print(&format!(
+                    "{}: No such server {}{}{} found.",
+                    PLUGIN_NAME,
+                    weechat.color("chat_server"),
+                    server_name,
+                    weechat.color("reset")
+                ));
+                return;
+            }
+        };
+
+        if connected {
+            weechat.print(&format!(
+                "{}: Server {}{}{} is still connected.",
+                PLUGIN_NAME,
+                weechat.color("chat_server"),
+                server_name,
+                weechat.color("reset")
+            ));
+            return;
+        }
+
+        let server = servers.remove(server_name).unwrap();
+
+        drop(server);
+
+        weechat.print(&format!(
+            "{}: Server {}{}{} has been deleted.",
+            PLUGIN_NAME,
+            weechat.color("chat_server"),
+            server_name,
+            weechat.color("reset")
+        ));
+    }
+
     fn list_servers(servers: &Servers) {
         let weechat = unsafe { Weechat::weechat() };
 
@@ -75,91 +162,13 @@ Use /matrix [command] help to find out more.\n",
         servers: &Servers,
         config: &ConfigHandle,
     ) {
-        let weechat = unsafe { Weechat::weechat() };
-
         match args.subcommand() {
             ("add", Some(subargs)) => {
-                let server_name = subargs
-                    .value_of("name")
-                    .expect("Server name not set but was required");
-                let homeserver = subargs
-                    .value_of("homeserver")
-                    .expect("Homeserver not set but was required");
-                let homeserver = Url::parse(homeserver)
-                    .expect("Can't parse Homeserver even if validation passed");
-
-                let config = config.upgrade();
-                let mut config_borrow = config.borrow_mut();
-                let mut section = config_borrow
-                    .search_section_mut("server")
-                    .expect("Can't get server section");
-
-                let server =
-                    MatrixServer::new(server_name, &config, &mut section);
-
-                let mut servers = servers.borrow_mut();
-                servers.insert(server_name.to_owned(), server);
-
-                let homeserver_option = section
-                    .search_option(&format!("{}.homeserver", server_name))
-                    .expect("Homeserver option wasn't created");
-                homeserver_option.set(homeserver.as_str(), true);
-
-                weechat.print(&format!(
-                    "{}: Server {}{}{} has been added.",
-                    PLUGIN_NAME,
-                    weechat.color("chat_server"),
-                    server_name,
-                    weechat.color("reset")
-                ));
+                Commands::add_server(subargs, servers, config)
             }
             ("delete", Some(subargs)) => {
-                let server_name = subargs
-                    .value_of("name")
-                    .expect("Server name not set but was required");
-
-                let mut servers = servers.borrow_mut();
-                let connected = {
-                    let server = servers.get(server_name);
-
-                    if let Some(s) = server {
-                        s.connected()
-                    } else {
-                        weechat.print(&format!(
-                            "{}: No such server {}{}{} found.",
-                            PLUGIN_NAME,
-                            weechat.color("chat_server"),
-                            server_name,
-                            weechat.color("reset")
-                        ));
-                        return;
-                    }
-                };
-
-                if connected {
-                    weechat.print(&format!(
-                        "{}: Server {}{}{} is still connected.",
-                        PLUGIN_NAME,
-                        weechat.color("chat_server"),
-                        server_name,
-                        weechat.color("reset")
-                    ));
-                    return;
-                }
-
-                let server = servers.remove(server_name).unwrap();
-
-                drop(server);
-
-                weechat.print(&format!(
-                    "{}: Server {}{}{} has been deleted.",
-                    PLUGIN_NAME,
-                    weechat.color("chat_server"),
-                    server_name,
-                    weechat.color("reset")
-                ));
+                Commands::delete_server(subargs, servers)
             }
-
             ("list", _) => Commands::list_servers(servers),
             _ => Commands::list_servers(servers),
         }
