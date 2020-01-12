@@ -247,12 +247,27 @@ Use /matrix [command] help to find out more.\n",
 
         match matches.subcommand() {
             ("connect", Some(subargs)) => {
-                weechat.print("Connecting");
+                let server_names = subargs.values_of("name")
+                    .expect("Server names not set but were required");
+
                 let mut servers = servers.borrow_mut();
-                for server in servers.values_mut() {
-                    match server.connect() {
-                        Ok(_) => (),
-                        Err(e) => weechat.print(&format!("{:?}", e)),
+
+                for server_name in server_names {
+                    let server = servers.get_mut(server_name);
+                    if let Some(s) = server {
+                        match s.connect() {
+                            Ok(_) => (),
+                            Err(e) => weechat.print(&format!("{:?}", e)),
+                        }
+                    } else {
+                        weechat.print(&format!(
+                            "{}{}: Server \"{}{}{}\" not found.",
+                            weechat.prefix("error"),
+                            PLUGIN_NAME,
+                            weechat.color("chat_server"),
+                            server_name,
+                            weechat.color("reset")
+                        ));
                     }
                 }
             }
