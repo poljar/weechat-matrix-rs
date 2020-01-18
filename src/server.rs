@@ -1,6 +1,5 @@
 use async_std::sync::channel as async_channel;
 use async_std::sync::{Receiver, Sender};
-use async_task::JoinHandle;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
@@ -19,12 +18,12 @@ use matrix_nio::{
     AsyncClient, AsyncClientConfig, SyncSettings,
 };
 
+use weechat::JoinHandle;
 use weechat::config::{
     BooleanOptionSettings, ConfigSection, StringOptionSettings,
 };
 use weechat::Weechat;
 
-use crate::executor::spawn_weechat;
 use crate::room_buffer::RoomBuffer;
 use crate::Config;
 use crate::PLUGIN_NAME;
@@ -336,7 +335,7 @@ impl MatrixServer {
 
         let (tx, rx) = async_channel(1000);
         runtime.spawn(MatrixServer::sync_loop(client.clone(), tx.clone()));
-        let response_receiver = spawn_weechat(MatrixServer::response_receiver(
+        let response_receiver = Weechat::spawn(MatrixServer::response_receiver(
             rx,
             Rc::downgrade(&self.inner),
         ));

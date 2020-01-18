@@ -6,7 +6,6 @@ use matrix_nio::events::room::message::{
 use matrix_nio::Room;
 use url::Url;
 
-use crate::executor::spawn_weechat;
 use crate::server::Connection;
 use crate::{Config, PLUGIN_NAME};
 use std::borrow::Cow;
@@ -98,7 +97,7 @@ impl RoomBuffer {
                 s.send_message(&room_id, &input).await;
             }
         };
-        spawn_weechat(task);
+        Weechat::spawn(task);
     }
 
     pub fn close_callback(data: &String, buffer: &Buffer) {}

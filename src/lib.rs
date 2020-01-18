@@ -2,7 +2,6 @@
 
 mod commands;
 mod config;
-mod executor;
 mod room_buffer;
 mod server;
 
@@ -16,7 +15,6 @@ use weechat::{
 
 use crate::commands::Commands;
 use crate::config::Config;
-use crate::executor::{spawn_weechat, WeechatExecutor};
 use crate::server::MatrixServer;
 
 const PLUGIN_NAME: &str = "matrix";
@@ -111,7 +109,7 @@ impl WeechatPlugin for Matrix {
             }
         }
 
-        spawn_weechat(async move {
+        Weechat::spawn(async move {
             let mut servers = servers.borrow_mut();
             Matrix::autoconnect(&mut servers);
         });
@@ -126,8 +124,6 @@ impl Drop for Matrix {
         for server in servers.values_mut() {
             server.disconnect();
         }
-
-        WeechatExecutor::free();
     }
 }
 
