@@ -57,13 +57,11 @@ struct Matrix {
 
 impl Matrix {
     fn autoconnect(servers: &mut HashMap<String, MatrixServer>) {
-        let weechat = unsafe { Weechat::weechat() };
-
         for server in servers.values_mut() {
             if server.autoconnect() {
                 match server.connect() {
                     Ok(_) => (),
-                    Err(e) => weechat.print(&format!("{:?}", e)),
+                    Err(e) => Weechat::print(&format!("{:?}", e)),
                 }
             }
         }

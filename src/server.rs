@@ -355,17 +355,15 @@ impl MatrixServer {
     }
 
     pub fn disconnect(&self) {
-        let weechat = unsafe { Weechat::weechat() };
-
         // TODO these messages should go to the server buffer.
         if !self.connected() {
-            weechat.print(&format!(
+            Weechat::print(&format!(
                 "{}{}: Server {}{}{} is not connected.",
-                weechat.prefix("error"),
+                Weechat::prefix("error"),
                 PLUGIN_NAME,
-                weechat.color("chat_server"),
+                Weechat::color("chat_server"),
                 self.name(),
-                weechat.color("reset")
+                Weechat::color("reset")
             ));
 
             return;
@@ -379,7 +377,7 @@ impl MatrixServer {
             s.response_receiver.cancel();
         }
 
-        weechat.print(&format!("{}: Disconnected from server.", PLUGIN_NAME));
+        Weechat::print(&format!("{}: Disconnected from server.", PLUGIN_NAME));
     }
 
     /// Main client sync loop.
@@ -454,13 +452,11 @@ impl MatrixServer {
         receiver: Receiver<Result<ThreadMessage, String>>,
         server: Weak<RefCell<InnerServer>>,
     ) {
-        let weechat = unsafe { Weechat::weechat() };
-
         loop {
             let ret = match receiver.recv().await {
                 Some(m) => m,
                 None => {
-                    weechat.print("Error receiving message");
+                    Weechat::print("Error receiving message");
                     return;
                 }
             };
@@ -480,7 +476,7 @@ impl MatrixServer {
                         server.receive_joined_state_event(&r, e)
                     }
                 },
-                Err(e) => weechat.print(&format!("Ruma error {}", e)),
+                Err(e) => Weechat::print(&format!("Ruma error {}", e)),
             };
         }
     }

@@ -52,8 +52,6 @@ Use /matrix [command] help to find out more.\n",
     }
 
     fn add_server(args: &ArgMatches, servers: &Servers, config: &ConfigHandle) {
-        let weechat = unsafe { Weechat::weechat() };
-
         let server_name = args
             .value_of("name")
             .expect("Server name not set but was required");
@@ -79,18 +77,16 @@ Use /matrix [command] help to find out more.\n",
             .expect("Homeserver option wasn't created");
         homeserver_option.set(homeserver.as_str(), true);
 
-        weechat.print(&format!(
+        Weechat::print(&format!(
             "{}: Server {}{}{} has been added.",
             PLUGIN_NAME,
-            weechat.color("chat_server"),
+            Weechat::color("chat_server"),
             server_name,
-            weechat.color("reset")
+            Weechat::color("reset")
         ));
     }
 
     fn delete_server(args: &ArgMatches, servers: &Servers) {
-        let weechat = unsafe { Weechat::weechat() };
-
         let server_name = args
             .value_of("name")
             .expect("Server name not set but was required");
@@ -103,24 +99,24 @@ Use /matrix [command] help to find out more.\n",
             if let Some(s) = server {
                 s.connected()
             } else {
-                weechat.print(&format!(
+                Weechat::print(&format!(
                     "{}: No such server {}{}{} found.",
                     PLUGIN_NAME,
-                    weechat.color("chat_server"),
+                    Weechat::color("chat_server"),
                     server_name,
-                    weechat.color("reset")
+                    Weechat::color("reset")
                 ));
                 return;
             }
         };
 
         if connected {
-            weechat.print(&format!(
+            Weechat::print(&format!(
                 "{}: Server {}{}{} is still connected.",
                 PLUGIN_NAME,
-                weechat.color("chat_server"),
+                Weechat::color("chat_server"),
                 server_name,
-                weechat.color("reset")
+                Weechat::color("reset")
             ));
             return;
         }
@@ -129,29 +125,27 @@ Use /matrix [command] help to find out more.\n",
 
         drop(server);
 
-        weechat.print(&format!(
+        Weechat::print(&format!(
             "{}: Server {}{}{} has been deleted.",
             PLUGIN_NAME,
-            weechat.color("chat_server"),
+            Weechat::color("chat_server"),
             server_name,
-            weechat.color("reset")
+            Weechat::color("reset")
         ));
     }
 
     fn list_servers(servers: &Servers) {
-        let weechat = unsafe { Weechat::weechat() };
-
         if servers.borrow().is_empty() {
             return;
         }
 
-        weechat.print("\nAll Matrix servers:");
+        Weechat::print("\nAll Matrix servers:");
 
         // TODO print out some stats if the server is connected.
         for server in servers.borrow().keys() {
-            weechat.print(&format!(
+            Weechat::print(&format!(
                 "    {}{}",
-                weechat.color("chat_server"),
+                Weechat::color("chat_server"),
                 server
             ));
         }
@@ -175,21 +169,17 @@ Use /matrix [command] help to find out more.\n",
     }
 
     fn server_not_found(server_name: &str) {
-        let weechat = unsafe { Weechat::weechat() };
-
-        weechat.print(&format!(
+        Weechat::print(&format!(
             "{}{}: Server \"{}{}{}\" not found.",
-            weechat.prefix("error"),
+            Weechat::prefix("error"),
             PLUGIN_NAME,
-            weechat.color("chat_server"),
+            Weechat::color("chat_server"),
             server_name,
-            weechat.color("reset")
+            Weechat::color("reset")
         ));
     }
 
     fn connect_command(args: &ArgMatches, servers: &Servers) {
-        let weechat = unsafe { Weechat::weechat() };
-
         let server_names = args
             .values_of("name")
             .expect("Server names not set but were required");
@@ -201,7 +191,7 @@ Use /matrix [command] help to find out more.\n",
             if let Some(s) = server {
                 match s.connect() {
                     Ok(_) => (),
-                    Err(e) => weechat.print(&format!("{:?}", e)),
+                    Err(e) => Weechat::print(&format!("{:?}", e)),
                 }
             } else {
                 Commands::server_not_found(server_name)
@@ -230,7 +220,6 @@ Use /matrix [command] help to find out more.\n",
         _buffer: Buffer,
         args: ArgsWeechat,
     ) {
-        let weechat = unsafe { Weechat::weechat() };
         let server_command = SubCommand::with_name("server")
             .about("List, add or delete Matrix servers.")
             .subcommand(
@@ -288,7 +277,7 @@ Use /matrix [command] help to find out more.\n",
         let matches = match argparse.get_matches_from_safe(args) {
             Ok(m) => m,
             Err(e) => {
-                weechat.print(&e.to_string());
+                Weechat::print(&e.to_string());
                 return;
             }
         };
