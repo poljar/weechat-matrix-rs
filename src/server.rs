@@ -18,10 +18,10 @@ use matrix_nio::{
     AsyncClient, AsyncClientConfig, SyncSettings,
 };
 
-use weechat::JoinHandle;
 use weechat::config::{
     BooleanOptionSettings, ConfigSection, StringOptionSettings,
 };
+use weechat::JoinHandle;
 use weechat::Weechat;
 
 use crate::room_buffer::RoomBuffer;
@@ -335,10 +335,9 @@ impl MatrixServer {
 
         let (tx, rx) = async_channel(1000);
         runtime.spawn(MatrixServer::sync_loop(client.clone(), tx.clone()));
-        let response_receiver = Weechat::spawn(MatrixServer::response_receiver(
-            rx,
-            Rc::downgrade(&self.inner),
-        ));
+        let response_receiver = Weechat::spawn(
+            MatrixServer::response_receiver(rx, Rc::downgrade(&self.inner)),
+        );
 
         let (client_sender, client_receiver) = async_channel(10);
         runtime.spawn(MatrixServer::send_loop(client, client_receiver, tx));

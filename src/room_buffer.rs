@@ -9,8 +9,8 @@ use url::Url;
 use crate::server::Connection;
 use crate::{Config, PLUGIN_NAME};
 use std::cell::RefCell;
-use std::rc::{Rc};
-use weechat::{Buffer, Weechat, BufferSettings};
+use std::rc::Rc;
+use weechat::{Buffer, BufferSettings, Weechat};
 
 pub(crate) struct RoomMember {
     nick: String,
@@ -47,9 +47,9 @@ impl RoomBuffer {
             .input_callback(async move |data, input| {
                 {
                     let (client_rc, room_id) = data.unwrap();
-                    let client_rc = client_rc
-                        .upgrade()
-                        .expect("Can't upgrade server, server has been deleted?");
+                    let client_rc = client_rc.upgrade().expect(
+                        "Can't upgrade server, server has been deleted?",
+                    );
                     let client = client_rc.borrow();
 
                     if client.is_none() {
@@ -67,7 +67,9 @@ impl RoomBuffer {
                 Ok(())
             });
 
-        let buffer = weechat.buffer_new(buffer_settings).expect("Can't create new room buffer");
+        let buffer = weechat
+            .buffer_new(buffer_settings)
+            .expect("Can't create new room buffer");
 
         RoomBuffer {
             server_name: server_name.to_owned(),

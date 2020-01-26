@@ -23,11 +23,11 @@ impl Commands {
             name: "matrix",
             description: "Matrix chat protocol command.",
             args: "server add <server-name> <hostname>[:<port>]||\
-                 server delete|list|listfull <server-name> ||\
-                 connect <server-name> ||\
-                 disconnect <server-name> ||\
-                 reconnect <server-name> ||\
-                 help <matrix-command> [<matrix-subcommand>]",
+                   server delete|list|listfull <server-name> ||\
+                   connect <server-name> ||\
+                   disconnect <server-name> ||\
+                   reconnect <server-name> ||\
+                   help <matrix-command> [<matrix-subcommand>]",
             args_description:
                 "     server: List, add, or remove Matrix servers.
     connect: Connect to Matrix servers.
