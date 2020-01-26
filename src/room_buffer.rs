@@ -8,10 +8,9 @@ use url::Url;
 
 use crate::server::Connection;
 use crate::{Config, PLUGIN_NAME};
-use std::borrow::Cow;
 use std::cell::RefCell;
-use std::rc::{Rc, Weak};
-use weechat::{Buffer, Weechat};
+use std::rc::{Rc};
+use weechat::{Buffer, Weechat, BufferSettings};
 
 pub(crate) struct RoomMember {
     nick: String,
@@ -36,26 +35,47 @@ impl RoomBuffer {
         connected_state: &Rc<RefCell<Option<Connection>>>,
         homeserver: &Url,
         config: &Config,
-        room_id: &str,
+        room_id: String,
         own_user_id: &str,
     ) -> Self {
         let weechat = unsafe { Weechat::weechat() };
 
-        let buffer = weechat.buffer_new(
-            room_id,
-            Some(RoomBuffer::input_callback),
-            Some((Rc::downgrade(connected_state), room_id.to_owned())),
-            Some(RoomBuffer::close_callback),
-            Some(room_id.to_string()),
-        );
+        let state = Rc::downgrade(connected_state);
+
+        let buffer_settings = BufferSettings::new(&room_id.to_string())
+            .input_data((state, room_id.to_owned()))
+            .input_callback(async move |data, input| {
+                {
+                    let (client_rc, room_id) = data.unwrap();
+                    let client_rc = client_rc
+                        .upgrade()
+                        .expect("Can't upgrade server, server has been deleted?");
+                    let client = client_rc.borrow();
+
+                    if client.is_none() {
+                        // buffer.print("Error not connected");
+                        return;
+                    }
+                    if let Some(s) = client.as_ref() {
+                        // TODO check for errors and print them out.
+                        s.send_message(&room_id, &input).await;
+                    }
+                }
+            })
+            .close_callback(|weechat, buffer| {
+                // TODO remove the roombuffer from the server here.
+                Ok(())
+            });
+
+        let buffer = weechat.buffer_new(buffer_settings).expect("Can't create new room buffer");
 
         RoomBuffer {
             server_name: server_name.to_owned(),
             homeserver: homeserver.clone(),
-            room_id: room_id.to_owned(),
+            room_id: room_id.clone(),
             prev_batch: None,
             typing_notice_time: None,
-            room: Room::new(room_id, &own_user_id.to_string()),
+            room: Room::new(&room_id, &own_user_id.to_string()),
             printed_before_ack_queue: Vec::new(),
         }
     }
@@ -64,43 +84,6 @@ impl RoomBuffer {
         let weechat = unsafe { Weechat::weechat() };
         weechat.buffer_search(PLUGIN_NAME, &self.room_id)
     }
-
-    pub fn input_callback(
-        data: &mut (Weak<RefCell<Option<Connection>>>, String),
-        buffer: &Buffer,
-        input: Cow<str>,
-    ) {
-        let (state, room_id) = data;
-        let state = state.clone();
-        let room_id = room_id.clone();
-        let input = input.into_owned();
-
-        {
-            let client_rc = state
-                .upgrade()
-                .expect("Can't upgrade server, server has been deleted?");
-            let client = client_rc.borrow();
-
-            if client.is_none() {
-                buffer.print("Error not connected");
-                return;
-            }
-        }
-
-        let task = async move {
-            let client_rc = state
-                .upgrade()
-                .expect("Can't upgrade server, server has been deleted?");
-            let client = client_rc.borrow();
-
-            if let Some(s) = client.as_ref() {
-                s.send_message(&room_id, &input).await;
-            }
-        };
-        Weechat::spawn(task);
-    }
-
-    pub fn close_callback(data: &String, buffer: &Buffer) {}
 
     pub fn handle_membership_state(&mut self, event: MembershipState) {}
 

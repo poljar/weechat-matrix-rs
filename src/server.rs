@@ -245,7 +245,7 @@ impl InnerServer {
                 &self.connected_state,
                 homeserver,
                 &self.config,
-                room_id,
+                room_id.to_string(),
                 &login_state.user_id,
             );
             self.room_buffers.insert(room_id.to_string(), buffer);
