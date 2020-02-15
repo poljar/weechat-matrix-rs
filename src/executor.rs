@@ -55,7 +55,7 @@ where
                 executor_cb,
                 Some(queue),
             );
-            _FUTURE_HOOK = Some(fd_hook);
+            _FUTURE_HOOK = Some(fd_hook.unwrap());
         }
     }
 
