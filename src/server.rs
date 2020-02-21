@@ -7,9 +7,9 @@ use std::rc::{Rc, Weak};
 use tokio::runtime::Runtime;
 use url::Url;
 
-use matrix_nio::api::r0::session::login::Response as LoginResponse;
+use matrix_sdk::api::r0::session::login::Response as LoginResponse;
 
-use matrix_nio::{
+use matrix_sdk::{
     self,
     events::{
         collections::all::{RoomEvent, StateEvent},

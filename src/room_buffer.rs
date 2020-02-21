@@ -1,9 +1,9 @@
-use matrix_nio::events::collections::all::{RoomEvent, StateEvent};
-use matrix_nio::events::room::member::{MemberEvent, MembershipState};
-use matrix_nio::events::room::message::{
+use matrix_sdk::events::collections::all::{RoomEvent, StateEvent};
+use matrix_sdk::events::room::member::{MemberEvent, MembershipState};
+use matrix_sdk::events::room::message::{
     MessageEvent, MessageEventContent, TextMessageEventContent,
 };
-use matrix_nio::Room;
+use matrix_sdk::Room;
 use url::Url;
 
 use crate::executor::spawn_weechat;
