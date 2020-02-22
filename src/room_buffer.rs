@@ -7,10 +7,10 @@ use matrix_nio::Room;
 use url::Url;
 
 use crate::server::Connection;
-use crate::{Config, PLUGIN_NAME};
+use crate::{Config};
 use std::cell::RefCell;
 use std::rc::Rc;
-use weechat::{Buffer, BufferSettings, Weechat};
+use weechat::{Buffer, BufferHandle, BufferSettings, Weechat};
 
 pub(crate) struct RoomMember {
     nick: String,
@@ -22,6 +22,7 @@ pub(crate) struct RoomMember {
 pub(crate) struct RoomBuffer {
     server_name: String,
     homeserver: Url,
+    buffer_handle: BufferHandle,
     room_id: String,
     prev_batch: Option<String>,
     typing_notice_time: Option<u64>,
@@ -44,21 +45,24 @@ impl RoomBuffer {
 
         let buffer_settings = BufferSettings::new(&room_id.to_string())
             .input_data((state, room_id.to_owned()))
-            .input_callback(async move |data, input| {
+            .input_callback(async move |data, buffer, input| {
                 {
                     let (client_rc, room_id) = data.unwrap();
                     let client_rc = client_rc.upgrade().expect(
                         "Can't upgrade server, server has been deleted?",
                     );
                     let client = client_rc.borrow();
+                    let buffer = buffer.upgrade().expect("Running input cb but buffer is closed");
 
                     if client.is_none() {
-                        // buffer.print("Error not connected");
+                        buffer.print("Error not connected");
                         return;
                     }
                     if let Some(s) = client.as_ref() {
                         // TODO check for errors and print them out.
+                        buffer.print("Error not connected");
                         s.send_message(&room_id, &input).await;
+                        buffer.print("Error not connected");
                     }
                 }
             })
@@ -67,7 +71,7 @@ impl RoomBuffer {
                 Ok(())
             });
 
-        let buffer = weechat
+        let buffer_handle = weechat
             .buffer_new(buffer_settings)
             .expect("Can't create new room buffer");
 
@@ -75,6 +79,7 @@ impl RoomBuffer {
             server_name: server_name.to_owned(),
             homeserver: homeserver.clone(),
             room_id: room_id.clone(),
+            buffer_handle,
             prev_batch: None,
             typing_notice_time: None,
             room: Room::new(&room_id, &own_user_id.to_string()),
@@ -82,15 +87,16 @@ impl RoomBuffer {
         }
     }
 
-    pub fn get_weechat_buffer(&self) -> Option<Buffer> {
-        let weechat = unsafe { Weechat::weechat() };
-        weechat.buffer_search(PLUGIN_NAME, &self.room_id)
+    pub fn weechat_buffer(&mut self) -> Buffer {
+        self.buffer_handle
+            .upgrade()
+            .expect("Buffer got closed but Room is still lingering around")
     }
 
     pub fn handle_membership_state(&mut self, event: MembershipState) {}
 
     pub fn handle_membership_event(&mut self, event: &MemberEvent) {
-        let buffer = self.get_weechat_buffer().unwrap();
+        let buffer = self.weechat_buffer();
         let content = &event.content;
 
         let message = match content.membership {
@@ -122,7 +128,7 @@ impl RoomBuffer {
         timestamp: u64,
         content: &TextMessageEventContent,
     ) {
-        let buffer = self.get_weechat_buffer().unwrap();
+        let buffer = self.weechat_buffer();
         let timestamp = timestamp / 1000;
         let message = format!("{}\t{}", sender, content.body);
         buffer.print_date_tags(timestamp as i64, &[], &message);
