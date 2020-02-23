@@ -9,9 +9,7 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use weechat::{
-    weechat_plugin, ArgsWeechat, Weechat, WeechatPlugin, WeechatResult,
-};
+use weechat::{weechat_plugin, ArgsWeechat, Weechat, WeechatPlugin};
 
 use crate::commands::Commands;
 use crate::config::Config;
@@ -82,7 +80,7 @@ impl Matrix {
 }
 
 impl WeechatPlugin for Matrix {
-    fn init(weechat: &Weechat, _args: ArgsWeechat) -> WeechatResult<Self> {
+    fn init(weechat: &Weechat, _args: ArgsWeechat) -> Result<Self, ()> {
         let servers = Servers::new();
         let config = Config::new(weechat, &servers);
         let commands = Commands::hook_all(weechat, &servers, &config);
@@ -96,7 +94,7 @@ impl WeechatPlugin for Matrix {
         {
             let config_borrow = config.borrow();
             if config_borrow.read().is_err() {
-                return Err(weechat::Error(-1));
+                return Err(());
             }
         }
 

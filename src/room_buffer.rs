@@ -7,10 +7,11 @@ use matrix_nio::Room;
 use url::Url;
 
 use crate::server::Connection;
-use crate::{Config};
+use crate::Config;
 use std::cell::RefCell;
 use std::rc::Rc;
-use weechat::{Buffer, BufferHandle, BufferSettings, Weechat};
+use weechat::buffer::{Buffer, BufferHandle, BufferSettings};
+use weechat::Weechat;
 
 pub(crate) struct RoomMember {
     nick: String,
@@ -52,7 +53,9 @@ impl RoomBuffer {
                         "Can't upgrade server, server has been deleted?",
                     );
                     let client = client_rc.borrow();
-                    let buffer = buffer.upgrade().expect("Running input cb but buffer is closed");
+                    let buffer = buffer
+                        .upgrade()
+                        .expect("Running input cb but buffer is closed");
 
                     if client.is_none() {
                         buffer.print("Error not connected");

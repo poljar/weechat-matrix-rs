@@ -6,8 +6,9 @@ use url::Url;
 use crate::config::{Config, ConfigHandle};
 use crate::PLUGIN_NAME;
 use crate::{MatrixServer, Servers, ServersHandle};
-use weechat::Weechat;
-use weechat::{ArgsWeechat, Buffer, CommandDescription, CommandHook};
+use weechat::buffer::Buffer;
+use weechat::hooks::{CommandDescription, CommandHook};
+use weechat::{ArgsWeechat, Weechat};
 
 pub struct Commands {
     _matrix: CommandHook<(ServersHandle, ConfigHandle)>,
