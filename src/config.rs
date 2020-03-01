@@ -1,3 +1,19 @@
+//! Configuration module
+//!
+//! This is the global plugin configuration.
+//!
+//! Configuration options should be split out into different sections:
+//!
+//! * network
+//! * look
+//! * color
+//! * server
+//!
+//! The server config options are added in the server.rs file.
+//!
+//! The config options created here will be alive as long as the plugin is
+//! loaded so they don't need to be freed manually. The drop implementation of
+//! the section will do so.
 use crate::{MatrixServer, Servers};
 use weechat::config::{
     Conf, ConfigSection, ConfigSectionSettings, OptionChanged,

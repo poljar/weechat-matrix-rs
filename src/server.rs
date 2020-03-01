@@ -1,3 +1,55 @@
+//! Matrix server abstraction.
+//!
+//! A MatrixServer is created for every server the user configures.
+//!
+//! It will create a per server config subsection. If options are added to the
+//! server they need to be removed from the server section when the server is
+//! dropped.
+//!
+//! The server will create a tokio runtime which will spawn two tasks, one for
+//! the sync loop and one to send out room messages.
+//!
+//! If will also spawn a task on the Weechat mainloop, this one waits for
+//! responses from the sync loop.
+//!
+//!
+//! Schematically this looks like the following diagram.
+//!
+//!                                 MatrixServer
+//!   +--------------------------------------------------------------------+
+//!   |                                                                    |
+//!   |         Weechat mainloop                     Tokio runtime         |
+//!   |   +---------------------------+        +------------------------+  |
+//!   |   |                           |        |                        |  |
+//!   |   |  +--------------------+   |        |   +----------------+   |  |
+//!   |   |  |                    |   |        |   |                |   |  |
+//!   |   |  |  Response receiver +<---------------+   Sync loop    |   |  |
+//!   |   |  |                    |   |        |   |                |   |  |
+//!   |   |  |                    |   |        |   |                |   |  |
+//!   |   |  +--------------------+   |        |   +----------------+   |  |
+//!   |   |                           |        |                        |  |
+//!   |   |  +--------------------+   |        |   +----------------+   |  |
+//!   |   |  |                    |   |        |   |                |   |  |
+//!   |   |  |  Roombuffer input  +--------------->+   Send loop    |   |  |
+//!   |   |  |      callback      +<---------------+                |   |  |
+//!   |   |  |                    |   |        |   |                |   |  |
+//!   |   |  +--------------------+   |        |   +----------------+   |  |
+//!   |   |                           |        |                        |  |
+//!   |   +---------------------------+        +------------------------+  |
+//!   |                                                                    |
+//!   +--------------------------------------------------------------------+
+//!
+//!
+//! The tokio runtime and response receiver task will be alive only if the user
+//! connects to the server while the room buffer input callback will print an
+//! error if the server is disconnected.
+//!
+//! The server holds all the rooms which in turn hold the buffers, users, and
+//! room metadata.
+//!
+//! The response receiver forwards events to the correct room. The response
+//! receiver fetches events individually from a mpsc channel. This makes sure
+//! that processing events will not block the Weechat mainloop for too long.
 use async_std::sync::channel as async_channel;
 use async_std::sync::{Receiver, Sender};
 use std::cell::RefCell;
@@ -6,9 +58,9 @@ use std::rc::{Rc, Weak};
 use tokio::runtime::Runtime;
 use url::Url;
 
-use matrix_nio::api::r0::session::login::Response as LoginResponse;
+use matrix_sdk::api::r0::session::login::Response as LoginResponse;
 
-use matrix_nio::{
+use matrix_sdk::{
     self,
     events::{
         collections::all::{RoomEvent, StateEvent},
@@ -66,6 +118,8 @@ pub struct LoginState {
 pub struct Connection {
     client_channel: Sender<ServerMessage>,
     response_receiver: JoinHandle<(), ()>,
+    // TODO move the runtime into the plugin, once we're able to cancel tokio
+    // tasks.
     runtime: Runtime,
 }
 
