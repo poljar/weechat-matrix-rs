@@ -48,6 +48,7 @@ pub enum ServerMessage {
 #[derive(Default)]
 pub struct ServerSettings {
     homeserver: Option<Url>,
+    proxy: Option<Url>,
     autoconnect: bool,
 }
 
@@ -167,6 +168,7 @@ impl MatrixServer {
             .expect("Can't create autoconnect option");
 
         let server = server_copy;
+        let server_copy = server.clone();
 
         let homeserver =
             StringOptionSettings::new(format!("{}.homeserver", server_name))
@@ -187,7 +189,7 @@ impl MatrixServer {
                     let mut server = server_ref.borrow_mut();
                     let homeserver = Url::parse(option.value().as_ref()).expect(
                 "Can't parse homeserver URL, did the check callback fail?",
-            );
+                    );
 
                     server.settings.homeserver = Some(homeserver)
                 });
@@ -195,6 +197,35 @@ impl MatrixServer {
         server_section
             .new_string_option(homeserver)
             .expect("Can't create homeserver option");
+
+        let server = server_copy;
+
+        let proxy = StringOptionSettings::new(format!("{}.proxy", server_name))
+            .set_check_callback(|_, _, value| {
+                if value.is_empty() {
+                    true
+                } else {
+                    MatrixServer::parse_homeserver_url(value.to_string())
+                        .is_ok()
+                }
+            })
+            .set_change_callback(move |_, option| {
+                let server = server.clone();
+                let server_ref = server
+                    .upgrade()
+                    .expect("Server got deleted while server config is alive");
+
+                let mut server = server_ref.borrow_mut();
+                let proxy = Url::parse(option.value().as_ref()).expect(
+                    "Can't parse proxy URL, did the check callback fail?",
+                );
+
+                server.settings.proxy = Some(proxy)
+            });
+
+        server_section
+            .new_string_option(proxy)
+            .expect("Can't create proxy option");
     }
 
     pub fn connected(&self) -> bool {
@@ -290,10 +321,14 @@ impl InnerServer {
             self.settings.homeserver.as_ref().ok_or_else(|| {
                 ServerError::StartError("Homeserver not configured".to_owned())
             })?;
-        let client_config = AsyncClientConfig::new()
-            .proxy("http://localhost:8080")
-            .unwrap()
-            .disable_ssl_verification();
+
+        let mut client_config = AsyncClientConfig::new();
+
+        if let Some(proxy) = &self.settings.proxy {
+            client_config = client_config.proxy(proxy.as_str())
+                .unwrap()
+                .disable_ssl_verification();
+        }
 
         let client = AsyncClient::new_with_config(
             homeserver.clone(),
