@@ -245,6 +245,10 @@ Use /matrix [command] help to find out more.\n",
                             .value_name("server-name")
                             .required(true),
                     ),
+            )
+            .subcommand(
+                SubCommand::with_name("list")
+                    .about("List the configured Matrix servers.")
             );
 
         let argparse = Argparse::new("matrix")
