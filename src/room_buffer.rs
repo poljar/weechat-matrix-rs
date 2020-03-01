@@ -1,16 +1,40 @@
-use matrix_nio::events::collections::all::{RoomEvent, StateEvent};
-use matrix_nio::events::room::member::{MemberEvent, MembershipState};
-use matrix_nio::events::room::message::{
+//! Room buffer module.
+//!
+//! This module implements creates buffers that processes and prints out all the
+//! user visible events
+//!
+//! Care should be taken when handling events. Events can be state events or
+//! timeline events and they can come from a sync response or from a room
+//! messages response.
+//!
+//! Events coming from a sync response and are part of the timeline need to be
+//! printed out and they need to change the buffer state (e.g. when someone
+//! joins, they need to be added to the nicklist).
+//!
+//! Events coming from a sync response and are part of the room state only need
+//! to change the buffer state.
+//!
+//! Events coming from a room messages response, meaning they are old events,
+//! should never change the room state. They only should be printed out.
+//!
+//! Care should be taken to model this in a way that event formatting methods
+//! are pure functions so they can be reused e.g. if we print messages that
+//! we're sending ourselves before we receive them in a sync response, or if we
+//! decrypt a previously undecryptable event.
+use matrix_sdk::events::collections::all::{RoomEvent, StateEvent};
+use matrix_sdk::events::room::encrypted::EncryptedEvent;
+use matrix_sdk::events::room::member::{MemberEvent, MembershipState};
+use matrix_sdk::events::room::message::{
     MessageEvent, MessageEventContent, TextMessageEventContent,
 };
-use matrix_nio::Room;
+use matrix_sdk::Room;
 use url::Url;
 
 use crate::server::Connection;
 use crate::Config;
 use std::cell::RefCell;
 use std::rc::Rc;
-use weechat::buffer::{Buffer, BufferHandle, BufferSettings};
+use weechat::buffer::{Buffer, BufferHandle, BufferSettings, NickSettings};
 use weechat::Weechat;
 
 pub(crate) struct RoomMember {
@@ -40,8 +64,6 @@ impl RoomBuffer {
         room_id: String,
         own_user_id: &str,
     ) -> Self {
-        let weechat = unsafe { Weechat::weechat() };
-
         let state = Rc::downgrade(connected_state);
 
         let buffer_settings = BufferSettings::new(&room_id.to_string())
@@ -63,20 +85,24 @@ impl RoomBuffer {
                     }
                     if let Some(s) = client.as_ref() {
                         // TODO check for errors and print them out.
-                        buffer.print("Error not connected");
                         s.send_message(&room_id, &input).await;
-                        buffer.print("Error not connected");
                     }
                 }
             })
             .close_callback(|weechat, buffer| {
                 // TODO remove the roombuffer from the server here.
+                // TODO leave the room if the plugin isn't unloading.
                 Ok(())
             });
 
-        let buffer_handle = weechat
-            .buffer_new(buffer_settings)
+        let buffer_handle = Weechat::buffer_new(buffer_settings)
             .expect("Can't create new room buffer");
+
+        let buffer = buffer_handle
+            .upgrade()
+            .expect("Can't upgrade newly created buffer");
+
+        buffer.enable_nicklist();
 
         RoomBuffer {
             server_name: server_name.to_owned(),
@@ -96,11 +122,32 @@ impl RoomBuffer {
             .expect("Buffer got closed but Room is still lingering around")
     }
 
-    pub fn handle_membership_state(&mut self, event: MembershipState) {}
-
-    pub fn handle_membership_event(&mut self, event: &MemberEvent) {
-        let buffer = self.weechat_buffer();
+    pub fn handle_membership_event(
+        &mut self,
+        event: &MemberEvent,
+        print_message: bool,
+    ) {
+        let mut buffer = self.weechat_buffer();
         let content = &event.content;
+
+        match content.membership {
+            MembershipState::Join => {
+                let settings = NickSettings::new(&event.state_key);
+                let _ = buffer.add_nick(settings);
+            }
+            MembershipState::Leave => {
+                buffer.remove_nick(&event.state_key);
+            }
+            MembershipState::Ban => {
+                buffer.remove_nick(&event.state_key);
+            }
+            _ => (),
+        }
+
+        // The state event should not be printed out, return early here.
+        if !print_message {
+            return;
+        }
 
         let message = match content.membership {
             MembershipState::Join => "joined",
@@ -119,10 +166,6 @@ impl RoomBuffer {
 
         buffer.print_date_tags(timestamp as i64, &[], &message);
         self.room.handle_membership(&event);
-    }
-
-    pub fn handle_state_event(&mut self, event: StateEvent) {
-        self.room.receive_state_event(&event);
     }
 
     pub fn handle_text_message(
@@ -149,13 +192,32 @@ impl RoomBuffer {
         }
     }
 
+    pub fn handle_encrypted_message(&mut self, event: &EncryptedEvent) {
+        let buffer = self.weechat_buffer();
+
+        let sender = &event.sender;
+        let timestamp: u64 = event.origin_server_ts.into();
+        let timestamp = timestamp / 1000;
+        let message = format!("{}\t{}", sender, "Unable to decrypt message");
+        buffer.print_date_tags(timestamp as i64, &[], &message);
+    }
+
     pub fn handle_room_event(&mut self, event: RoomEvent) {
         match &event {
-            RoomEvent::RoomMember(e) => self.handle_membership_event(e),
+            RoomEvent::RoomMember(e) => self.handle_membership_event(e, true),
             RoomEvent::RoomMessage(m) => self.handle_room_message(m),
+            RoomEvent::RoomEncrypted(m) => self.handle_encrypted_message(m),
             event => {
                 self.room.receive_timeline_event(event);
             }
         }
+    }
+
+    pub fn handle_state_event(&mut self, event: StateEvent) {
+        match &event {
+            StateEvent::RoomMember(e) => self.handle_membership_event(e, false),
+            _ => (),
+        }
+        self.room.receive_state_event(&event);
     }
 }

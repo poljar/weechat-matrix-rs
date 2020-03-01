@@ -37,8 +37,7 @@ fn server_write_cb(
 
 impl Config {
     pub fn new(weechat: &Weechat, servers: &Servers) -> Config {
-        let config = weechat
-            .config_new("matrix-rust")
+        let config = Weechat::config_new("matrix-rust")
             .expect("Can't create new config");
 
         let servers = servers.clone_weak();
