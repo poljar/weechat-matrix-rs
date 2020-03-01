@@ -334,13 +334,13 @@ impl MatrixServer {
         };
 
         let (tx, rx) = async_channel(1000);
-        runtime.spawn(MatrixServer::sync_loop(client.clone(), tx.clone()));
+        runtime.spawn(MatrixServer::sync_loop(client.clone(), tx));
         let response_receiver = Weechat::spawn(
             MatrixServer::response_receiver(rx, Rc::downgrade(&self.inner)),
         );
 
         let (client_sender, client_receiver) = async_channel(10);
-        runtime.spawn(MatrixServer::send_loop(client, client_receiver, tx));
+        runtime.spawn(MatrixServer::send_loop(client, client_receiver));
 
         let mut connected_state = server.connected_state.borrow_mut();
 
@@ -485,7 +485,6 @@ impl MatrixServer {
     pub async fn send_loop(
         mut client: AsyncClient,
         channel: Receiver<ServerMessage>,
-        sender: Sender<Result<ThreadMessage, String>>,
     ) {
         while let Some(message) = channel.recv().await {
             match message {
@@ -498,6 +497,9 @@ impl MatrixServer {
                             relates_to: None,
                         });
 
+                    // TODO awaiting here means we can only send one message
+                    // at a time, we need to spawn a task here and return a
+                    // oneshot channel that the caller can await.
                     let ret = client.room_send(&room_id, content).await;
 
                     match ret {
