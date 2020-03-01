@@ -10,9 +10,9 @@ name = "matrix"
 crate-type = ["dylib"]
 
 [dependencies]
-libc = "0.2.66"
+libc = "0.2.67"
 url = "2.1.1"
-tokio = { version = "0.2.9", features = [ "rt-threaded" ] }
+tokio = { version = "0.2.13", features = [ "rt-threaded" ] }
 async-std = { version = "1.5.0", features = [ "unstable" ] }
 clap = "2.33.0"
 
