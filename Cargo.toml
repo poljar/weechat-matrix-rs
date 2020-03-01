@@ -18,5 +18,5 @@ clap = "2.33.0"
 
 matrix-sdk = { git = "https://github.com/matrix-org/matrix-rust-sdk" }
 
-weechat = { path = "/home/poljar/werk/weechat/rust-weechat/weechat-rs/", features = ["async-executor"] }
-weechat-sys = { path = "/home/poljar/werk/weechat/rust-weechat/weechat-sys" }
+weechat = { git = "https://github.com/poljar/rust-weechat", features = ["async-executor"] }
+weechat-sys = { git = "https://github.com/poljar/rust-weechat" }
