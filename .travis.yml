@@ -1,0 +1,12 @@
+language: rust
+
+jobs:
+  include:
+    - os: linux
+      dist: bionic
+
+    - os: osx
+
+script:
+  - cargo build
+  - cargo fmt --all -- --check
