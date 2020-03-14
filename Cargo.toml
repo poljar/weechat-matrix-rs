@@ -16,7 +16,11 @@ tokio = { version = "0.2.13", features = [ "rt-threaded" ] }
 async-std = { version = "1.5.0", features = [ "unstable" ] }
 clap = "2.33.0"
 
-matrix-sdk = { git = "https://github.com/matrix-org/matrix-rust-sdk" }
-
 weechat = { git = "https://github.com/poljar/rust-weechat", features = ["async-executor"] }
 weechat-sys = { git = "https://github.com/poljar/rust-weechat" }
+
+[dependencies.matrix-sdk]
+git = "https://github.com/matrix-org/matrix-rust-sdk/"
+branch = "encryption"
+default-features = false
+features = ["encryption"]

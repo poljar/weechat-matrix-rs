@@ -475,7 +475,7 @@ impl MatrixServer {
         mut client: AsyncClient,
         channel: Sender<Result<ThreadMessage, String>>,
     ) {
-        if !client.logged_in() {
+        if !client.logged_in().await {
             let ret = client.login("example", "wordpass", None).await;
 
             match ret {
@@ -491,7 +491,7 @@ impl MatrixServer {
             }
         }
 
-        let sync_token = client.sync_token();
+        let sync_token = client.sync_token().await;
         let sync_settings = SyncSettings::new()
             .timeout(DEFAULT_SYNC_TIMEOUT)
             .expect("Invalid sync timeout");
