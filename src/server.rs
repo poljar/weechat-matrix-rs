@@ -289,16 +289,16 @@ impl MatrixServer {
 
         let username =
             StringOptionSettings::new(format!("{}.username", server_name))
-            .set_change_callback(move |_, option| {
-                let server = server.clone();
+                .set_change_callback(move |_, option| {
+                    let server = server.clone();
 
-                let server_ref = server.upgrade().expect(
-                    "Server got deleted while server config is alive"
-                );
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
 
-                let mut server = server_ref.borrow_mut();
-                server.settings.username = option.value().to_string();
-            });
+                    let mut server = server_ref.borrow_mut();
+                    server.settings.username = option.value().to_string();
+                });
 
         server_section
             .new_string_option(username)
@@ -308,16 +308,16 @@ impl MatrixServer {
 
         let password =
             StringOptionSettings::new(format!("{}.password", server_name))
-            .set_change_callback(move |_, option| {
-                let server = server.clone();
+                .set_change_callback(move |_, option| {
+                    let server = server.clone();
 
-                let server_ref = server.upgrade().expect(
-                    "Server got deleted while server config is alive"
-                );
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
 
-                let mut server = server_ref.borrow_mut();
-                server.settings.password = option.value().to_string();
-            });
+                    let mut server = server_ref.borrow_mut();
+                    server.settings.password = option.value().to_string();
+                });
 
         server_section
             .new_string_option(password)
@@ -466,12 +466,11 @@ impl MatrixServer {
         };
 
         let (tx, rx) = async_channel(1000);
-        runtime.spawn(
-            MatrixServer::sync_loop(
-                client.clone(),
-                tx,
-                server.settings.username.to_string(),
-                server.settings.password.to_string(),
+        runtime.spawn(MatrixServer::sync_loop(
+            client.clone(),
+            tx,
+            server.settings.username.to_string(),
+            server.settings.password.to_string(),
         ));
         let response_receiver = Weechat::spawn(
             MatrixServer::response_receiver(rx, Rc::downgrade(&self.inner)),
