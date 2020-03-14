@@ -102,6 +102,8 @@ pub struct ServerSettings {
     homeserver: Option<Url>,
     proxy: Option<Url>,
     autoconnect: bool,
+    username: String,
+    password: String,
 }
 
 impl ServerSettings {
@@ -253,6 +255,7 @@ impl MatrixServer {
             .expect("Can't create homeserver option");
 
         let server = server_copy;
+        let server_copy = server.clone();
 
         let proxy = StringOptionSettings::new(format!("{}.proxy", server_name))
             .set_check_callback(|_, _, value| {
@@ -280,6 +283,45 @@ impl MatrixServer {
         server_section
             .new_string_option(proxy)
             .expect("Can't create proxy option");
+
+        let server = server_copy;
+        let server_copy = server.clone();
+
+        let username =
+            StringOptionSettings::new(format!("{}.username", server_name))
+            .set_change_callback(move |_, option| {
+                let server = server.clone();
+
+                let server_ref = server.upgrade().expect(
+                    "Server got deleted while server config is alive"
+                );
+
+                let mut server = server_ref.borrow_mut();
+                server.settings.username = option.value().to_string();
+            });
+
+        server_section
+            .new_string_option(username)
+            .expect("Can't create username option");
+
+        let server = server_copy;
+
+        let password =
+            StringOptionSettings::new(format!("{}.password", server_name))
+            .set_change_callback(move |_, option| {
+                let server = server.clone();
+
+                let server_ref = server.upgrade().expect(
+                    "Server got deleted while server config is alive"
+                );
+
+                let mut server = server_ref.borrow_mut();
+                server.settings.password = option.value().to_string();
+            });
+
+        server_section
+            .new_string_option(password)
+            .expect("Can't create password option");
     }
 
     pub fn connected(&self) -> bool {
@@ -424,7 +466,13 @@ impl MatrixServer {
         };
 
         let (tx, rx) = async_channel(1000);
-        runtime.spawn(MatrixServer::sync_loop(client.clone(), tx));
+        runtime.spawn(
+            MatrixServer::sync_loop(
+                client.clone(),
+                tx,
+                server.settings.username.to_string(),
+                server.settings.password.to_string(),
+        ));
         let response_receiver = Weechat::spawn(
             MatrixServer::response_receiver(rx, Rc::downgrade(&self.inner)),
         );
@@ -475,9 +523,11 @@ impl MatrixServer {
     pub async fn sync_loop(
         mut client: AsyncClient,
         channel: Sender<Result<ThreadMessage, String>>,
+        username: String,
+        password: String,
     ) {
         if !client.logged_in().await {
-            let ret = client.login("example", "wordpass", None).await;
+            let ret = client.login(username, password, None).await;
 
             match ret {
                 Ok(response) => {
