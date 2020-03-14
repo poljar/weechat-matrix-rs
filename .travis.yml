@@ -1,4 +1,5 @@
 language: rust
+rust: nightly
 
 jobs:
   include:
@@ -6,6 +7,9 @@ jobs:
       dist: bionic
 
     - os: osx
+
+before_script:
+  - rustup component add rustfmt
 
 script:
   - cargo build
