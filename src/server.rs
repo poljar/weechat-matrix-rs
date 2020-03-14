@@ -379,7 +379,8 @@ impl InnerServer {
         let mut client_config = AsyncClientConfig::new();
 
         if let Some(proxy) = &self.settings.proxy {
-            client_config = client_config.proxy(proxy.as_str())
+            client_config = client_config
+                .proxy(proxy.as_str())
                 .unwrap()
                 .disable_ssl_verification();
         }

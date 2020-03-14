@@ -248,7 +248,7 @@ Use /matrix [command] help to find out more.\n",
             )
             .subcommand(
                 SubCommand::with_name("list")
-                    .about("List the configured Matrix servers.")
+                    .about("List the configured Matrix servers."),
             );
 
         let argparse = Argparse::new("matrix")
