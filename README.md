@@ -20,3 +20,21 @@ This project is a work in progress and doesn't do much yet. It can connect
 to a Matrix server and send messages.
 
 If you are interested in helping out take a look at the issue tracker.
+
+# Build
+
+To build this project a
+[nightly](https://github.com/rust-lang/rustup#working-with-nightly-rust)
+version of Rust is required.
+
+After Rust is installed the plugin can be compiled with:
+
+    cargo build
+
+On Linux this creates a `libmatrix.so` file in the `target/debug/` folder, this
+file needs to be renamed to `matrix.so` and copied to your Weechat plugin
+directory. A plugin directory can be created in your `$WEECHAT_HOME` folder, by
+default `.weechat/plugins/`.
+
+Alternatively `make install` will build and install the plugin in your
+`$WEECHAT_HOME` as well.
