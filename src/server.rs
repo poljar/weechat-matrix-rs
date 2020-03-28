@@ -54,6 +54,7 @@ use async_std::sync::channel as async_channel;
 use async_std::sync::{Receiver, Sender};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::time::Duration;
 use std::rc::{Rc, Weak};
 use tokio::runtime::Runtime;
 use url::Url;
@@ -80,7 +81,7 @@ use crate::room_buffer::RoomBuffer;
 use crate::Config;
 use crate::PLUGIN_NAME;
 
-const DEFAULT_SYNC_TIMEOUT: i32 = 30000;
+const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub enum ThreadMessage {
     LoginMessage(LoginResponse),
@@ -526,7 +527,7 @@ impl MatrixServer {
         password: String,
     ) {
         if !client.logged_in().await {
-            let ret = client.login(username, password, None).await;
+            let ret = client.login(username, password, None, Some("Weechat-Matrix".to_owned())).await;
 
             match ret {
                 Ok(response) => {
@@ -543,8 +544,7 @@ impl MatrixServer {
 
         let sync_token = client.sync_token().await;
         let sync_settings = SyncSettings::new()
-            .timeout(DEFAULT_SYNC_TIMEOUT)
-            .expect("Invalid sync timeout");
+            .timeout(DEFAULT_SYNC_TIMEOUT);
 
         let sync_settings = if let Some(t) = sync_token {
             sync_settings.token(t)

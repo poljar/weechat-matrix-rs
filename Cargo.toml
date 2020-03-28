@@ -10,7 +10,7 @@ name = "matrix"
 crate-type = ["dylib"]
 
 [dependencies]
-libc = "0.2.67"
+libc = "0.2.68"
 url = "2.1.1"
 tokio = { version = "0.2.13", features = [ "rt-threaded" ] }
 async-std = { version = "1.5.0", features = [ "unstable" ] }
@@ -21,6 +21,5 @@ weechat-sys = { git = "https://github.com/poljar/rust-weechat" }
 
 [dependencies.matrix-sdk]
 git = "https://github.com/matrix-org/matrix-rust-sdk/"
-branch = "encryption"
 default-features = false
-features = ["encryption"]
+features = ["encryption", "sqlite-cryptostore"]
