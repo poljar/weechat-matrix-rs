@@ -126,7 +126,9 @@ impl RoomBuffer {
     pub fn calculate_buffer_name(&self) -> String {
         let room_name = self.room.calculate_name();
 
-        if room_name.starts_with("#") {
+        if room_name == "#" {
+            "##".to_owned()
+        } else if room_name.starts_with("#") {
             room_name
         } else {
             // TODO: only do this for non-direct chats
