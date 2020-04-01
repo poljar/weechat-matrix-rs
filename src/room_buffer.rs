@@ -134,6 +134,11 @@ impl RoomBuffer {
         }
     }
 
+    pub fn update_buffer_name(&mut self) {
+        let name = self.calculate_buffer_name();
+        self.weechat_buffer().set_name(&name)
+    }
+
     pub fn handle_membership_event(
         &mut self,
         event: &MemberEvent,
@@ -178,6 +183,10 @@ impl RoomBuffer {
 
         buffer.print_date_tags(timestamp as i64, &[], &message);
         self.room.handle_membership(&event);
+
+        // Names of rooms without display names can get affected by the member list so we need to
+        // update them.
+        self.update_buffer_name();
     }
 
     pub fn handle_text_message(
@@ -216,8 +225,7 @@ impl RoomBuffer {
 
     pub fn handle_room_name(&mut self, event: &NameEvent) {
         self.room.handle_room_name(event);
-        let name = self.calculate_buffer_name();
-        self.weechat_buffer().set_name(&name)
+        self.update_buffer_name();
     }
 
     pub fn handle_room_event(&mut self, event: RoomEvent) {
