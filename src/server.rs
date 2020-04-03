@@ -63,12 +63,12 @@ use matrix_sdk::api::r0::session::login::Response as LoginResponse;
 
 use matrix_sdk::{
     self,
-    identifiers::{RoomId, UserId},
     events::{
         collections::all::{RoomEvent, StateEvent},
         room::message::{MessageEventContent, TextMessageEventContent},
         EventResult,
     },
+    identifiers::{RoomId, UserId},
     AsyncClient, AsyncClientConfig, SyncSettings,
 };
 

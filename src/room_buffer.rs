@@ -23,12 +23,12 @@
 //! decrypt a previously undecryptable event.
 use matrix_sdk::events::collections::all::{RoomEvent, StateEvent};
 use matrix_sdk::events::room::encrypted::EncryptedEvent;
-use matrix_sdk::identifiers::{RoomId, UserId};
 use matrix_sdk::events::room::member::{MemberEvent, MembershipState};
 use matrix_sdk::events::room::message::{
     MessageEvent, MessageEventContent, TextMessageEventContent,
 };
 use matrix_sdk::events::room::name::NameEvent;
+use matrix_sdk::identifiers::{RoomId, UserId};
 use matrix_sdk::Room;
 use url::Url;
 
