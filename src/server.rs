@@ -63,6 +63,7 @@ use matrix_sdk::api::r0::session::login::Response as LoginResponse;
 
 use matrix_sdk::{
     self,
+    identifiers::{RoomId, UserId},
     events::{
         collections::all::{RoomEvent, StateEvent},
         room::message::{MessageEventContent, TextMessageEventContent},
@@ -85,8 +86,8 @@ const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub enum ThreadMessage {
     LoginMessage(LoginResponse),
-    SyncState(String, StateEvent),
-    SyncEvent(String, RoomEvent),
+    SyncState(RoomId, StateEvent),
+    SyncEvent(RoomId, RoomEvent),
 }
 
 #[derive(Debug)]
@@ -95,7 +96,7 @@ pub enum ServerError {
 }
 
 pub enum ServerMessage {
-    RoomSend(String, String),
+    RoomSend(RoomId, String),
 }
 
 #[derive(Default)]
@@ -114,7 +115,7 @@ impl ServerSettings {
 }
 
 pub struct LoginState {
-    user_id: String,
+    user_id: UserId,
     device_id: String,
 }
 
@@ -127,7 +128,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub async fn send_message(&self, room_id: &str, message: &str) {
+    pub async fn send_message(&self, room_id: &RoomId, message: &str) {
         self.client_channel
             .send(ServerMessage::RoomSend(
                 room_id.to_owned(),
@@ -145,7 +146,7 @@ pub(crate) struct MatrixServer {
 
 pub(crate) struct InnerServer {
     server_name: Rc<String>,
-    room_buffers: HashMap<String, RoomBuffer>,
+    room_buffers: HashMap<RoomId, RoomBuffer>,
     settings: ServerSettings,
     config: Config,
     client: Option<AsyncClient>,
@@ -356,7 +357,7 @@ impl Drop for MatrixServer {
 impl InnerServer {
     pub(crate) fn get_or_create_room(
         &mut self,
-        room_id: &str,
+        room_id: &RoomId,
     ) -> &mut RoomBuffer {
         if !self.room_buffers.contains_key(room_id) {
             let homeserver = self
@@ -373,10 +374,10 @@ impl InnerServer {
                 &self.connected_state,
                 homeserver,
                 &self.config,
-                room_id.to_string(),
+                room_id.clone(),
                 &login_state.user_id,
             );
-            self.room_buffers.insert(room_id.to_string(), buffer);
+            self.room_buffers.insert(room_id.clone(), buffer);
         }
 
         self.room_buffers.get_mut(room_id).unwrap()
@@ -389,7 +390,7 @@ impl InnerServer {
 
     pub(crate) fn receive_joined_state_event(
         &mut self,
-        room_id: &str,
+        room_id: &RoomId,
         event: StateEvent,
     ) {
         let room = self.get_or_create_room(room_id);
@@ -398,7 +399,7 @@ impl InnerServer {
 
     pub(crate) fn receive_joined_timeline_event(
         &mut self,
-        room_id: &str,
+        room_id: &RoomId,
         event: RoomEvent,
     ) {
         let room = self.get_or_create_room(room_id);
@@ -407,7 +408,7 @@ impl InnerServer {
 
     pub fn receive_login(&mut self, response: LoginResponse) {
         let login_state = LoginState {
-            user_id: response.user_id.to_string(),
+            user_id: response.user_id,
             device_id: response.device_id,
         };
         self.login_state = Some(login_state);
@@ -568,7 +569,7 @@ impl MatrixServer {
                         if let EventResult::Ok(e) = event {
                             channel
                                 .send(Ok(ThreadMessage::SyncState(
-                                    room_id.to_string(),
+                                    room_id.clone(),
                                     e,
                                 )))
                                 .await;
@@ -578,7 +579,7 @@ impl MatrixServer {
                         if let EventResult::Ok(e) = event {
                             channel
                                 .send(Ok(ThreadMessage::SyncEvent(
-                                    room_id.to_string(),
+                                    room_id.clone(),
                                     e,
                                 )))
                                 .await;

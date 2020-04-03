@@ -23,6 +23,7 @@
 //! decrypt a previously undecryptable event.
 use matrix_sdk::events::collections::all::{RoomEvent, StateEvent};
 use matrix_sdk::events::room::encrypted::EncryptedEvent;
+use matrix_sdk::identifiers::{RoomId, UserId};
 use matrix_sdk::events::room::member::{MemberEvent, MembershipState};
 use matrix_sdk::events::room::message::{
     MessageEvent, MessageEventContent, TextMessageEventContent,
@@ -49,7 +50,7 @@ pub(crate) struct RoomBuffer {
     server_name: String,
     homeserver: Url,
     buffer_handle: BufferHandle,
-    room_id: String,
+    room_id: RoomId,
     prev_batch: Option<String>,
     typing_notice_time: Option<u64>,
     room: Room,
@@ -62,8 +63,8 @@ impl RoomBuffer {
         connected_state: &Rc<RefCell<Option<Connection>>>,
         homeserver: &Url,
         config: &Config,
-        room_id: String,
-        own_user_id: &str,
+        room_id: RoomId,
+        own_user_id: &UserId,
     ) -> Self {
         let state = Rc::downgrade(connected_state);
 
@@ -112,7 +113,7 @@ impl RoomBuffer {
             buffer_handle,
             prev_batch: None,
             typing_notice_time: None,
-            room: Room::new(&room_id, &own_user_id.to_string()),
+            room: Room::new(&room_id, &own_user_id),
             printed_before_ack_queue: Vec::new(),
         }
     }
