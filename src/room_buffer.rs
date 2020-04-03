@@ -27,6 +27,7 @@ use matrix_sdk::events::room::member::{MemberEvent, MembershipState};
 use matrix_sdk::events::room::message::{
     MessageEvent, MessageEventContent, TextMessageEventContent,
 };
+use matrix_sdk::events::room::name::NameEvent;
 use matrix_sdk::Room;
 use url::Url;
 
@@ -122,6 +123,24 @@ impl RoomBuffer {
             .expect("Buffer got closed but Room is still lingering around")
     }
 
+    pub fn calculate_buffer_name(&self) -> String {
+        let room_name = self.room.calculate_name();
+
+        if room_name == "#" {
+            "##".to_owned()
+        } else if room_name.starts_with("#") {
+            room_name
+        } else {
+            // TODO: only do this for non-direct chats
+            format!("#{}", room_name)
+        }
+    }
+
+    pub fn update_buffer_name(&mut self) {
+        let name = self.calculate_buffer_name();
+        self.weechat_buffer().set_name(&name)
+    }
+
     pub fn handle_membership_event(
         &mut self,
         event: &MemberEvent,
@@ -166,6 +185,10 @@ impl RoomBuffer {
 
         buffer.print_date_tags(timestamp as i64, &[], &message);
         self.room.handle_membership(&event);
+
+        // Names of rooms without display names can get affected by the member list so we need to
+        // update them.
+        self.update_buffer_name();
     }
 
     pub fn handle_text_message(
@@ -202,11 +225,17 @@ impl RoomBuffer {
         buffer.print_date_tags(timestamp as i64, &[], &message);
     }
 
+    pub fn handle_room_name(&mut self, event: &NameEvent) {
+        self.room.handle_room_name(event);
+        self.update_buffer_name();
+    }
+
     pub fn handle_room_event(&mut self, event: RoomEvent) {
         match &event {
             RoomEvent::RoomMember(e) => self.handle_membership_event(e, true),
             RoomEvent::RoomMessage(m) => self.handle_room_message(m),
             RoomEvent::RoomEncrypted(m) => self.handle_encrypted_message(m),
+            RoomEvent::RoomName(n) => self.handle_room_name(n),
             event => {
                 self.room.receive_timeline_event(event);
             }
@@ -216,6 +245,7 @@ impl RoomBuffer {
     pub fn handle_state_event(&mut self, event: StateEvent) {
         match &event {
             StateEvent::RoomMember(e) => self.handle_membership_event(e, false),
+            StateEvent::RoomName(n) => self.handle_room_name(n),
             _ => (),
         }
         self.room.receive_state_event(&event);
