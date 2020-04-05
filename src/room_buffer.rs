@@ -116,7 +116,7 @@ impl RoomBuffer {
                 Ok(())
             });
 
-        let buffer_handle = Weechat::buffer_new_async(buffer_settings)
+        let buffer_handle = Weechat::buffer_new_with_async(buffer_settings)
             .expect("Can't create new room buffer");
 
         let buffer = buffer_handle
