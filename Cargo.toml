@@ -15,6 +15,7 @@ url = "2.1.1"
 tokio = { version = "0.2.13", features = [ "rt-threaded" ] }
 async-std = { version = "1.5.0", features = [ "unstable" ] }
 clap = "2.33.0"
+async-trait = "0.1.29"
 
 weechat = { git = "https://github.com/poljar/rust-weechat", features = ["async-executor"] }
 weechat-sys = { git = "https://github.com/poljar/rust-weechat" }

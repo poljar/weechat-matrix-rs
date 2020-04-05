@@ -32,11 +32,16 @@ use matrix_sdk::identifiers::{RoomId, UserId};
 use matrix_sdk::Room;
 use url::Url;
 
+use async_trait::async_trait;
+
 use crate::server::Connection;
 use crate::Config;
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
-use weechat::buffer::{Buffer, BufferHandle, BufferSettings, NickSettings};
+use weechat::buffer::{
+    Buffer, BufferHandle, BufferInputCallbackAsync, BufferSettingsAsync,
+    NickSettings,
+};
 use weechat::Weechat;
 
 pub(crate) struct RoomMember {
@@ -46,15 +51,41 @@ pub(crate) struct RoomMember {
     color: String,
 }
 
-pub(crate) struct RoomBuffer {
-    server_name: String,
-    homeserver: Url,
+pub struct RoomBuffer {
+    inner: MatrixRoom,
     buffer_handle: BufferHandle,
-    room_id: RoomId,
-    prev_batch: Option<String>,
-    typing_notice_time: Option<u64>,
-    room: Room,
-    printed_before_ack_queue: Vec<String>,
+}
+
+#[derive(Clone)]
+pub struct MatrixRoom {
+    server_name: Rc<String>,
+    homeserver: Rc<Url>,
+    room_id: Rc<RoomId>,
+    connection: Rc<RefCell<Option<Connection>>>,
+    prev_batch: Rc<RefCell<Option<String>>>,
+    typing_notice_time: Rc<RefCell<Option<u64>>>,
+    room: Rc<RefCell<Room>>,
+    printed_before_ack_queue: Rc<RefCell<Vec<String>>>,
+}
+
+#[async_trait(?Send)]
+impl BufferInputCallbackAsync for MatrixRoom {
+    async fn callback(&mut self, buffer: BufferHandle, input: String) {
+        let room_id = &self.room_id;
+        let connection = &self.connection;
+
+        let buffer = buffer
+            .upgrade()
+            .expect("Running input cb but buffer is closed");
+
+        if let Some(c) = &*connection.borrow() {
+            // TODO check for errors and print them out.
+            c.send_message(&room_id, &input).await;
+        } else {
+            buffer.print("Error not connected");
+            return;
+        }
+    }
 }
 
 impl RoomBuffer {
@@ -66,38 +97,26 @@ impl RoomBuffer {
         room_id: RoomId,
         own_user_id: &UserId,
     ) -> Self {
-        let state = Rc::downgrade(connected_state);
+        let room = MatrixRoom {
+            server_name: Rc::new(server_name.to_owned()),
+            homeserver: Rc::new(homeserver.clone()),
+            room_id: Rc::new(room_id.clone()),
+            connection: connected_state.clone(),
+            prev_batch: Rc::new(RefCell::new(None)),
+            typing_notice_time: Rc::new(RefCell::new(None)),
+            room: Rc::new(RefCell::new(Room::new(&room_id, &own_user_id))),
+            printed_before_ack_queue: Rc::new(RefCell::new(Vec::new())),
+        };
 
-        let buffer_settings = BufferSettings::new(&room_id.to_string())
-            .input_data((state, room_id.to_owned()))
-            .input_callback(async move |data, buffer, input| {
-                {
-                    let (client_rc, room_id) = data.unwrap();
-                    let client_rc = client_rc.upgrade().expect(
-                        "Can't upgrade server, server has been deleted?",
-                    );
-                    let client = client_rc.borrow();
-                    let buffer = buffer
-                        .upgrade()
-                        .expect("Running input cb but buffer is closed");
-
-                    if client.is_none() {
-                        buffer.print("Error not connected");
-                        return;
-                    }
-                    if let Some(s) = client.as_ref() {
-                        // TODO check for errors and print them out.
-                        s.send_message(&room_id, &input).await;
-                    }
-                }
-            })
+        let buffer_settings = BufferSettingsAsync::new(&room_id.to_string())
+            .input_callback(room.clone())
             .close_callback(|weechat, buffer| {
                 // TODO remove the roombuffer from the server here.
                 // TODO leave the room if the plugin isn't unloading.
                 Ok(())
             });
 
-        let buffer_handle = Weechat::buffer_new(buffer_settings)
+        let buffer_handle = Weechat::buffer_new_async(buffer_settings)
             .expect("Can't create new room buffer");
 
         let buffer = buffer_handle
@@ -107,15 +126,17 @@ impl RoomBuffer {
         buffer.enable_nicklist();
 
         RoomBuffer {
-            server_name: server_name.to_owned(),
-            homeserver: homeserver.clone(),
-            room_id: room_id.clone(),
+            inner: room,
             buffer_handle,
-            prev_batch: None,
-            typing_notice_time: None,
-            room: Room::new(&room_id, &own_user_id),
-            printed_before_ack_queue: Vec::new(),
         }
+    }
+
+    pub fn room_mut(&mut self) -> RefMut<'_, Room> {
+        self.inner.room.borrow_mut()
+    }
+
+    pub fn room(&self) -> Ref<'_, Room> {
+        self.inner.room.borrow()
     }
 
     pub fn weechat_buffer(&mut self) -> Buffer {
@@ -125,7 +146,8 @@ impl RoomBuffer {
     }
 
     pub fn calculate_buffer_name(&self) -> String {
-        let room_name = self.room.calculate_name();
+        let room = self.room();
+        let room_name = room.calculate_name();
 
         if room_name == "#" {
             "##".to_owned()
@@ -185,7 +207,11 @@ impl RoomBuffer {
         let timestamp = timestamp / 1000;
 
         buffer.print_date_tags(timestamp as i64, &[], &message);
-        self.room.handle_membership(&event);
+
+        {
+            let mut room = self.room_mut();
+            room.handle_membership(&event);
+        }
 
         // Names of rooms without display names can get affected by the member list so we need to
         // update them.
@@ -227,7 +253,10 @@ impl RoomBuffer {
     }
 
     pub fn handle_room_name(&mut self, event: &NameEvent) {
-        self.room.handle_room_name(event);
+        {
+            let mut room = self.room_mut();
+            room.handle_room_name(event);
+        }
         self.update_buffer_name();
     }
 
@@ -238,7 +267,8 @@ impl RoomBuffer {
             RoomEvent::RoomEncrypted(m) => self.handle_encrypted_message(m),
             RoomEvent::RoomName(n) => self.handle_room_name(n),
             event => {
-                self.room.receive_timeline_event(event);
+                let mut room = self.room_mut();
+                room.receive_timeline_event(event);
             }
         }
     }
@@ -249,6 +279,9 @@ impl RoomBuffer {
             StateEvent::RoomName(n) => self.handle_room_name(n),
             _ => (),
         }
-        self.room.receive_state_event(&event);
+        {
+            let mut room = self.room_mut();
+            room.receive_state_event(&event);
+        }
     }
 }
