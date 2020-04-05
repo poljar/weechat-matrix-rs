@@ -14,9 +14,10 @@
 //! The config options created here will be alive as long as the plugin is
 //! loaded so they don't need to be freed manually. The drop implementation of
 //! the section will do so.
-use crate::{MatrixServer, Servers};
+use crate::{MatrixServer, Servers, ServersHandle};
 use weechat::config::{
     Conf, ConfigSection, ConfigSectionSettings, OptionChanged,
+    SectionReadCallback,
 };
 use weechat::Weechat;
 
@@ -24,93 +25,94 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::rc::{Rc, Weak};
 
 #[derive(Clone)]
-pub struct Config(Rc<RefCell<weechat::config::Config>>);
+pub struct Config {
+    inner: Rc<RefCell<weechat::config::Config>>,
+    servers: Servers,
+}
 
 #[derive(Clone, Default)]
-pub struct ConfigHandle(Weak<RefCell<weechat::config::Config>>);
+pub struct ConfigHandle {
+    inner: Weak<RefCell<weechat::config::Config>>,
+    servers: ServersHandle,
+}
 
-impl ConfigHandle {
-    pub fn upgrade(&self) -> Config {
-        Config(
-            self.0
-                .upgrade()
-                .expect("Config got deleted before plugin unload"),
-        )
+impl SectionReadCallback for Config {
+    fn callback(
+        &mut self,
+        _: &Weechat,
+        _: &Conf,
+        section: &mut ConfigSection,
+        option_name: &str,
+        option_value: &str,
+    ) -> OptionChanged {
+        if option_name.is_empty() {
+            return OptionChanged::Error;
+        }
+
+        let option_args: Vec<&str> = option_name.splitn(2, '.').collect();
+
+        if option_args.len() != 2 {
+            return OptionChanged::Error;
+        }
+
+        let server_name = option_args[0];
+
+        {
+            let mut servers_borrow = self.servers.borrow_mut();
+
+            // We are reading the config, if the server doesn't yet exists
+            // we need to create it before setting the option and running
+            // the option change callback.
+            if !servers_borrow.contains_key(server_name) {
+                let server = MatrixServer::new(server_name, &self, section);
+                servers_borrow.insert(server_name.to_owned(), server);
+            }
+        }
+
+        let option = section.search_option(option_name);
+
+        if let Some(o) = option {
+            o.set(option_value, true)
+        } else {
+            OptionChanged::NotFound
+        }
     }
 }
 
-fn server_write_cb(
-    _weechat: &Weechat,
-    config: &Conf,
-    section: &mut ConfigSection,
-) {
-    config.write_section(section.name());
-
-    for option in section.options() {
-        config.write_option(option);
+impl ConfigHandle {
+    pub fn upgrade(&self) -> Config {
+        Config {
+            inner: self
+                .inner
+                .upgrade()
+                .expect("Config got deleted before plugin unload"),
+            servers: self.servers.upgrade(),
+        }
     }
 }
 
 impl Config {
-    pub fn new(weechat: &Weechat, servers: &Servers) -> Config {
+    pub fn new(_weechat: &Weechat, servers: &Servers) -> Config {
         let config = Weechat::config_new("matrix-rust")
             .expect("Can't create new config");
 
-        let servers = servers.clone_weak();
-
-        let config = Config(Rc::new(RefCell::new(config)));
-
-        let weak_config = config.clone_weak();
+        let config = Config {
+            inner: Rc::new(RefCell::new(config)),
+            servers: servers.clone(),
+        };
 
         let server_section_options = ConfigSectionSettings::new("server")
-            .set_write_callback(server_write_cb)
-            .set_read_callback(
-                move |_, _config, section, option_name, value| {
-                    let config = weak_config.clone();
-                    let servers = servers.clone();
-
-                    if option_name.is_empty() {
-                        return OptionChanged::Error;
-                    }
-
-                    let option_args: Vec<&str> =
-                        option_name.splitn(2, '.').collect();
-
-                    if option_args.len() != 2 {
-                        return OptionChanged::Error;
-                    }
-
-                    let server_name = option_args[0];
-
-                    {
-                        let servers = servers.upgrade();
-                        let mut servers_borrow = servers.borrow_mut();
-
-                        // We are reading the config, if the server doesn't yet exists
-                        // we need to create it before setting the option and running
-                        // the option change callback.
-                        if !servers_borrow.contains_key(server_name) {
-                            let config = config.upgrade();
-                            let server = MatrixServer::new(
-                                server_name,
-                                &config,
-                                section,
-                            );
-                            servers_borrow
-                                .insert(server_name.to_owned(), server);
-                        }
-                    }
-
-                    let option = section.search_option(option_name);
-
-                    if let Some(o) = option {
-                        o.set(value, true)
-                    } else {
-                        OptionChanged::NotFound
+            .set_write_callback(
+                |_weechat: &Weechat,
+                 config: &Conf,
+                 section: &mut ConfigSection| {
+                    config.write_section(section.name());
+                    for option in section.options() {
+                        config.write_option(option);
                     }
                 },
-            );
-
+            )
+            .set_read_callback(config.clone());
         {
             let mut config_borrow = config.borrow_mut();
 
@@ -123,14 +125,17 @@ impl Config {
     }
 
     pub fn borrow(&self) -> Ref<'_, weechat::config::Config> {
-        self.0.borrow()
+        self.inner.borrow()
     }
 
     pub fn borrow_mut(&self) -> RefMut<'_, weechat::config::Config> {
-        self.0.borrow_mut()
+        self.inner.borrow_mut()
     }
 
     pub fn clone_weak(&self) -> ConfigHandle {
-        ConfigHandle(Rc::downgrade(&self.0))
+        ConfigHandle {
+            inner: Rc::downgrade(&self.inner),
+            servers: self.servers.clone_weak(),
+        }
     }
 }
