@@ -649,7 +649,9 @@ impl MatrixServer {
                     // oneshot channel that the caller can await.
                     // TODO the room should remember the UUID for the local echo
                     // implementation.
-                    let ret = client.room_send(&room_id, content, Some(Uuid::new_v4())).await;
+                    let ret = client
+                        .room_send(&room_id, content, Some(Uuid::new_v4()))
+                        .await;
 
                     match ret {
                         Ok(_r) => (),
