@@ -58,6 +58,7 @@ use std::rc::{Rc, Weak};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use url::Url;
+use uuid::Uuid;
 
 use matrix_sdk::api::r0::session::login::Response as LoginResponse;
 
@@ -646,7 +647,9 @@ impl MatrixServer {
                     // TODO awaiting here means we can only send one message
                     // at a time, we need to spawn a task here and return a
                     // oneshot channel that the caller can await.
-                    let ret = client.room_send(&room_id, content).await;
+                    // TODO the room should remember the UUID for the local echo
+                    // implementation.
+                    let ret = client.room_send(&room_id, content, Some(Uuid::new_v4())).await;
 
                     match ret {
                         Ok(_r) => (),
