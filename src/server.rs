@@ -67,7 +67,6 @@ use matrix_sdk::{
     events::{
         collections::all::{RoomEvent, StateEvent},
         room::message::{MessageEventContent, TextMessageEventContent},
-        EventResult,
     },
     identifiers::{RoomId, UserId},
     AsyncClient, AsyncClientConfig, SyncSettings,
@@ -523,7 +522,7 @@ impl MatrixServer {
     /// This runs on the per server tokio executor.
     /// It communicates with the main Weechat thread using a async channel.
     pub async fn sync_loop(
-        mut client: AsyncClient,
+        client: AsyncClient,
         channel: Sender<Result<ThreadMessage, String>>,
         username: String,
         password: String,
@@ -567,7 +566,7 @@ impl MatrixServer {
                 let channel = sync_channel;
                 for (room_id, room) in response.rooms.join {
                     for event in room.state.events {
-                        if let EventResult::Ok(e) = event {
+                        if let Ok(e) = event.deserialize() {
                             channel
                                 .send(Ok(ThreadMessage::SyncState(
                                     room_id.clone(),
@@ -577,7 +576,7 @@ impl MatrixServer {
                         }
                     }
                     for event in room.timeline.events {
-                        if let EventResult::Ok(e) = event {
+                        if let Ok(e) = event.deserialize() {
                             channel
                                 .send(Ok(ThreadMessage::SyncEvent(
                                     room_id.clone(),
@@ -630,7 +629,7 @@ impl MatrixServer {
     /// Send loop that waits for requests that need to be sent out using our
     /// Matrix client.
     pub async fn send_loop(
-        mut client: AsyncClient,
+        client: AsyncClient,
         channel: Receiver<ServerMessage>,
     ) {
         while let Some(message) = channel.recv().await {

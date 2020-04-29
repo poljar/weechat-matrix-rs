@@ -3,56 +3,24 @@ use clap::AppSettings as ArgParseSettings;
 use clap::{Arg, ArgMatches, SubCommand};
 use url::Url;
 
-use crate::config::{Config, ConfigHandle};
+use crate::config::Config;
 use crate::PLUGIN_NAME;
-use crate::{MatrixServer, Servers, ServersHandle};
+use crate::{MatrixServer, Servers};
 use weechat::buffer::Buffer;
-use weechat::hooks::{CommandDescription, CommandHook};
+use weechat::hooks::{CommandSettings, Command, CommandCallback};
 use weechat::{ArgsWeechat, Weechat};
 
 pub struct Commands {
-    _matrix: CommandHook<(ServersHandle, ConfigHandle)>,
+    _matrix: Command,
 }
 
-impl Commands {
-    pub fn hook_all(
-        weechat: &Weechat,
-        servers: &Servers,
-        config: &Config,
-    ) -> Commands {
-        let matrix_desc = CommandDescription {
-            name: "matrix",
-            description: "Matrix chat protocol command.",
-            args: "server add <server-name> <hostname>[:<port>]||\
-                   server delete|list|listfull <server-name> ||\
-                   connect <server-name> ||\
-                   disconnect <server-name> ||\
-                   reconnect <server-name> ||\
-                   help <matrix-command> [<matrix-subcommand>]",
-            args_description:
-                "     server: List, add, or remove Matrix servers.
-    connect: Connect to Matrix servers.
- disconnect: Disconnect from one or all Matrix servers.
-  reconnect: Reconnect to server(s).
-       help: Show detailed command help.\n
-Use /matrix [command] help to find out more.\n",
-            completion: "server |add|delete|list|listfull ||
-                 connect ||
-                 disconnect ||
-                 reconnect ||
-                 help server|connect|disconnect|reconnect",
-        };
+struct MatrixCommand {
+    servers: Servers,
+    config: Config,
+}
 
-        let matrix = weechat.hook_command(
-            matrix_desc,
-            Commands::matrix_command_cb,
-            Some((servers.clone_weak(), config.clone_weak())),
-        );
-
-        Commands { _matrix: matrix }
-    }
-
-    fn add_server(args: &ArgMatches, servers: &Servers, config: &ConfigHandle) {
+impl MatrixCommand {
+    fn add_server(&self, args: &ArgMatches) {
         let server_name = args
             .value_of("name")
             .expect("Server name not set but was required");
@@ -62,15 +30,14 @@ Use /matrix [command] help to find out more.\n",
         let homeserver = Url::parse(homeserver)
             .expect("Can't parse Homeserver even if validation passed");
 
-        let config = config.upgrade();
-        let mut config_borrow = config.borrow_mut();
+        let mut config_borrow = self.config.borrow_mut();
         let mut section = config_borrow
             .search_section_mut("server")
             .expect("Can't get server section");
 
-        let server = MatrixServer::new(server_name, &config, &mut section);
+        let server = MatrixServer::new(server_name, &self.config, &mut section);
 
-        let mut servers = servers.borrow_mut();
+        let mut servers = self.servers.borrow_mut();
         servers.insert(server_name.to_owned(), server);
 
         let homeserver_option = section
@@ -87,12 +54,12 @@ Use /matrix [command] help to find out more.\n",
         ));
     }
 
-    fn delete_server(args: &ArgMatches, servers: &Servers) {
+    fn delete_server(&self, args: &ArgMatches) {
         let server_name = args
             .value_of("name")
             .expect("Server name not set but was required");
 
-        let mut servers = servers.borrow_mut();
+        let mut servers = self.servers.borrow_mut();
 
         let connected = {
             let server = servers.get(server_name);
@@ -135,15 +102,15 @@ Use /matrix [command] help to find out more.\n",
         ));
     }
 
-    fn list_servers(servers: &Servers) {
-        if servers.borrow().is_empty() {
+    fn list_servers(&self) {
+        if self.servers.borrow().is_empty() {
             return;
         }
 
         Weechat::print("\nAll Matrix servers:");
 
         // TODO print out some stats if the server is connected.
-        for server in servers.borrow().keys() {
+        for server in self.servers.borrow().keys() {
             Weechat::print(&format!(
                 "    {}{}",
                 Weechat::color("chat_server"),
@@ -152,24 +119,20 @@ Use /matrix [command] help to find out more.\n",
         }
     }
 
-    fn server_command(
-        args: &ArgMatches,
-        servers: &Servers,
-        config: &ConfigHandle,
-    ) {
+    fn server_command(&self, args: &ArgMatches) {
         match args.subcommand() {
             ("add", Some(subargs)) => {
-                Commands::add_server(subargs, servers, config)
+                self.add_server(subargs)
             }
             ("delete", Some(subargs)) => {
-                Commands::delete_server(subargs, servers)
+                self.delete_server(subargs)
             }
-            ("list", _) => Commands::list_servers(servers),
-            _ => Commands::list_servers(servers),
+            ("list", _) => self.list_servers(),
+            _ => self.list_servers(),
         }
     }
 
-    fn server_not_found(server_name: &str) {
+    fn server_not_found(&self, server_name: &str) {
         Weechat::print(&format!(
             "{}{}: Server \"{}{}{}\" not found.",
             Weechat::prefix("error"),
@@ -180,12 +143,12 @@ Use /matrix [command] help to find out more.\n",
         ));
     }
 
-    fn connect_command(args: &ArgMatches, servers: &Servers) {
+    fn connect_command(&self, args: &ArgMatches) {
         let server_names = args
             .values_of("name")
             .expect("Server names not set but were required");
 
-        let mut servers = servers.borrow_mut();
+        let mut servers = self.servers.borrow_mut();
 
         for server_name in server_names {
             let server = servers.get_mut(server_name);
@@ -195,13 +158,13 @@ Use /matrix [command] help to find out more.\n",
                     Err(e) => Weechat::print(&format!("{:?}", e)),
                 }
             } else {
-                Commands::server_not_found(server_name)
+                self.server_not_found(server_name)
             }
         }
     }
 
-    fn disconnect_command(args: &ArgMatches, servers: &Servers) {
-        let mut servers = servers.borrow_mut();
+    fn disconnect_command(&self, args: &ArgMatches) {
+        let mut servers = self.servers.borrow_mut();
 
         let server_name = args
             .value_of("name")
@@ -212,15 +175,13 @@ Use /matrix [command] help to find out more.\n",
         if let Some(s) = server {
             s.disconnect();
         } else {
-            Commands::server_not_found(server_name)
+            self.server_not_found(server_name)
         }
     }
+}
 
-    fn matrix_command_cb(
-        data: &(ServersHandle, ConfigHandle),
-        _buffer: Buffer,
-        args: ArgsWeechat,
-    ) {
+impl CommandCallback for MatrixCommand {
+    fn callback(&mut self, _weechat: &Weechat, _buffer: &Buffer, arguments: ArgsWeechat) {
         let server_command = SubCommand::with_name("server")
             .about("List, add or delete Matrix servers.")
             .subcommand(
@@ -253,7 +214,7 @@ Use /matrix [command] help to find out more.\n",
 
         let argparse = Argparse::new("matrix")
             .about("Matrix chat protocol command.")
-            .global_setting(ArgParseSettings::ColorNever)
+            // .global_setting(ArgParseSettings::ColorNever)
             .global_setting(ArgParseSettings::DisableHelpFlags)
             .global_setting(ArgParseSettings::DisableVersion)
             .global_setting(ArgParseSettings::VersionlessSubcommands)
@@ -279,28 +240,68 @@ Use /matrix [command] help to find out more.\n",
                     ),
             );
 
-        let matches = match argparse.get_matches_from_safe(args) {
+        let matches = match argparse.get_matches_from_safe(arguments) {
             Ok(m) => m,
             Err(e) => {
-                Weechat::print(&e.to_string());
+                Weechat::print(
+                    &Weechat::execute_modifier(
+                        "color_decode_ansi",
+                        "1",
+                        &e.to_string(),
+                    )
+                    .unwrap(),
+                );
                 return;
             }
         };
-        let (servers, config) = data;
-        let servers_ref = servers.upgrade();
-        let servers = servers_ref;
 
         match matches.subcommand() {
             ("connect", Some(subargs)) => {
-                Commands::connect_command(subargs, &servers)
+                self.connect_command(subargs)
             }
             ("disconnect", Some(subargs)) => {
-                Commands::disconnect_command(subargs, &servers)
+                self.disconnect_command(subargs)
             }
             ("server", Some(subargs)) => {
-                Commands::server_command(subargs, &servers, config)
+                self.server_command(subargs)
             }
             _ => unreachable!(),
         }
+    }
+}
+
+impl Commands {
+    pub fn hook_all(
+        weechat: &Weechat,
+        servers: &Servers,
+        config: &Config,
+    ) -> Commands {
+        let matrix_settings = CommandSettings::new("matrix")
+            .description("Matrix chat protocol command.")
+            .add_argument("server add <server-name> <hostname>[:<port>]")
+            .add_argument("server delete|list|listfull <server-name>")
+            .add_argument("connect <server-name>")
+            .add_argument("disconnect <server-name>")
+            .add_argument("reconnect <server-name>")
+            .add_argument("help <matrix-command> [<matrix-subcommand>]")
+            .arguments_description(
+                "     server: List, add, or remove Matrix servers.
+    connect: Connect to Matrix servers.
+ disconnect: Disconnect from one or all Matrix servers.
+  reconnect: Reconnect to server(s).
+       help: Show detailed command help.\n
+Use /matrix [command] help to find out more.\n")
+            .add_completion("server |add|delete|list|listfull")
+            .add_completion("connect")
+            .add_completion("disconnect")
+            .add_completion("reconnect")
+            .add_completion("help server|connect|disconnect|reconnect");
+
+        let matrix = weechat.hook_command(
+            matrix_settings,
+            MatrixCommand { servers: servers.clone(), config: config.clone() }
+        );
+
+        Commands { _matrix: matrix }
     }
 }

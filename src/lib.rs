@@ -2,12 +2,16 @@
 
 mod commands;
 mod config;
+mod debug;
 mod room_buffer;
 mod server;
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
+use tracing_subscriber;
+
+use tokio::sync::mpsc::unbounded_channel;
 
 use weechat::{weechat_plugin, ArgsWeechat, Weechat, WeechatPlugin};
 
@@ -84,6 +88,10 @@ impl WeechatPlugin for Matrix {
         let servers = Servers::new();
         let config = Config::new(weechat, &servers);
         let commands = Commands::hook_all(weechat, &servers, &config);
+
+        tracing_subscriber::fmt()
+            .with_writer(debug::Debug)
+            .init();
 
         let matrix = Matrix {
             servers: servers.clone(),

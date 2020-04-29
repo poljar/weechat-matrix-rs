@@ -21,6 +21,7 @@
 //! are pure functions so they can be reused e.g. if we print messages that
 //! we're sending ourselves before we receive them in a sync response, or if we
 //! decrypt a previously undecryptable event.
+
 use matrix_sdk::events::collections::all::{RoomEvent, StateEvent};
 use matrix_sdk::events::room::encrypted::EncryptedEvent;
 use matrix_sdk::events::room::member::{MemberEvent, MembershipState};
@@ -203,8 +204,11 @@ impl RoomBuffer {
             event.state_key,
             message
         );
-        let timestamp: u64 = event.origin_server_ts.into();
-        let timestamp = timestamp / 1000;
+        let timestamp: u64 = event
+            .origin_server_ts
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
 
         buffer.print_date_tags(timestamp as i64, &[], &message);
 
@@ -225,14 +229,17 @@ impl RoomBuffer {
         content: &TextMessageEventContent,
     ) {
         let buffer = self.weechat_buffer();
-        let timestamp = timestamp / 1000;
         let message = format!("{}\t{}", sender, content.body);
         buffer.print_date_tags(timestamp as i64, &[], &message);
     }
 
     pub fn handle_room_message(&mut self, event: &MessageEvent) {
         let sender = &event.sender;
-        let timestamp: u64 = event.origin_server_ts.into();
+        let timestamp: u64 = event
+            .origin_server_ts
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
 
         match &event.content {
             MessageEventContent::Text(t) => {
@@ -246,8 +253,11 @@ impl RoomBuffer {
         let buffer = self.weechat_buffer();
 
         let sender = &event.sender;
-        let timestamp: u64 = event.origin_server_ts.into();
-        let timestamp = timestamp / 1000;
+        let timestamp: u64 = event
+            .origin_server_ts
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let message = format!("{}\t{}", sender, "Unable to decrypt message");
         buffer.print_date_tags(timestamp as i64, &[], &message);
     }
