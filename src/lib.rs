@@ -89,9 +89,7 @@ impl WeechatPlugin for Matrix {
         let config = Config::new(weechat, &servers);
         let commands = Commands::hook_all(weechat, &servers, &config);
 
-        tracing_subscriber::fmt()
-            .with_writer(debug::Debug)
-            .init();
+        tracing_subscriber::fmt().with_writer(debug::Debug).init();
 
         let matrix = Matrix {
             servers: servers.clone(),
