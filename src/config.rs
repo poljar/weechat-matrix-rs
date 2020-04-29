@@ -14,7 +14,7 @@
 //! The config options created here will be alive as long as the plugin is
 //! loaded so they don't need to be freed manually. The drop implementation of
 //! the section will do so.
-use crate::{MatrixServer, Servers, ServersHandle};
+use crate::{MatrixServer, Servers};
 use weechat::config::{
     Conf, ConfigSection, ConfigSectionSettings, OptionChanged,
     SectionReadCallback,
@@ -22,18 +22,12 @@ use weechat::config::{
 use weechat::Weechat;
 
 use std::cell::{Ref, RefCell, RefMut};
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
 #[derive(Clone)]
 pub struct Config {
     inner: Rc<RefCell<weechat::config::Config>>,
     servers: Servers,
-}
-
-#[derive(Clone, Default)]
-pub struct ConfigHandle {
-    inner: Weak<RefCell<weechat::config::Config>>,
-    servers: ServersHandle,
 }
 
 impl SectionReadCallback for Config {
@@ -79,18 +73,6 @@ impl SectionReadCallback for Config {
     }
 }
 
-impl ConfigHandle {
-    pub fn upgrade(&self) -> Config {
-        Config {
-            inner: self
-                .inner
-                .upgrade()
-                .expect("Config got deleted before plugin unload"),
-            servers: self.servers.upgrade(),
-        }
-    }
-}
-
 impl Config {
     pub fn new(_weechat: &Weechat, servers: &Servers) -> Config {
         let config = Weechat::config_new("matrix-rust")
@@ -130,12 +112,5 @@ impl Config {
 
     pub fn borrow_mut(&self) -> RefMut<'_, weechat::config::Config> {
         self.inner.borrow_mut()
-    }
-
-    pub fn clone_weak(&self) -> ConfigHandle {
-        ConfigHandle {
-            inner: Rc::downgrade(&self.inner),
-            servers: self.servers.clone_weak(),
-        }
     }
 }

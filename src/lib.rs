@@ -8,10 +8,8 @@ mod server;
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use tracing_subscriber;
-
-use tokio::sync::mpsc::unbounded_channel;
 
 use weechat::{weechat_plugin, ArgsWeechat, Weechat, WeechatPlugin};
 
@@ -24,15 +22,6 @@ const PLUGIN_NAME: &str = "matrix";
 #[derive(Clone)]
 pub struct Servers(Rc<RefCell<HashMap<String, MatrixServer>>>);
 
-#[derive(Clone, Default)]
-pub struct ServersHandle(Weak<RefCell<HashMap<String, MatrixServer>>>);
-
-impl ServersHandle {
-    fn upgrade(&self) -> Servers {
-        Servers(self.0.upgrade().expect("Severs are dropped?"))
-    }
-}
-
 impl Servers {
     fn new() -> Self {
         Servers(Rc::new(RefCell::new(HashMap::new())))
@@ -44,10 +33,6 @@ impl Servers {
 
     fn borrow_mut(&self) -> RefMut<'_, HashMap<String, MatrixServer>> {
         self.0.borrow_mut()
-    }
-
-    fn clone_weak(&self) -> ServersHandle {
-        ServersHandle(Rc::downgrade(&self.0))
     }
 }
 
