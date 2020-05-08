@@ -69,7 +69,7 @@ use matrix_sdk::{
         room::message::{MessageEventContent, TextMessageEventContent},
     },
     identifiers::{RoomId, UserId},
-    AsyncClient, AsyncClientConfig, SyncSettings,
+    Client, ClientConfig, SyncSettings,
 };
 
 use weechat::config::{
@@ -149,7 +149,7 @@ pub(crate) struct InnerServer {
     room_buffers: HashMap<RoomId, RoomBuffer>,
     settings: ServerSettings,
     config: Config,
-    client: Option<AsyncClient>,
+    client: Option<Client>,
     login_state: Option<LoginState>,
     connected_state: Rc<RefCell<Option<Connection>>>,
 }
@@ -414,13 +414,13 @@ impl InnerServer {
         self.login_state = Some(login_state);
     }
 
-    pub fn create_client(&mut self) -> Result<AsyncClient, ServerError> {
+    pub fn create_client(&mut self) -> Result<Client, ServerError> {
         let homeserver =
             self.settings.homeserver.as_ref().ok_or_else(|| {
                 ServerError::StartError("Homeserver not configured".to_owned())
             })?;
 
-        let mut client_config = AsyncClientConfig::new();
+        let mut client_config = ClientConfig::new();
 
         if let Some(proxy) = &self.settings.proxy {
             client_config = client_config
@@ -429,7 +429,7 @@ impl InnerServer {
                 .disable_ssl_verification();
         }
 
-        let client = AsyncClient::new_with_config(
+        let client = Client::new_with_config(
             homeserver.clone(),
             None,
             client_config,
@@ -522,7 +522,7 @@ impl MatrixServer {
     /// This runs on the per server tokio executor.
     /// It communicates with the main Weechat thread using a async channel.
     pub async fn sync_loop(
-        client: AsyncClient,
+        client: Client,
         channel: Sender<Result<ThreadMessage, String>>,
         username: String,
         password: String,
@@ -629,7 +629,7 @@ impl MatrixServer {
     /// Send loop that waits for requests that need to be sent out using our
     /// Matrix client.
     pub async fn send_loop(
-        client: AsyncClient,
+        client: Client,
         channel: Receiver<ServerMessage>,
     ) {
         while let Some(message) = channel.recv().await {

@@ -111,7 +111,7 @@ impl RoomBuffer {
 
         let buffer_settings = BufferSettingsAsync::new(&room_id.to_string())
             .input_callback(room.clone())
-            .close_callback(|weechat, buffer| {
+            .close_callback(|weechat: &Weechat, buffer: &Buffer| {
                 // TODO remove the roombuffer from the server here.
                 // TODO leave the room if the plugin isn't unloading.
                 Ok(())
@@ -148,7 +148,7 @@ impl RoomBuffer {
 
     pub fn calculate_buffer_name(&self) -> String {
         let room = self.room();
-        let room_name = room.calculate_name();
+        let room_name = room.display_name();
 
         if room_name == "#" {
             "##".to_owned()
