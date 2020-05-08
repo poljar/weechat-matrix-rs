@@ -429,12 +429,9 @@ impl InnerServer {
                 .disable_ssl_verification();
         }
 
-        let client = Client::new_with_config(
-            homeserver.clone(),
-            None,
-            client_config,
-        )
-        .unwrap();
+        let client =
+            Client::new_with_config(homeserver.clone(), None, client_config)
+                .unwrap();
         self.client = Some(client.clone());
         Ok(client)
     }
@@ -628,10 +625,7 @@ impl MatrixServer {
 
     /// Send loop that waits for requests that need to be sent out using our
     /// Matrix client.
-    pub async fn send_loop(
-        client: Client,
-        channel: Receiver<ServerMessage>,
-    ) {
+    pub async fn send_loop(client: Client, channel: Receiver<ServerMessage>) {
         while let Some(message) = channel.recv().await {
             match message {
                 ServerMessage::RoomSend(room_id, message) => {
