@@ -100,10 +100,11 @@ macro_rules! has_url_or_file {
     };
 }
 
+has_formatted_body!(EmoteMessageEventContent);
+has_formatted_body!(NoticeMessageEventContent);
+has_formatted_body!(TextMessageEventContent);
+
 has_url_or_file!(AudioMessageEventContent);
 has_url_or_file!(FileMessageEventContent);
 has_url_or_file!(ImageMessageEventContent);
 has_url_or_file!(VideoMessageEventContent);
-has_formatted_body!(EmoteMessageEventContent);
-has_formatted_body!(NoticeMessageEventContent);
-has_formatted_body!(TextMessageEventContent);
