@@ -25,9 +25,7 @@
 use matrix_sdk::events::collections::all::{RoomEvent, StateEvent};
 use matrix_sdk::events::room::encrypted::EncryptedEvent;
 use matrix_sdk::events::room::member::{MemberEvent, MembershipState};
-use matrix_sdk::events::room::message::{
-    MessageEvent, MessageEventContent, TextMessageEventContent,
-};
+use matrix_sdk::events::room::message::MessageEvent;
 use matrix_sdk::events::room::name::NameEvent;
 use matrix_sdk::identifiers::{RoomId, UserId};
 use matrix_sdk::Room;
@@ -35,6 +33,7 @@ use url::Url;
 
 use async_trait::async_trait;
 
+use crate::render::RenderableEvent;
 use crate::server::Connection;
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
@@ -227,24 +226,16 @@ impl RoomBuffer {
             return;
         }
 
-        let message = match content.membership {
-            MembershipState::Join => "joined",
-            MembershipState::Leave => "left",
-            _ => return,
-        };
+        let message = event.render(&self.calculate_user_name(&event.sender));
 
-        let message = format!(
-            "{} ({}) has {} the room",
-            content.displayname.as_ref().unwrap_or(&"".to_string()),
-            event.state_key,
-            message
-        );
         let timestamp: u64 = event
             .origin_server_ts
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
+        // this is needed so we can borrow `self` for `calculate_user_name`
+        let buffer = self.weechat_buffer();
         buffer.print_date_tags(timestamp as i64, &[], &message);
 
         {
@@ -257,43 +248,30 @@ impl RoomBuffer {
         self.update_buffer_name();
     }
 
-    pub fn handle_text_message(
-        &mut self,
-        sender: &str,
-        timestamp: u64,
-        content: &TextMessageEventContent,
-    ) {
-        let buffer = self.weechat_buffer();
-        let message = format!("{}\t{}", sender, content.body);
-        buffer.print_date_tags(timestamp as i64, &[], &message);
-    }
-
     pub fn handle_room_message(&mut self, event: &MessageEvent) {
-        let sender = &event.sender;
+        let sender = self.calculate_user_name(&event.sender);
         let timestamp: u64 = event
             .origin_server_ts
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        match &event.content {
-            MessageEventContent::Text(t) => {
-                self.handle_text_message(&sender.to_string(), timestamp, t)
-            }
-            _ => (),
-        }
+        let message = event.render(&sender);
+
+        let buffer = self.weechat_buffer();
+        buffer.print_date_tags(timestamp as i64, &[], &message)
     }
 
     pub fn handle_encrypted_message(&mut self, event: &EncryptedEvent) {
-        let buffer = self.weechat_buffer();
-
-        let sender = &event.sender;
+        let sender = self.calculate_user_name(&event.sender);
         let timestamp: u64 = event
             .origin_server_ts
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let message = format!("{}\t{}", sender, "Unable to decrypt message");
+
+        let message = event.render(&sender);
+        let buffer = self.weechat_buffer();
         buffer.print_date_tags(timestamp as i64, &[], &message);
     }
 
