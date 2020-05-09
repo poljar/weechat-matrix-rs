@@ -83,7 +83,6 @@ impl BufferInputCallbackAsync for MatrixRoom {
             c.send_message(&room_id, &input).await;
         } else {
             buffer.print("Error not connected");
-            return;
         }
     }
 }
@@ -151,7 +150,7 @@ impl RoomBuffer {
 
         if room_name == "#" {
             "##".to_owned()
-        } else if room_name.starts_with("#") {
+        } else if room_name.starts_with('#') {
             room_name
         } else {
             // TODO: only do this for non-direct chats
