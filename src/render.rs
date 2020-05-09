@@ -108,7 +108,7 @@ trait HasUrlOrFile {
     fn resolve_url(&self) -> &str {
         // the file is either encrypted or not encrypted so either `url` or `file` must
         // exist and unwrapping will never panic
-        self.url().or(self.file()).unwrap()
+        self.url().or_else(|| self.file()).unwrap()
     }
 }
 

@@ -13,7 +13,6 @@ mod server;
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
-use tracing_subscriber;
 
 use weechat::{
     buffer::Buffer,
