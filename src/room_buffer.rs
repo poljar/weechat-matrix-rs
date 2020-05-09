@@ -187,6 +187,19 @@ impl RoomBuffer {
         self.weechat_buffer().set_name(&name)
     }
 
+    /// Calculate the display name for a room member from its UserId. If no member with that ID is in
+    /// the room, the string representation of the ID will be returned.
+    fn calculate_user_name(&self, user_id: &UserId) -> String {
+        self.inner
+            .room
+            .borrow()
+            .members
+            .get(user_id)
+            // TODO: get rid of clone?
+            .and_then(|member| member.display_name.clone())
+            .unwrap_or_else(|| format!("{}", user_id))
+    }
+
     pub fn handle_membership_event(
         &mut self,
         event: &MemberEvent,
