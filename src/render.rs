@@ -1,17 +1,31 @@
-use matrix_sdk::events::room::member::{MemberEvent, MembershipState};
-use matrix_sdk::events::room::message::{
-    AudioMessageEventContent, EmoteMessageEventContent,
-    FileMessageEventContent, ImageMessageEventContent, MessageEvent,
-    MessageEventContent, NoticeMessageEventContent, TextMessageEventContent,
-    VideoMessageEventContent,
+use matrix_sdk::events::room::{
+    encrypted::EncryptedEvent,
+    member::{MemberEvent, MembershipState},
+    message::{
+        AudioMessageEventContent, EmoteMessageEventContent,
+        FileMessageEventContent, ImageMessageEventContent, MessageEvent,
+        MessageEventContent, NoticeMessageEventContent,
+        TextMessageEventContent, VideoMessageEventContent,
+    },
 };
 
-pub(crate) trait Renderable {
-    fn render(&self) -> String;
+/// This trait describes events that can be rendered in the weechat UI
+pub(crate) trait RenderableEvent {
+    /// Convert the event into a string that will be displayed in the UI.
+    /// The displayname is taken as a parameter since it cannot be calculated from the event
+    /// context alone.
+    fn render(&self, displayname: &str) -> String;
 }
 
-impl Renderable for MemberEvent {
-    fn render(&self) -> String {
+impl RenderableEvent for EncryptedEvent {
+    // TODO: this is not implemented yet
+    fn render(&self, displayname: &str) -> String {
+        format!("{}\t{}", displayname, "Unable to decrypt message")
+    }
+}
+
+impl RenderableEvent for MemberEvent {
+    fn render(&self, displayname: &str) -> String {
         let operation = match self.content.membership {
             MembershipState::Join => "joined",
             MembershipState::Leave => "left",
@@ -21,26 +35,34 @@ impl Renderable for MemberEvent {
         };
         format!(
             "{} ({}) has {} the room",
-            self.content.displayname.as_deref().unwrap_or(""),
-            self.state_key,
-            operation
+            displayname, self.state_key, operation
         )
     }
 }
 
-impl Renderable for MessageEvent {
-    fn render(&self) -> String {
+impl RenderableEvent for MessageEvent {
+    fn render(&self, displayname: &str) -> String {
         use MessageEventContent::*;
-        let sender = &self.sender;
+
         match &self.content {
-            Text(t) => format!("{}\t{}", sender, t.resolve_body()),
-            Emote(e) => format!("{}\t{}", sender, e.resolve_body()),
-            Audio(a) => format!("{}\t{}: {}", sender, a.body, a.resolve_url()),
-            File(f) => format!("{}\t{}: {}", sender, f.body, f.resolve_url()),
-            Image(i) => format!("{}\t{}: {}", sender, i.body, i.resolve_url()),
-            Location(l) => format!("{}\t{}: {}", sender, l.body, l.geo_uri),
-            Notice(n) => format!("{}\t{}", sender, n.resolve_body()),
-            Video(v) => format!("{}\t{}: {}", sender, v.body, v.resolve_url()),
+            Text(t) => format!("{}\t{}", displayname, t.resolve_body()),
+            Emote(e) => format!("{}\t{}", displayname, e.resolve_body()),
+            Audio(a) => {
+                format!("{}\t{}: {}", displayname, a.body, a.resolve_url())
+            }
+            File(f) => {
+                format!("{}\t{}: {}", displayname, f.body, f.resolve_url())
+            }
+            Image(i) => {
+                format!("{}\t{}: {}", displayname, i.body, i.resolve_url())
+            }
+            Location(l) => {
+                format!("{}\t{}: {}", displayname, l.body, l.geo_uri)
+            }
+            Notice(n) => format!("{}\t{}", displayname, n.resolve_body()),
+            Video(v) => {
+                format!("{}\t{}: {}", displayname, v.body, v.resolve_url())
+            }
             ServerNotice(sn) => {
                 format!("SERVER\t{}", sn.body) // TODO
             }
@@ -48,6 +70,8 @@ impl Renderable for MessageEvent {
     }
 }
 
+/// Trait for message event types that contain an optional formatted body. `resolve_body` will
+/// return the formatted body if present, else fallback to the regular body.
 trait HasFormattedBody {
     fn body(&self) -> &str;
     fn formatted_body(&self) -> Option<&str>;
@@ -57,6 +81,8 @@ trait HasFormattedBody {
     }
 }
 
+// Repeating this for each event type would get boring fast so lets use a simple macro to implement
+// the trait for a struct that has a `body` and `formatted_body` field
 macro_rules! has_formatted_body {
     ($content: ident) => {
         impl HasFormattedBody for $content {
@@ -73,6 +99,8 @@ macro_rules! has_formatted_body {
     };
 }
 
+/// This trait is implemented for message types that can contain either an URL or an encrypted
+/// file. One of both _must_ be present.
 trait HasUrlOrFile {
     fn url(&self) -> Option<&str>;
     fn file(&self) -> Option<&str>;
@@ -84,6 +112,7 @@ trait HasUrlOrFile {
     }
 }
 
+// Same as above: a simple macro to implement the trait for structs with `url` and `file` fields.
 macro_rules! has_url_or_file {
     ($content: ident) => {
         impl HasUrlOrFile for $content {
@@ -100,6 +129,7 @@ macro_rules! has_url_or_file {
     };
 }
 
+// this actually implements the trait for different event types
 has_formatted_body!(EmoteMessageEventContent);
 has_formatted_body!(NoticeMessageEventContent);
 has_formatted_body!(TextMessageEventContent);
