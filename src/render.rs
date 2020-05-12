@@ -1,7 +1,7 @@
 use matrix_sdk::{
     events::room::{
         encrypted::EncryptedEvent,
-        member::{MemberEvent, MembershipState},
+        member::{MemberEvent, MembershipChange, MembershipState},
         message::{
             AudioMessageEventContent, EmoteMessageEventContent,
             FileMessageEventContent, ImageMessageEventContent, MessageEvent,
@@ -37,15 +37,24 @@ impl RenderableEvent for EncryptedEvent {
 
 impl RenderableEvent for MemberEvent {
     fn render(&self, displayname: &str) -> String {
-        let operation = match self.content.membership {
-            MembershipState::Join => "joined",
-            MembershipState::Leave => "left",
-            MembershipState::Ban => "banned",
-            MembershipState::Invite => "invited",
-            MembershipState::Knock => "knocked on", // TODO
+        use MembershipChange::*;
+        let operation = match self.membership_change() {
+            None => "did nothing",
+            Error => "caused an error", // must never happen
+            Joined => "has joined the room",
+            Left => "has left the room",
+            Banned => "was banned",
+            Unbanned => "was unbanned",
+            Kicked => "was kicked from the room",
+            Invited => "was invited to the room",
+            KickedAndBanned => "was kicked and banned",
+            InvitationRejected => "rejected the invitation",
+            InvitationRevoked => "had the invitation revoked",
+            ProfileChanged => "changed the display name or avatar",
+            NotImplemented => "performed an unimplemented operation",
         };
         format!(
-            "{} {} ({}) has {} the room",
+            "{} {} ({}) {}",
             Weechat::prefix("join"),
             displayname,
             self.state_key,
