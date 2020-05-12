@@ -27,7 +27,15 @@ pub(crate) trait RenderableEvent {
 impl RenderableEvent for EncryptedEvent {
     // TODO: this is not implemented yet
     fn render(&self, displayname: &str) -> String {
-        format!("{}\t{}", displayname, "Unable to decrypt message")
+        let color_user = Weechat::color("green"); // TODO: get per-user color
+        let color_reset = Weechat::color("reset");
+        format!(
+            "{color_user}{}{color_reset}\t{}",
+            displayname,
+            "Unable to decrypt message",
+            color_user = color_user,
+            color_reset = color_reset
+        )
     }
 
     fn sender(&self) -> &UserId {
@@ -38,7 +46,8 @@ impl RenderableEvent for EncryptedEvent {
 impl RenderableEvent for MemberEvent {
     fn render(&self, displayname: &str) -> String {
         use MembershipChange::*;
-        let operation = match self.membership_change() {
+        let change_op = self.membership_change();
+        let operation = match change_op {
             None => "did nothing",
             Error => "caused an error", // must never happen
             Joined => "has joined the room",
@@ -53,12 +62,22 @@ impl RenderableEvent for MemberEvent {
             ProfileChanged => "changed the display name or avatar",
             NotImplemented => "performed an unimplemented operation",
         };
+
+        let (prefix, color_action) = match change_op {
+            Joined | Invited => ("join", "green"),
+            _ => ("quit", "red"),
+        };
+
         format!(
-            "{} {} ({}) {}",
-            Weechat::prefix("join"),
-            displayname,
-            self.state_key,
-            operation
+            "{prefix}{color_user}{name} {color_deli}({color_reset}{state}{color_deli}){color_reset} {color_action}{op}",
+            prefix = Weechat::prefix(prefix),
+            color_user = Weechat::color("reset"), // TODO
+            color_deli = Weechat::color("chat_delimiters"),
+            color_action = Weechat::color(color_action),
+            color_reset = Weechat::color("reset"),
+            name = displayname,
+            state = self.state_key,
+            op = operation,
         )
     }
 
@@ -71,25 +90,71 @@ impl RenderableEvent for MessageEvent {
     fn render(&self, displayname: &str) -> String {
         use MessageEventContent::*;
 
+        let color_user = Weechat::color("green"); // TODO: get per-user color
+        let color_reset = Weechat::color("reset");
         match &self.content {
-            Text(t) => format!("{}\t{}", displayname, t.resolve_body()),
-            Emote(e) => format!("{}\t{}", displayname, e.resolve_body()),
-            Audio(a) => {
-                format!("{}\t{}: {}", displayname, a.body, a.resolve_url())
-            }
-            File(f) => {
-                format!("{}\t{}: {}", displayname, f.body, f.resolve_url())
-            }
-            Image(i) => {
-                format!("{}\t{}: {}", displayname, i.body, i.resolve_url())
-            }
-            Location(l) => {
-                format!("{}\t{}: {}", displayname, l.body, l.geo_uri)
-            }
-            Notice(n) => format!("{}\t{}", displayname, n.resolve_body()),
-            Video(v) => {
-                format!("{}\t{}: {}", displayname, v.body, v.resolve_url())
-            }
+            // TODO: formatting for inline markdown and so on
+            Text(t) => format!(
+                "{color_user}{}{color_reset}\t{}",
+                displayname,
+                t.resolve_body(),
+                color_user = color_user,
+                color_reset = color_reset
+            ),
+            Emote(e) => format!(
+                "{color_user}{}{color_reset}\t{}",
+                displayname,
+                e.resolve_body(),
+                color_user = color_user,
+                color_reset = color_reset
+            ),
+            Audio(a) => format!(
+                "{color_user}{}{color_reset}\t{}: {}",
+                displayname,
+                a.body,
+                a.resolve_url(),
+                color_user = color_user,
+                color_reset = color_reset
+            ),
+            File(f) => format!(
+                "{color_user}{}{color_reset}\t{}: {}",
+                displayname,
+                f.body,
+                f.resolve_url(),
+                color_user = color_user,
+                color_reset = color_reset
+            ),
+            Image(i) => format!(
+                "{color_user}{}{color_reset}\t{}: {}",
+                displayname,
+                i.body,
+                i.resolve_url(),
+                color_user = color_user,
+                color_reset = color_reset
+            ),
+            Location(l) => format!(
+                "{color_user}{}{color_reset}\t{}: {}",
+                displayname,
+                l.body,
+                l.geo_uri,
+                color_user = color_user,
+                color_reset = color_reset
+            ),
+            Notice(n) => format!(
+                "{color_user}{}{color_reset}\t{}",
+                displayname,
+                n.resolve_body(),
+                color_user = color_user,
+                color_reset = color_reset
+            ),
+            Video(v) => format!(
+                "{color_user}{}{color_reset}\t{}: {}",
+                displayname,
+                v.body,
+                v.resolve_url(),
+                color_user = color_user,
+                color_reset = color_reset
+            ),
             ServerNotice(sn) => {
                 format!("SERVER\t{}", sn.body) // TODO
             }
