@@ -11,6 +11,7 @@ use matrix_sdk::{
     },
     identifiers::UserId,
 };
+use weechat::Weechat;
 
 /// This trait describes events that can be rendered in the weechat UI
 pub(crate) trait RenderableEvent {
@@ -44,8 +45,11 @@ impl RenderableEvent for MemberEvent {
             MembershipState::Knock => "knocked on", // TODO
         };
         format!(
-            "{} ({}) has {} the room",
-            displayname, self.state_key, operation
+            "{} {} ({}) has {} the room",
+            Weechat::prefix("join"),
+            displayname,
+            self.state_key,
+            operation
         )
     }
 
