@@ -1,12 +1,15 @@
-use matrix_sdk::events::room::{
-    encrypted::EncryptedEvent,
-    member::{MemberEvent, MembershipState},
-    message::{
-        AudioMessageEventContent, EmoteMessageEventContent,
-        FileMessageEventContent, ImageMessageEventContent, MessageEvent,
-        MessageEventContent, NoticeMessageEventContent,
-        TextMessageEventContent, VideoMessageEventContent,
+use matrix_sdk::{
+    events::room::{
+        encrypted::EncryptedEvent,
+        member::{MemberEvent, MembershipState},
+        message::{
+            AudioMessageEventContent, EmoteMessageEventContent,
+            FileMessageEventContent, ImageMessageEventContent, MessageEvent,
+            MessageEventContent, NoticeMessageEventContent,
+            TextMessageEventContent, VideoMessageEventContent,
+        },
     },
+    identifiers::UserId,
 };
 
 /// This trait describes events that can be rendered in the weechat UI
@@ -15,12 +18,19 @@ pub(crate) trait RenderableEvent {
     /// The displayname is taken as a parameter since it cannot be calculated from the event
     /// context alone.
     fn render(&self, displayname: &str) -> String;
+
+    /// Get the sender for this event this can be used to get the displayname.
+    fn sender(&self) -> &UserId;
 }
 
 impl RenderableEvent for EncryptedEvent {
     // TODO: this is not implemented yet
     fn render(&self, displayname: &str) -> String {
         format!("{}\t{}", displayname, "Unable to decrypt message")
+    }
+
+    fn sender(&self) -> &UserId {
+        &self.sender
     }
 }
 
@@ -37,6 +47,10 @@ impl RenderableEvent for MemberEvent {
             "{} ({}) has {} the room",
             displayname, self.state_key, operation
         )
+    }
+
+    fn sender(&self) -> &UserId {
+        &self.sender
     }
 }
 
@@ -67,6 +81,10 @@ impl RenderableEvent for MessageEvent {
                 format!("SERVER\t{}", sn.body) // TODO
             }
         }
+    }
+
+    fn sender(&self) -> &UserId {
+        &self.sender
     }
 }
 

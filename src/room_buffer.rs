@@ -198,6 +198,10 @@ impl RoomBuffer {
             .unwrap_or_else(|| format!("{}", user_id))
     }
 
+    fn render_event(&self, event: &impl RenderableEvent) -> String {
+        event.render(&self.calculate_user_name(event.sender()))
+    }
+
     pub fn handle_membership_event(
         &mut self,
         event: &MemberEvent,
@@ -225,7 +229,7 @@ impl RoomBuffer {
             return;
         }
 
-        let message = event.render(&self.calculate_user_name(&event.sender));
+        let message = self.render_event(event);
 
         let timestamp: u64 = event
             .origin_server_ts
@@ -248,28 +252,26 @@ impl RoomBuffer {
     }
 
     pub fn handle_room_message(&mut self, event: &MessageEvent) {
-        let sender = self.calculate_user_name(&event.sender);
         let timestamp: u64 = event
             .origin_server_ts
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        let message = event.render(&sender);
+        let message = self.render_event(event);
 
         let buffer = self.weechat_buffer();
         buffer.print_date_tags(timestamp as i64, &[], &message)
     }
 
     pub fn handle_encrypted_message(&mut self, event: &EncryptedEvent) {
-        let sender = self.calculate_user_name(&event.sender);
         let timestamp: u64 = event
             .origin_server_ts
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
-        let message = event.render(&sender);
+        let message = self.render_event(event);
         let buffer = self.weechat_buffer();
         buffer.print_date_tags(timestamp as i64, &[], &message);
     }
