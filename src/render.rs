@@ -91,8 +91,17 @@ impl RenderableEvent for MessageEvent {
     fn render(&self, displayname: &str) -> String {
         use MessageEventContent::*;
 
-        let color_user = Weechat::color("green"); // TODO: get per-user color
+        // TODO: Need to render power level indicators as well.
+
+        // In case it's not clear, self.sender is the MXID. We're basing the nick color on it so
+        // that it doesn't change with display name changes.
+        let colorname_user =
+            Weechat::info_get("nick_color_name", self.sender.as_ref())
+                .unwrap_or(String::from("default"));
+        let color_user = Weechat::color(&colorname_user);
+
         let color_reset = Weechat::color("reset");
+
         match &self.content {
             // TODO: formatting for inline markdown and so on
             Text(t) => format!(
