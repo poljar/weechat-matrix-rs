@@ -103,9 +103,10 @@ impl RenderableEvent for MessageEvent {
                 color_reset = color_reset
             ),
             Emote(e) => format!(
-                "{color_user}{}{color_reset}\t{}",
+                "{prefix}\t{color_user}{}{color_reset} {}",
                 displayname,
                 e.resolve_body(),
+                prefix = Weechat::prefix("action"),
                 color_user = color_user,
                 color_reset = color_reset
             ),
