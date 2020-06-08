@@ -64,7 +64,8 @@ impl RenderableEvent for MemberEvent {
         };
 
         let (prefix, color_action) = match change_op {
-            Joined | Invited => ("join", "green"),
+            Joined => ("join", "green"),
+            Banned | ProfileChanged | Invited => ("network", "magenta"),
             _ => ("quit", "red"),
         };
 
