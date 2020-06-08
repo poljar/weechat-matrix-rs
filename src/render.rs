@@ -143,10 +143,12 @@ impl RenderableEvent for MessageEvent {
                 color_reset = color_reset
             ),
             Notice(n) => format!(
-                "{color_user}{}{color_reset}\t{}",
+                "{prefix}{color_notice}Notice{color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
                 displayname,
                 n.resolve_body(),
-                color_user = color_user,
+                prefix = Weechat::prefix("network"),
+                color_notice = Weechat::color("irc.color.notice"),
+                color_delim = Weechat::color("chat_delimiters"),
                 color_reset = color_reset
             ),
             Video(v) => format!(
@@ -157,9 +159,15 @@ impl RenderableEvent for MessageEvent {
                 color_user = color_user,
                 color_reset = color_reset
             ),
-            ServerNotice(sn) => {
-                format!("SERVER\t{}", sn.body) // TODO
-            }
+            ServerNotice(n) => format!(
+                "{prefix}{color_notice}Server notice{color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
+                displayname,
+                n.body,
+                prefix = Weechat::prefix("network"),
+                color_notice = Weechat::color("irc.color.notice"),
+                color_delim = Weechat::color("chat_delimiters"),
+                color_reset = color_reset
+            ),
         }
     }
 
