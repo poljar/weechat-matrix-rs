@@ -185,47 +185,9 @@ impl RoomBuffer {
         self.weechat_buffer().set_name(&name)
     }
 
-    /// Calculate the display name for a room member from its UserId. If no member with that ID is in
-    /// the room, the string representation of the ID will be returned.
-    fn calculate_user_name(&self, user_id: &UserId) -> String {
-        let name = self
-            .inner
-            .room
-            .borrow()
-            .members
-            .get(user_id)
-            // TODO: get rid of clone?
-            .and_then(|member| member.display_name.clone())
-            .unwrap_or_else(|| format!("{}", user_id));
-
-        // count members with the same display name
-        // TODO: Counting here is suboptimal since this will be done for every message. We probably
-        // want to keep a user_id -> display_name hashmap instead.
-        let count = self
-            .inner
-            .room
-            .borrow()
-            .members
-            .values()
-            .filter(|member| {
-                member
-                    .display_name
-                    .as_ref()
-                    .map(|n| n == &name)
-                    .unwrap_or(false)
-            })
-            .count();
-
-        if count > 1 {
-            // more than one member with the same display name -> append the ID
-            format!("{} ({})", name, user_id)
-        } else {
-            name
-        }
-    }
-
     fn render_event(&self, event: &impl RenderableEvent) -> String {
-        event.render(&self.calculate_user_name(event.sender()))
+        let room = self.inner.room.borrow();
+        event.render(&room.member_display_name(event.sender()))
     }
 
     pub fn handle_membership_event(
