@@ -180,14 +180,20 @@ impl RoomBuffer {
         }
     }
 
+    /// Calculate the display name for a room member from its UserId. If no member with that ID is in
+    /// the room, the string representation of the ID will be returned.
+    fn calculate_user_name(&self, user_id: &UserId) -> String {
+        let room = self.inner.room.borrow();
+        room.member_display_name(user_id).into_owned()
+    }
+
     pub fn update_buffer_name(&mut self) {
         let name = self.calculate_buffer_name();
         self.weechat_buffer().set_name(&name)
     }
 
     fn render_event(&self, event: &impl RenderableEvent) -> String {
-        let room = self.inner.room.borrow();
-        event.render(&room.member_display_name(event.sender()))
+        event.render(&self.calculate_user_name(event.sender()))
     }
 
     pub fn handle_membership_event(
