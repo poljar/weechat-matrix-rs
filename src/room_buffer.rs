@@ -199,6 +199,8 @@ impl RoomBuffer {
             .unwrap_or_else(|| format!("{}", user_id));
 
         // count members with the same display name
+        // TODO: Counting here is suboptimal since this will be done for every message. We probably
+        // want to keep a user_id -> display_name hashmap instead.
         let count = self
             .inner
             .room
