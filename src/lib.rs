@@ -38,7 +38,9 @@ impl Servers {
 
 struct Matrix {
     servers: Servers,
+    #[used]
     commands: Commands,
+    #[used]
     config: Config,
 }
 

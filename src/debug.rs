@@ -1,5 +1,4 @@
 use std::io;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use weechat::Weechat;
 
 #[derive(Clone)]

@@ -126,6 +126,7 @@ pub struct Connection {
     response_receiver: JoinHandle<(), ()>,
     // TODO move the runtime into the plugin, once we're able to cancel tokio
     // tasks.
+    #[used]
     runtime: Runtime,
 }
 
