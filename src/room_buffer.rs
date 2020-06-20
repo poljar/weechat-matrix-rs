@@ -132,6 +132,39 @@ impl RoomBuffer {
         }
     }
 
+    pub fn restore(
+        room: Room,
+        server_name: &str,
+        connected_state: &Rc<RefCell<Option<Connection>>>,
+        homeserver: &Url,
+        config: &Config,
+    ) -> Self {
+        let mut room_buffer = RoomBuffer::new(
+            server_name,
+            connected_state,
+            homeserver,
+            config,
+            room.room_id.clone(),
+            &room.own_user_id,
+        );
+
+        let buffer = room_buffer.weechat_buffer();
+
+        for user in room.members.values() {
+            let user_id = user.user_id.to_string();
+            // TODO use display names here
+            let settings = NickSettings::new(&user_id);
+            buffer
+                .add_nick(settings)
+                .expect("Can't add nick to nicklist");
+        }
+
+        room_buffer.inner.room = Rc::new(RefCell::new(room));
+        room_buffer.update_buffer_name();
+
+        room_buffer
+    }
+
     pub fn room_mut(&mut self) -> RefMut<'_, Room> {
         self.inner.room.borrow_mut()
     }

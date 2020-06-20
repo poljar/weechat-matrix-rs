@@ -54,6 +54,7 @@ use async_std::sync::channel as async_channel;
 use async_std::sync::{Receiver, Sender};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -69,7 +70,7 @@ use matrix_sdk::{
         room::message::{MessageEventContent, TextMessageEventContent},
     },
     identifiers::{RoomId, UserId},
-    Client, ClientConfig, SyncSettings,
+    Client, ClientConfig, Room, SyncSettings,
 };
 
 use weechat::config::{
@@ -88,11 +89,13 @@ pub enum ThreadMessage {
     LoginMessage(LoginResponse),
     SyncState(RoomId, StateEvent),
     SyncEvent(RoomId, RoomEvent),
+    RestoredRoom(Room),
 }
 
 #[derive(Debug)]
 pub enum ServerError {
     StartError(String),
+    IoError(String),
 }
 
 pub enum ServerMessage {
@@ -116,7 +119,6 @@ impl ServerSettings {
 
 pub struct LoginState {
     user_id: UserId,
-    device_id: String,
 }
 
 pub struct Connection {
@@ -333,6 +335,42 @@ impl MatrixServer {
     pub fn autoconnect(&self) -> bool {
         self.inner.borrow().settings.autoconnect
     }
+
+    fn save_device_id(
+        user_name: &str,
+        mut server_path: PathBuf,
+        response: &LoginResponse,
+    ) -> std::io::Result<()> {
+        server_path.push(user_name);
+        server_path.set_extension("device_id");
+        std::fs::write(&server_path, &response.device_id)
+    }
+
+    fn load_device_id(
+        user_name: &str,
+        mut server_path: PathBuf,
+    ) -> std::io::Result<Option<String>> {
+        server_path.push(user_name);
+        server_path.set_extension("device_id");
+
+        let device_id = std::fs::read_to_string(server_path);
+
+        if let Err(e) = device_id {
+            // A file not found error is ok, report the rest.
+            if e.kind() != std::io::ErrorKind::NotFound {
+                return Err(e);
+            }
+            return Ok(None);
+        };
+
+        let device_id = device_id.unwrap_or_default();
+
+        if device_id.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(device_id))
+        }
+    }
 }
 
 impl Drop for MatrixServer {
@@ -383,6 +421,26 @@ impl InnerServer {
         self.room_buffers.get_mut(room_id).unwrap()
     }
 
+    fn restore_room(&mut self, room: Room) {
+        let homeserver = self
+            .settings
+            .homeserver
+            .as_ref()
+            .expect("Creating room buffer while no homeserver");
+
+        let room_id = room.room_id.clone();
+
+        let buffer = RoomBuffer::restore(
+            room,
+            &self.server_name,
+            &self.connected_state,
+            homeserver,
+            &self.config,
+        );
+
+        self.room_buffers.insert(room_id, buffer);
+    }
+
     /// Is the server connected.
     pub fn connected(&self) -> bool {
         self.connected_state.borrow().is_some()
@@ -409,9 +467,22 @@ impl InnerServer {
     pub fn receive_login(&mut self, response: LoginResponse) {
         let login_state = LoginState {
             user_id: response.user_id,
-            device_id: response.device_id,
         };
         self.login_state = Some(login_state);
+    }
+
+    fn create_server_dir(&self) -> std::io::Result<()> {
+        let path = self.get_server_path();
+        std::fs::create_dir_all(path)
+    }
+
+    fn get_server_path(&self) -> PathBuf {
+        let mut path = Weechat::home_dir();
+        let server_name: &str = &self.server_name;
+        path.push("matrix-rust");
+        path.push(server_name);
+
+        path
     }
 
     pub fn create_client(&mut self) -> Result<Client, ServerError> {
@@ -420,7 +491,15 @@ impl InnerServer {
                 ServerError::StartError("Homeserver not configured".to_owned())
             })?;
 
-        let mut client_config = ClientConfig::new();
+        self.create_server_dir().map_err(|e| {
+            ServerError::IoError(format!(
+                "Error creating the session dir: {}",
+                e
+            ))
+        })?;
+
+        let mut client_config =
+            ClientConfig::new().store_path(self.get_server_path());
 
         if let Some(proxy) = &self.settings.proxy {
             client_config = client_config
@@ -430,8 +509,7 @@ impl InnerServer {
         }
 
         let client =
-            Client::new_with_config(homeserver.clone(), None, client_config)
-                .unwrap();
+            Client::new_with_config(homeserver.clone(), client_config).unwrap();
         self.client = Some(client.clone());
         Ok(client)
     }
@@ -470,6 +548,8 @@ impl MatrixServer {
             tx,
             server.settings.username.to_string(),
             server.settings.password.to_string(),
+            server.server_name.to_string(),
+            server.get_server_path(),
         ));
         let response_receiver = Weechat::spawn(
             MatrixServer::response_receiver(rx, Rc::downgrade(&self.inner)),
@@ -523,19 +603,52 @@ impl MatrixServer {
         channel: Sender<Result<ThreadMessage, String>>,
         username: String,
         password: String,
+        server_name: String,
+        server_path: PathBuf,
     ) {
         if !client.logged_in().await {
+            let device_id =
+                MatrixServer::load_device_id(&username, server_path.clone());
+
+            let device_id = match device_id {
+                Err(e) => {
+                    channel
+                        .send(Err(format!(
+                        "Error while reading the device id for server {}: {:?}",
+                        server_name, e
+                    )))
+                        .await;
+                    return;
+                }
+                Ok(d) => d,
+            };
+
+            let first_login = device_id.is_none();
+
             let ret = client
                 .login(
-                    username,
+                    username.clone(),
                     password,
-                    None,
-                    Some("Weechat-Matrix".to_owned()),
+                    device_id,
+                    Some("Weechat-Matrix-rs".to_owned()),
                 )
                 .await;
 
             match ret {
                 Ok(response) => {
+                    if let Err(e) = MatrixServer::save_device_id(
+                        &username,
+                        server_path.clone(),
+                        &response,
+                    ) {
+                        channel
+                            .send(Err(format!(
+                            "Error while writing the device id for server {}: {:?}",
+                            server_name, e
+                        ))).await;
+                        return;
+                    }
+
                     channel
                         .send(Ok(ThreadMessage::LoginMessage(response)))
                         .await
@@ -543,6 +656,17 @@ impl MatrixServer {
                 Err(_e) => {
                     channel.send(Err("No logging in".to_string())).await;
                     return;
+                }
+            }
+
+            if !first_login {
+                let joined_rooms = client.joined_rooms();
+                for room in joined_rooms.read().await.values() {
+                    let room = room.read().await;
+                    let room: &Room = &*room;
+                    channel
+                        .send(Ok(ThreadMessage::RestoredRoom(room.clone())))
+                        .await
                 }
             }
         }
@@ -619,6 +743,9 @@ impl MatrixServer {
                     }
                     ThreadMessage::SyncState(r, e) => {
                         server.receive_joined_state_event(&r, e)
+                    }
+                    ThreadMessage::RestoredRoom(room) => {
+                        server.restore_room(room)
                     }
                 },
                 Err(e) => Weechat::print(&format!("Ruma error {}", e)),
