@@ -596,9 +596,12 @@ impl MatrixServer {
     ) {
         loop {
             let ret = match receiver.recv().await {
-                Some(m) => m,
-                None => {
-                    Weechat::print("Error receiving message");
+                Ok(m) => m,
+                Err(e) => {
+                    Weechat::print(&format!(
+                        "Error receiving message: {:?}",
+                        e
+                    ));
                     return;
                 }
             };
@@ -626,7 +629,7 @@ impl MatrixServer {
     /// Send loop that waits for requests that need to be sent out using our
     /// Matrix client.
     pub async fn send_loop(client: Client, channel: Receiver<ServerMessage>) {
-        while let Some(message) = channel.recv().await {
+        while let Ok(message) = channel.recv().await {
             match message {
                 ServerMessage::RoomSend(room_id, message) => {
                     let content =
