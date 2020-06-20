@@ -36,7 +36,6 @@ use url::Url;
 use async_trait::async_trait;
 
 use crate::server::Connection;
-use crate::Config;
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 use weechat::buffer::{
@@ -44,13 +43,6 @@ use weechat::buffer::{
     NickSettings,
 };
 use weechat::Weechat;
-
-pub(crate) struct RoomMember {
-    nick: String,
-    user_id: String,
-    prefix: String,
-    color: String,
-}
 
 pub struct RoomBuffer {
     inner: MatrixRoom,
@@ -94,7 +86,6 @@ impl RoomBuffer {
         server_name: &str,
         connected_state: &Rc<RefCell<Option<Connection>>>,
         homeserver: &Url,
-        config: &Config,
         room_id: RoomId,
         own_user_id: &UserId,
     ) -> Self {
@@ -111,7 +102,7 @@ impl RoomBuffer {
 
         let buffer_settings = BufferSettingsAsync::new(&room_id.to_string())
             .input_callback(room.clone())
-            .close_callback(|weechat: &Weechat, buffer: &Buffer| {
+            .close_callback(|_weechat: &Weechat, _buffer: &Buffer| {
                 // TODO remove the roombuffer from the server here.
                 // TODO leave the room if the plugin isn't unloading.
                 Ok(())
@@ -137,13 +128,11 @@ impl RoomBuffer {
         server_name: &str,
         connected_state: &Rc<RefCell<Option<Connection>>>,
         homeserver: &Url,
-        config: &Config,
     ) -> Self {
         let mut room_buffer = RoomBuffer::new(
             server_name,
             connected_state,
             homeserver,
-            config,
             room.room_id.clone(),
             &room.own_user_id,
         );

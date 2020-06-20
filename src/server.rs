@@ -412,7 +412,6 @@ impl InnerServer {
                 &self.server_name,
                 &self.connected_state,
                 homeserver,
-                &self.config,
                 room_id.clone(),
                 &login_state.user_id,
             );
@@ -436,7 +435,6 @@ impl InnerServer {
             &self.server_name,
             &self.connected_state,
             homeserver,
-            &self.config,
         );
 
         self.room_buffers.insert(room_id, buffer);
