@@ -3,7 +3,7 @@ use clap::AppSettings as ArgParseSettings;
 use clap::{Arg, ArgMatches, SubCommand};
 use url::Url;
 
-use crate::config::Config;
+use crate::config::ConfigHandle;
 use crate::PLUGIN_NAME;
 use crate::{MatrixServer, Servers};
 use weechat::buffer::Buffer;
@@ -16,7 +16,7 @@ pub struct Commands {
 
 struct MatrixCommand {
     servers: Servers,
-    config: Config,
+    config: ConfigHandle,
 }
 
 impl MatrixCommand {
@@ -269,7 +269,7 @@ impl Commands {
     pub fn hook_all(
         weechat: &Weechat,
         servers: &Servers,
-        config: &Config,
+        config: &ConfigHandle,
     ) -> Commands {
         let matrix_settings = CommandSettings::new("matrix")
             .description("Matrix chat protocol command.")

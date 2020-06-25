@@ -11,10 +11,14 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use tracing_subscriber;
 
-use weechat::{weechat_plugin, ArgsWeechat, Weechat, WeechatPlugin};
+use weechat::{
+    buffer::Buffer,
+    hooks::{BarItemCallback, BarItemHandle},
+    weechat_plugin, ArgsWeechat, Weechat, WeechatPlugin,
+};
 
 use crate::commands::Commands;
-use crate::config::Config;
+use crate::config::ConfigHandle;
 use crate::server::MatrixServer;
 
 const PLUGIN_NAME: &str = "matrix";
@@ -41,7 +45,9 @@ struct Matrix {
     #[used]
     commands: Commands,
     #[used]
-    config: Config,
+    config: ConfigHandle,
+    #[used]
+    status_bar: BarItemHandle,
 }
 
 impl Matrix {
@@ -58,7 +64,7 @@ impl Matrix {
 
     fn create_default_server(
         servers: &mut HashMap<String, MatrixServer>,
-        config: &Config,
+        config: &ConfigHandle,
     ) {
         let server_name = "localhost";
         let mut config_borrow = config.borrow_mut();
@@ -70,11 +76,33 @@ impl Matrix {
     }
 }
 
+impl BarItemCallback for Servers {
+    fn callback(&mut self, _: &Weechat, buffer: &Buffer) -> String {
+        let servers = self.borrow();
+
+        for server in servers.values() {
+            let server = server.inner();
+            for room in server.room_buffers().values() {
+                let room_buffer = room.weechat_buffer();
+                if &room_buffer == buffer {
+                    if room.room().is_encrypted() {
+                        return server.config().look().encrypted_room_sign();
+                    }
+                }
+            }
+        }
+
+        "".to_owned()
+    }
+}
+
 impl WeechatPlugin for Matrix {
     fn init(weechat: &Weechat, _args: ArgsWeechat) -> Result<Self, ()> {
         let servers = Servers::new();
-        let config = Config::new(weechat, &servers);
+        let config = ConfigHandle::new(weechat, &servers);
         let commands = Commands::hook_all(weechat, &servers, &config);
+        let status_bar =
+            Weechat::new_bar_item("matrix_modes", servers.clone())?;
 
         tracing_subscriber::fmt().with_writer(debug::Debug).init();
 
@@ -82,6 +110,7 @@ impl WeechatPlugin for Matrix {
             servers: servers.clone(),
             commands,
             config: config.clone(),
+            status_bar,
         };
 
         {

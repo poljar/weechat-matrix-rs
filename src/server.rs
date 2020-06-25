@@ -52,7 +52,7 @@
 //! that processing events will not block the Weechat mainloop for too long.
 use async_std::sync::channel as async_channel;
 use async_std::sync::{Receiver, Sender};
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
@@ -80,8 +80,8 @@ use weechat::JoinHandle;
 use weechat::Weechat;
 
 use crate::room_buffer::RoomBuffer;
-use crate::Config;
 use crate::PLUGIN_NAME;
+use crate::{config::Config, ConfigHandle};
 
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -151,7 +151,7 @@ pub(crate) struct InnerServer {
     server_name: Rc<String>,
     room_buffers: HashMap<RoomId, RoomBuffer>,
     settings: ServerSettings,
-    config: Config,
+    config: ConfigHandle,
     client: Option<Client>,
     login_state: Option<LoginState>,
     connected_state: Rc<RefCell<Option<Connection>>>,
@@ -160,7 +160,7 @@ pub(crate) struct InnerServer {
 impl MatrixServer {
     pub fn new(
         name: &str,
-        config: &Config,
+        config: &ConfigHandle,
         server_section: &mut ConfigSection,
     ) -> Self {
         let server_name = Rc::new(name.to_owned());
@@ -186,6 +186,10 @@ impl MatrixServer {
 
     pub fn name(&self) -> &str {
         &self.server_name
+    }
+
+    pub fn inner(&self) -> Ref<'_, InnerServer> {
+        self.inner.borrow()
     }
 
     pub fn parse_homeserver_url(value: String) -> Result<(), String> {
@@ -419,6 +423,14 @@ impl InnerServer {
         }
 
         self.room_buffers.get_mut(room_id).unwrap()
+    }
+
+    pub fn room_buffers(&self) -> &HashMap<RoomId, RoomBuffer> {
+        &self.room_buffers
+    }
+
+    pub fn config(&self) -> Ref<Config> {
+        self.config.borrow()
     }
 
     fn restore_room(&mut self, room: Room) {

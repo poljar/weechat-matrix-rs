@@ -162,7 +162,7 @@ impl RoomBuffer {
         self.inner.room.borrow()
     }
 
-    pub fn weechat_buffer(&mut self) -> Buffer {
+    pub fn weechat_buffer(&self) -> Buffer {
         self.buffer_handle
             .upgrade()
             .expect("Buffer got closed but Room is still lingering around")
