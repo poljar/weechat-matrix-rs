@@ -200,7 +200,7 @@ macro_rules! section {
 /// Declare a Weechat configuration file.
 ///
 /// This will generate a struct called `Config` which wraps the Weechat struct
-/// of the same name. The generated struct will have accessors for every 
+/// of the same name. The generated struct will have accessors for every
 /// section and option that is declared.
 ///
 /// The generated struct dereferences into the Weechat `Config` struct so

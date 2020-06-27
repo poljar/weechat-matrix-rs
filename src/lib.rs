@@ -132,10 +132,10 @@ impl WeechatPlugin for Matrix {
         }
 
         let plugin = Matrix {
-                servers: servers.clone(),
-                commands,
-                config: config.clone(),
-                status_bar,
+            servers: servers.clone(),
+            commands,
+            config: config.clone(),
+            status_bar,
         };
 
         Weechat::spawn(async move {
