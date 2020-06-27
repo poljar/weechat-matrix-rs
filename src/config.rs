@@ -18,7 +18,7 @@ use crate::{MatrixServer, Servers};
 use weechat::config::{
     Conf, ConfigOption, ConfigSection, ConfigSectionSettings,
     IntegerOptionSettings, OptionChanged, SectionHandle, SectionHandleMut,
-    SectionReadCallback, StringOptionSettings,
+    SectionReadCallback, StringOptionSettings, BooleanOptionSettings,
 };
 use weechat::Weechat;
 
@@ -68,6 +68,22 @@ macro_rules! string_create {
                     .default_value($default);
 
                 section.new_string_option(option_settings)
+                    .expect(&format!("Can't create option {}", option_name));
+            }
+        }
+    };
+}
+
+macro_rules! bool_create {
+    ($option_name:ident, $description:literal, $default:literal) => {
+        paste::item! {
+            fn [<create_option_ $option_name>](section: &mut SectionHandleMut) {
+                let option_name = stringify!($option_name);
+                let option_settings = BooleanOptionSettings::new(option_name)
+                    .description($description)
+                    .default_value($default);
+
+                section.new_boolean_option(option_settings)
                     .expect(&format!("Can't create option {}", option_name));
             }
         }
@@ -148,6 +164,11 @@ macro_rules! option {
     (String, $option_name:ident, $description:literal, $default:literal) => {
         string_create!($option_name, $description, $default);
         option_getter!(String, $option_name, String);
+    };
+
+    (bool, $option_name:ident, $description:literal, $default:literal) => {
+        bool_create!($option_name, $description, $default);
+        option_getter!(Boolean, $option_name, bool);
     };
 
     (Integer, $option_name:ident, $description:literal, $default:literal, $min:literal, $max:literal) => {
@@ -288,8 +309,12 @@ config!(
         enum_test: Enum {
             "test",
             Test
-        }
+        },
 
+        bool_test: bool {
+            "description",
+            false
+        }
     }
 );
 
