@@ -171,7 +171,7 @@ macro_rules! option {
         option_getter!(Boolean, $option_name, bool);
     };
 
-    (Integer, $option_name:ident, $description:literal, $default:literal, $min:literal, $max:literal) => {
+    (Integer, $option_name:ident, $description:literal, $default:literal, $min:literal..$max:literal) => {
         integer_create!($option_name, $description, $default, $min, $max, []);
         option_getter!(Integer, $option_name, i64);
     };
@@ -303,8 +303,7 @@ config!(
         int_test: Integer {
             "test",
             5,
-            0,
-            10
+            0..10
         },
         enum_test: Enum {
             "test",
