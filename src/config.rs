@@ -107,22 +107,16 @@ macro_rules! bool_create {
 }
 
 macro_rules! integer_create {
-    ($option_name:ident, $description:literal, $default:literal, $min:literal, $max:literal, [$($string_value:literal), *]) => {
+    ($option_name:ident, $description:literal, $default:literal, $min:literal, $max:literal) => {
         paste::item! {
             fn [<create_option_ $option_name>](section: &mut SectionHandleMut) {
-                let mut string_values: Vec<String> = Vec::new();
-
-                $(
-                    string_values.push($string_value.into());
-                )*
-
                 let option_name = stringify!($option_name);
+
                 let option_settings = IntegerOptionSettings::new(option_name)
                     .description($description)
                     .default_value($default)
                     .min($min)
-                    .max($max)
-                    .string_values(string_values);
+                    .max($max);
 
                 section.new_integer_option(option_settings)
                     .expect(&format!("Can't create option {}", option_name));
@@ -193,7 +187,7 @@ macro_rules! option {
     };
 
     (Integer, $option_name:ident, $description:literal, $default:literal, $min:literal..$max:literal $(,)?) => {
-        integer_create!($option_name, $description, $default, $min, $max, []);
+        integer_create!($option_name, $description, $default, $min, $max);
         option_getter!(Integer, $option_name, i64);
     };
 
