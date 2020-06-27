@@ -1,6 +1,7 @@
 #![feature(async_closure)]
 
-#[macro_use] mod config_macros;
+#[macro_use]
+mod config_macros;
 
 mod commands;
 mod config;
@@ -68,11 +69,14 @@ impl Matrix {
         servers: &mut HashMap<String, MatrixServer>,
         config: &ConfigHandle,
     ) {
+        // TODO change this to matrix.org.
         let server_name = "localhost";
+
         let mut config_borrow = config.borrow_mut();
         let mut section = config_borrow
             .search_section_mut("server")
             .expect("Can't get server section");
+
         let server = MatrixServer::new(server_name, config, &mut section);
         servers.insert(server_name.to_owned(), server);
     }
@@ -84,8 +88,10 @@ impl BarItemCallback for Servers {
 
         for server in servers.values() {
             let server = server.inner();
+
             for room in server.room_buffers().values() {
                 let room_buffer = room.weechat_buffer();
+
                 if &room_buffer == buffer {
                     if room.room().is_encrypted() {
                         return server.config().look().encrypted_room_sign();
@@ -101,19 +107,15 @@ impl BarItemCallback for Servers {
 impl WeechatPlugin for Matrix {
     fn init(weechat: &Weechat, _args: ArgsWeechat) -> Result<Self, ()> {
         let servers = Servers::new();
-        let config = ConfigHandle::new(weechat, &servers);
+        let config = ConfigHandle::new(&servers);
         let commands = Commands::hook_all(weechat, &servers, &config);
+
+        // TODO move the bar creation into a separate file.
         let status_bar =
             Weechat::new_bar_item("matrix_modes", servers.clone())?;
 
+        // TODO make this configurable.
         tracing_subscriber::fmt().with_writer(debug::Debug).init();
-
-        let matrix = Matrix {
-            servers: servers.clone(),
-            commands,
-            config: config.clone(),
-            status_bar,
-        };
 
         {
             let config_borrow = config.borrow();
@@ -129,18 +131,32 @@ impl WeechatPlugin for Matrix {
             }
         }
 
+        let plugin = Matrix {
+                servers: servers.clone(),
+                commands,
+                config: config.clone(),
+                status_bar,
+        };
+
         Weechat::spawn(async move {
             let mut servers = servers.borrow_mut();
             Matrix::autoconnect(&mut servers);
         });
 
-        Ok(matrix)
+        Ok(plugin)
     }
 }
 
 impl Drop for Matrix {
     fn drop(&mut self) {
         let mut servers = self.servers.borrow_mut();
+
+        // Buffer close callbacks get called after this, so disconnect here so
+        // we don't leave all our rooms.
+        //
+        // TODO set a flag on the server as well so we don't even try to leave
+        // the rooms, once leaving the rooms is implemented when the buffer gets
+        // closed.
         for server in servers.values_mut() {
             server.disconnect();
         }

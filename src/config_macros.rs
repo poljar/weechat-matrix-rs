@@ -1,12 +1,4 @@
-use weechat::config::{
-    BooleanOptionSettings, Conf, ConfigOption, ConfigSection,
-    ConfigSectionSettings, IntegerOptionSettings, OptionChanged, SectionHandle,
-    SectionHandleMut, SectionReadCallback, StringOptionSettings, ColorOptionSettings,
-};
-use weechat::Weechat;
-
-use strum::VariantNames;
-
+#[allow(unused_macros)]
 macro_rules! string_create {
     ($option_name:ident, $description:literal, $default:literal) => {
         paste::item! {
@@ -23,6 +15,7 @@ macro_rules! string_create {
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! color_create {
     ($option_name:ident, $description:literal, $default:literal) => {
         paste::item! {
@@ -39,6 +32,7 @@ macro_rules! color_create {
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! bool_create {
     ($option_name:ident, $description:literal, $default:literal) => {
         paste::item! {
@@ -55,6 +49,7 @@ macro_rules! bool_create {
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! integer_create {
     ($option_name:ident, $description:literal, $default:literal, $min:literal, $max:literal) => {
         paste::item! {
@@ -74,6 +69,7 @@ macro_rules! integer_create {
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! enum_create {
     ($option_name:ident, $description:literal, $out_type:ty) => {
         paste::item! {
@@ -201,8 +197,117 @@ macro_rules! section {
     }
 }
 
+/// Declare a Weechat configuration file.
+///
+/// This will generate a struct called `Config` which wraps the Weechat struct
+/// of the same name. The generated struct will have accessors for every 
+/// section and option that is declared.
+///
+/// The generated struct dereferences into the Weechat `Config` struct so
+/// additional sections and options can be created the usual way as well.
+///
+/// The config still needs to be created in the `init()` method of the plugin.
+///
+/// # Example
+/// ```
+///
+/// #[derive(EnumVariantNames)]
+/// #[strum(serialize_all = "kebab_case")]
+/// pub enum ServerBufferMerge {
+///     MergeWithCore,
+///     MergeWithoutCore,
+///     Independent,
+/// }
+///
+/// impl Default for ServerBufferMerge {
+///     fn default() -> Self {
+///         ServerBufferMerge::MergeWithCore
+///     }
+/// }
+///
+/// impl From<i32> for ServerBufferMerge {
+///     fn from(value: i32) -> Self {
+///         match value {
+///             0 => ServerBufferMerge::MergeWithCore,
+///             1 => ServerBufferMerge::MergeWithoutCore,
+///             2 => ServerBufferMerge::Independent,
+///             _ => unreachable!(),
+///         }
+///     }
+/// }
+///
+/// config!(
+///     Section look {
+///         encrypted_room_sign: String {
+///             // Description.
+///             "A sign that is used to show that the current room is encrypted",
+///
+///             // Default value.
+///             "🔒",
+///         },
+///
+///         server_buffer: Enum {
+///             // Description.
+///             "Merge server buffers",
+///
+///             // This is an enum that needs to have the following traits
+///             // implemented:
+///             //    * Default - To define the default value of the option.
+///             //    * From<i32> - To convert the internal Weechat integer option
+///             //      to the enum.
+///             //    * VariantNames - To get the string representation of the
+///             //      enum variants. This is a trait defined in the strum library,
+///             //      a simple macro that derives an implementation is provided by
+///             //      strum.
+///             ServerBufferMerge,
+///         },
+///
+///         quote_fg: Color {
+///             // Description.
+///             "Foreground color for Matrix style blockquotes",
+///
+///             // Default value.
+///             "lightgreen",
+///         },
+///     },
+///
+///     Section network {
+///         username: EvaluatedString {
+///             // Description.
+///             "The username that will be used to log in to the server \
+///              (note: content is evaluated, see /help eval)",
+///
+///             // Default value.
+///             "",
+///         },
+///
+///         timeout: Integer {
+///             // Description.
+///             "A timeout (in seconds) that determines how long we should wait \
+///             for a request to finish before aborting.",
+///
+///             // Default value.
+///             30,
+///
+///             // The range that the value is allowed to have, note that both of
+///             // those are inclusive.
+///             0..100,
+///         },
+///
+///         autoconnect: bool {
+///             // Description.
+///             "Automatically connect to the server when Weechat is starting",
+///
+///             // Default value.
+///             false,
+///         },
+///    }
+/// );
+/// ```
 macro_rules! config {
     ($(Section $section:ident { $($option:tt)* }), * $(,)?) => {
+        #[allow(unused_imports)]
+        use strum::VariantNames;
         pub struct Config(weechat::config::Config);
 
         impl Deref for Config {

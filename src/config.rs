@@ -16,85 +16,36 @@
 //! the section will do so.
 use crate::{MatrixServer, Servers};
 use weechat::config::{
-    BooleanOptionSettings, Conf, ConfigOption, ConfigSection,
-    ConfigSectionSettings, IntegerOptionSettings, OptionChanged, SectionHandle,
-    SectionHandleMut, SectionReadCallback, StringOptionSettings, ColorOptionSettings,
+    Conf, ConfigOption, ConfigSection, ConfigSectionSettings, OptionChanged,
+    SectionHandle, SectionHandleMut, SectionReadCallback, StringOptionSettings,
 };
 use weechat::Weechat;
-
-use strum::EnumVariantNames;
-use strum::VariantNames;
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
+config!(
+    Section look {
+        encrypted_room_sign: String {
+            // Description.
+            "A sign that is used to show that the current room is encrypted",
+            // Default value.
+            "🔒",
+        },
+    },
+);
+
+/// A wrapper for our config struct that can be cloned around.
 #[derive(Clone)]
 pub struct ConfigHandle {
     inner: Rc<RefCell<Config>>,
     servers: Servers,
 }
 
-#[derive(EnumVariantNames)]
-#[strum(serialize_all = "kebab_case")]
-pub enum Test {
-    First,
-    Second,
-}
-
-impl Default for Test {
-    fn default() -> Self {
-        Test::First
-    }
-}
-
-impl From<i32> for Test {
-    fn from(value: i32) -> Self {
-        match value {
-            0 => Test::First,
-            1 => Test::Second,
-            _ => unreachable!(),
-        }
-    }
-}
-
-config!(
-    Section look {
-        encrypted_room_sign: String {
-            "A sign that is used to show that the current room is encrypted",
-            "🔒",
-        },
-
-        what: EvaluatedString {
-            "test",
-            "test2",
-        },
-
-        int_test: Integer {
-            "test",
-            5,
-            0..10,
-        },
-
-        enum_test: Enum {
-            "test",
-            Test,
-        },
-
-        bool_test: bool {
-            "description",
-            false,
-        },
-
-        color_test: Color {
-            "color",
-            "darkgray",
-        },
-    },
-);
-
 impl ConfigHandle {
-    pub fn new(_weechat: &Weechat, servers: &Servers) -> ConfigHandle {
+    /// Create a new config and wrap it in our config handle.
+    pub fn new(servers: &Servers) -> ConfigHandle {
         let config = Weechat::config_new("matrix-rust")
             .expect("Can't create new config");
 
@@ -105,6 +56,9 @@ impl ConfigHandle {
             servers: servers.clone(),
         };
 
+        // The server section is special since it has a custom section read and
+        // write implementations to support subsections for every configured
+        // server.
         let server_section_options = ConfigSectionSettings::new("server")
             .set_write_callback(
                 |_weechat: &Weechat,
