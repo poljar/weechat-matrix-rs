@@ -27,6 +27,7 @@ use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 config!(
+    "matrix-rust",
     Section look {
         encrypted_room_sign: String {
             // Description.
@@ -47,10 +48,7 @@ pub struct ConfigHandle {
 impl ConfigHandle {
     /// Create a new config and wrap it in our config handle.
     pub fn new(servers: &Servers) -> ConfigHandle {
-        let config = Weechat::config_new("matrix-rust")
-            .expect("Can't create new config");
-
-        let config = Config::new(config);
+        let config = Config::new().expect("Can't create new config");
 
         let config = ConfigHandle {
             inner: Rc::new(RefCell::new(config)),

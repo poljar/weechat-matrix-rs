@@ -237,6 +237,8 @@ macro_rules! section {
 /// }
 ///
 /// config!(
+///     // The name of the config
+///     "my-plugin",
 ///     Section look {
 ///         encrypted_room_sign: String {
 ///             // Description.
@@ -305,7 +307,7 @@ macro_rules! section {
 /// );
 /// ```
 macro_rules! config {
-    ($(Section $section:ident { $($option:tt)* }), * $(,)?) => {
+    ($config_name:literal, $(Section $section:ident { $($option:tt)* }), * $(,)?) => {
         #[allow(unused_imports)]
         use strum::VariantNames;
         pub struct Config(weechat::config::Config);
@@ -325,11 +327,13 @@ macro_rules! config {
         }
 
         impl Config {
-            fn new(config: weechat::config::Config) -> Self {
+            fn new() -> Result<Self, ()> {
+                let config = Weechat::config_new($config_name)?;
                 let mut config = Config(config);
+
                 config.create_sections();
 
-                config
+                Ok(config)
             }
 
             paste::item! {
