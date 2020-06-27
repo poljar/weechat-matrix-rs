@@ -161,27 +161,27 @@ macro_rules! option_getter {
 }
 
 macro_rules! option {
-    (String, $option_name:ident, $description:literal, $default:literal) => {
+    (String, $option_name:ident, $description:literal, $default:literal $(,)?) => {
         string_create!($option_name, $description, $default);
         option_getter!(String, $option_name, String);
     };
 
-    (bool, $option_name:ident, $description:literal, $default:literal) => {
+    (bool, $option_name:ident, $description:literal, $default:literal $(,)?) => {
         bool_create!($option_name, $description, $default);
         option_getter!(Boolean, $option_name, bool);
     };
 
-    (Integer, $option_name:ident, $description:literal, $default:literal, $min:literal..$max:literal) => {
+    (Integer, $option_name:ident, $description:literal, $default:literal, $min:literal..$max:literal $(,)?) => {
         integer_create!($option_name, $description, $default, $min, $max, []);
         option_getter!(Integer, $option_name, i64);
     };
 
-    (Enum, $option_name:ident, $description:literal, $out_type:ty) => {
+    (Enum, $option_name:ident, $description:literal, $out_type:ty $(,)?) => {
         enum_create!($option_name, $description, $out_type);
         option_getter!(Integer, $option_name, $out_type);
     };
 
-    (EvaluatedString, $option_name:ident, $description:literal, $default:literal) => {
+    (EvaluatedString, $option_name:ident, $description:literal, $default:literal $(,)?) => {
         string_create!($option_name, $description, $default);
 
         paste::item! {
@@ -209,7 +209,7 @@ macro_rules! option {
 }
 
 macro_rules! section {
-    ($section:ident { $($option_name:ident: $option_type:ident {$($option:tt)*}), * }) => {
+    ($section:ident { $($option_name:ident: $option_type:ident {$($option:tt)*}), * $(,)? }) => {
         paste::item! {
             pub struct [<$section:camel Section>]<'a>(SectionHandle<'a>);
 
@@ -238,7 +238,7 @@ macro_rules! section {
 }
 
 macro_rules! config {
-    ($(Section $section:ident { $($option:tt)* }), *) => {
+    ($(Section $section:ident { $($option:tt)* }), * $(,)?) => {
         pub struct Config(weechat::config::Config);
 
         impl Deref for Config {
@@ -294,27 +294,30 @@ config!(
     Section look {
         encrypted_room_sign: String {
             "A sign that is used to show that the current room is encrypted",
-            "🔒"
+            "🔒",
         },
+
         what: EvaluatedString {
             "test",
-            "test2"
+            "test2",
         },
+
         int_test: Integer {
             "test",
             5,
-            0..10
+            0..10,
         },
+
         enum_test: Enum {
             "test",
-            Test
+            Test,
         },
 
         bool_test: bool {
             "description",
-            false
-        }
-    }
+            false,
+        },
+    },
 );
 
 impl ConfigHandle {
