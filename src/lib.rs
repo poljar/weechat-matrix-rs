@@ -1,5 +1,7 @@
 #![feature(async_closure)]
 
+#[macro_use] mod config_macros;
+
 mod commands;
 mod config;
 mod debug;
