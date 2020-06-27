@@ -39,10 +39,10 @@ pub struct ConfigHandle {
 #[strum(serialize_all = "kebab_case")]
 pub enum Test {
     First,
-    Second
+    Second,
 }
 
-impl Default for Test{
+impl Default for Test {
     fn default() -> Self {
         Test::First
     }
@@ -53,7 +53,7 @@ impl From<i32> for Test {
         match value {
             0 => Test::First,
             1 => Test::Second,
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 }
@@ -123,7 +123,6 @@ macro_rules! enum_create {
         }
     };
 }
-
 
 macro_rules! option_getter {
     ($option_type:ident, $option_name:ident, $output_type:ty) => {
