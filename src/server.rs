@@ -50,6 +50,7 @@
 //! The response receiver forwards events to the correct room. The response
 //! receiver fetches events individually from a mpsc channel. This makes sure
 //! that processing events will not block the Weechat mainloop for too long.
+
 use async_std::sync::channel as async_channel;
 use async_std::sync::{Receiver, Sender};
 use std::cell::{Ref, RefCell};

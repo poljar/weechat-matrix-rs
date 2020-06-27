@@ -14,6 +14,7 @@
 //! The config options created here will be alive as long as the plugin is
 //! loaded so they don't need to be freed manually. The drop implementation of
 //! the section will do so.
+
 use crate::{MatrixServer, Servers};
 use weechat::config::{
     Conf, ConfigOption, ConfigSection, ConfigSectionSettings, OptionChanged,
