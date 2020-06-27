@@ -16,9 +16,9 @@
 //! the section will do so.
 use crate::{MatrixServer, Servers};
 use weechat::config::{
-    Conf, ConfigOption, ConfigSection, ConfigSectionSettings,
-    IntegerOptionSettings, OptionChanged, SectionHandle, SectionHandleMut,
-    SectionReadCallback, StringOptionSettings, BooleanOptionSettings,
+    BooleanOptionSettings, Conf, ConfigOption, ConfigSection,
+    ConfigSectionSettings, IntegerOptionSettings, OptionChanged, SectionHandle,
+    SectionHandleMut, SectionReadCallback, StringOptionSettings,
 };
 use weechat::Weechat;
 
