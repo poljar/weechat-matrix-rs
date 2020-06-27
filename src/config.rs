@@ -16,10 +16,14 @@
 //! the section will do so.
 use crate::{MatrixServer, Servers};
 use weechat::config::{
-    Conf, ConfigOption, ConfigSection, ConfigSectionSettings, OptionChanged,
-    SectionHandle, SectionHandleMut, SectionReadCallback, StringOptionSettings,
+    Conf, ConfigOption, ConfigSection, ConfigSectionSettings,
+    IntegerOptionSettings, OptionChanged, SectionHandle, SectionHandleMut,
+    SectionReadCallback, StringOptionSettings,
 };
 use weechat::Weechat;
+
+use strum::EnumVariantNames;
+use strum::VariantNames;
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::ops::{Deref, DerefMut};
@@ -31,8 +35,31 @@ pub struct ConfigHandle {
     servers: Servers,
 }
 
-macro_rules! option {
-    (StringOption, $option_name:ident, $description:literal, $default:literal) => {
+#[derive(EnumVariantNames)]
+#[strum(serialize_all = "kebab_case")]
+pub enum Test {
+    First,
+    Second
+}
+
+impl Default for Test{
+    fn default() -> Self {
+        Test::First
+    }
+}
+
+impl From<i32> for Test {
+    fn from(value: i32) -> Self {
+        match value {
+            0 => Test::First,
+            1 => Test::Second,
+            _ => unreachable!()
+        }
+    }
+}
+
+macro_rules! string_create {
+    ($option_name:ident, $description:literal, $default:literal) => {
         paste::item! {
             fn [<create_option_ $option_name>](section: &mut SectionHandleMut) {
                 let option_name = stringify!($option_name);
@@ -44,37 +71,98 @@ macro_rules! option {
                     .expect(&format!("Can't create option {}", option_name));
             }
         }
+    };
+}
 
+macro_rules! integer_create {
+    ($option_name:ident, $description:literal, $default:literal, $min:literal, $max:literal, [$($string_value:literal), *]) => {
         paste::item! {
-            pub fn [<$option_name>](&self) -> String {
+            fn [<create_option_ $option_name>](section: &mut SectionHandleMut) {
+                let mut string_values: Vec<String> = Vec::new();
+
+                $(
+                    string_values.push($string_value.into());
+                )*
+
+                let option_name = stringify!($option_name);
+                let option_settings = IntegerOptionSettings::new(option_name)
+                    .description($description)
+                    .default_value($default)
+                    .min($min)
+                    .max($max)
+                    .string_values(string_values);
+
+                section.new_integer_option(option_settings)
+                    .expect(&format!("Can't create option {}", option_name));
+            }
+        }
+    };
+}
+
+macro_rules! enum_create {
+    ($option_name:ident, $description:literal, $out_type:ty) => {
+        paste::item! {
+            fn [<create_option_ $option_name>](section: &mut SectionHandleMut) {
+                let mut string_values: Vec<String> = Vec::new();
+
+                for value in $out_type::VARIANTS {
+                    string_values.push(value.to_string());
+                }
+
+                let default_value = $out_type::default();
+
+                let option_name = stringify!($option_name);
+                let option_settings = IntegerOptionSettings::new(option_name)
+                    .description($description)
+                    .default_value(default_value as i32)
+                    .string_values(string_values);
+
+                section.new_integer_option(option_settings)
+                    .expect(&format!("Can't create option {}", option_name));
+            }
+        }
+    };
+}
+
+
+macro_rules! option_getter {
+    ($option_type:ident, $option_name:ident, $output_type:ty) => {
+        paste::item! {
+            pub fn [<$option_name>](&self) -> $output_type {
                 let option_name = stringify!($option_name);
 
-                let option = self.0.search_option(option_name)
+                if let ConfigOption::[<$option_type>](o) = self.0.search_option(option_name)
                     .expect(&format!("Couldn't find option {} in section {}",
-                                     option_name, self.0.name()));
-
-                if let ConfigOption::String(o) = option {
-                    o.value().to_string()
+                                     option_name, self.0.name()))
+                {
+                    $output_type::from(o.value())
                 } else {
                     panic!("Incorect option type for option {} in section {}",
                            option_name, self.0.name());
                 }
             }
         }
-     };
+    };
+}
 
-     (EvaluatedStringOption, $option_name:ident, $description:literal, $default:literal) => {
-        paste::item! {
-            fn [<create_option_ $option_name>](section: &mut SectionHandleMut) {
-                let option_name = stringify!($option_name);
-                let option_settings = StringOptionSettings::new(option_name)
-                    .description(&format!("{} (note: the content is evaluated, see /help eval)", $description))
-                    .default_value($default);
+macro_rules! option {
+    (String, $option_name:ident, $description:literal, $default:literal) => {
+        string_create!($option_name, $description, $default);
+        option_getter!(String, $option_name, String);
+    };
 
-                section.new_string_option(option_settings)
-                    .expect(&format!("Can't create option {}", option_name));
-            }
-        }
+    (Integer, $option_name:ident, $description:literal, $default:literal, $min:literal, $max:literal) => {
+        integer_create!($option_name, $description, $default, $min, $max, []);
+        option_getter!(Integer, $option_name, i64);
+    };
+
+    (Enum, $option_name:ident, $description:literal, $out_type:ty) => {
+        enum_create!($option_name, $description, $out_type);
+        option_getter!(Integer, $option_name, $out_type);
+    };
+
+    (EvaluatedString, $option_name:ident, $description:literal, $default:literal) => {
+        string_create!($option_name, $description, $default);
 
         paste::item! {
             pub fn [<$option_name>](&self) -> String {
@@ -97,11 +185,11 @@ macro_rules! option {
                 }
             }
         }
-     };
+    };
 }
 
 macro_rules! section {
-    ($section:ident { $({$option_type:ident, $option_name:ident, $($option:tt)*}), * }) => {
+    ($section:ident { $($option_name:ident: $option_type:ident {$($option:tt)*}), * }) => {
         paste::item! {
             pub struct [<$section:camel Section>]<'a>(SectionHandle<'a>);
 
@@ -130,7 +218,7 @@ macro_rules! section {
 }
 
 macro_rules! config {
-    ($(Section $section:ident { $({$($option:tt)*}), * }), *) => {
+    ($(Section $section:ident { $($option:tt)* }), *) => {
         pub struct Config(weechat::config::Config);
 
         impl Deref for Config {
@@ -177,16 +265,32 @@ macro_rules! config {
         }
 
         $(
-            section!($section { $({$($option)*}), * });
+            section!($section { $($option)* });
         )*
     }
 }
 
 config!(
     Section look {
-        {StringOption, encrypted_room_sign,
-         "A sign that is used to show that the current room is encrypted",
-         "🔒"}
+        encrypted_room_sign: String {
+            "A sign that is used to show that the current room is encrypted",
+            "🔒"
+        },
+        what: EvaluatedString {
+            "test",
+            "test2"
+        },
+        int_test: Integer {
+            "test",
+            5,
+            0,
+            10
+        },
+        enum_test: Enum {
+            "test",
+            Test
+        }
+
     }
 );
 

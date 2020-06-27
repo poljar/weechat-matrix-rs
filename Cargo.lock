@@ -2326,6 +2326,7 @@ dependencies = [
  "libc",
  "matrix-sdk",
  "paste",
+ "strum",
  "tokio",
  "tracing",
  "tracing-subscriber",
