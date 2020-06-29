@@ -1,7 +1,7 @@
 use matrix_sdk::{
     events::room::{
         encrypted::EncryptedEvent,
-        member::{MemberEvent, MembershipChange, MembershipState},
+        member::{MemberEvent, MembershipChange},
         message::{
             AudioMessageEventContent, EmoteMessageEventContent,
             FileMessageEventContent, ImageMessageEventContent, MessageEvent,
