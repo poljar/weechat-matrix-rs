@@ -59,7 +59,7 @@ impl RenderableEvent for MemberEvent {
             KickedAndBanned => "was kicked and banned",
             InvitationRejected => "rejected the invitation",
             InvitationRevoked => "had the invitation revoked",
-            ProfileChanged => "changed the display name or avatar",
+            ProfileChanged => "changed their display name or avatar",
             NotImplemented => "performed an unimplemented operation",
         };
 
