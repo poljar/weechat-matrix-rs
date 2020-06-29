@@ -205,19 +205,22 @@ impl RoomBuffer {
         event: &MemberEvent,
         print_message: bool,
     ) {
+        let user_id: &UserId = event.sender();
+        let user_display_name = self.calculate_user_name(user_id);
+
         let mut buffer = self.weechat_buffer();
         let content = &event.content;
 
         match content.membership {
             MembershipState::Join => {
-                let settings = NickSettings::new(&event.state_key);
+                let settings = NickSettings::new(&user_display_name);
                 let _ = buffer.add_nick(settings);
             }
             MembershipState::Leave => {
-                buffer.remove_nick(&event.state_key);
+                buffer.remove_nick(&user_display_name);
             }
             MembershipState::Ban => {
-                buffer.remove_nick(&event.state_key);
+                buffer.remove_nick(&user_display_name);
             }
             _ => (),
         }
