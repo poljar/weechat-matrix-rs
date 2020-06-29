@@ -18,6 +18,10 @@ pub(crate) trait RenderableEvent {
     /// Convert the event into a string that will be displayed in the UI.
     /// The displayname is taken as a parameter since it cannot be calculated from the event
     /// context alone.
+    // TODO: This should probably also return tags instead just a string.
+    //
+    // Additionally, the render method should probably accept a RoomMember instead of a display
+    // name. Then the sender method can be removed.
     fn render(&self, displayname: &str) -> String;
 
     /// Get the sender for this event this can be used to get the displayname.
@@ -215,7 +219,7 @@ macro_rules! has_formatted_body {
 }
 
 /// This trait is implemented for message types that can contain either an URL or an encrypted
-/// file. One of both _must_ be present.
+/// file. One of these _must_ be present.
 trait HasUrlOrFile {
     fn url(&self) -> Option<&str>;
     fn file(&self) -> Option<&str>;
