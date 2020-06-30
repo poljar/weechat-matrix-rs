@@ -115,7 +115,10 @@ impl WeechatPlugin for Matrix {
             Weechat::new_bar_item("matrix_modes", servers.clone())?;
 
         // TODO make this configurable.
-        tracing_subscriber::fmt().with_writer(debug::Debug).init();
+        tracing_subscriber::fmt()
+            .with_writer(debug::Debug)
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .init();
 
         {
             let config_borrow = config.borrow();
