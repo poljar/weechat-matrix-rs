@@ -197,6 +197,8 @@ impl RoomBuffer {
     }
 
     fn render_event(&self, event: &impl RenderableEvent) -> String {
+        // TODO: Don't pass the display name but some kind of room member struct, like the
+        // RoomMember (got removed accidentally, search git history)
         event.render(&self.calculate_user_name(event.sender()))
     }
 
