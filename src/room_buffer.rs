@@ -24,7 +24,13 @@
 
 use matrix_sdk::events::collections::all::{RoomEvent, StateEvent};
 use matrix_sdk::events::room::encrypted::EncryptedEvent;
-use matrix_sdk::events::room::member::{MemberEvent, MembershipState};
+use matrix_sdk::events::room::member::{
+    MemberEvent,
+    MembershipChange::{
+        Banned, InvitationRejected, InvitationRevoked, Invited, Joined, Kicked,
+        KickedAndBanned, Left, ProfileChanged,
+    },
+};
 use matrix_sdk::events::room::message::MessageEvent;
 use matrix_sdk::events::room::name::NameEvent;
 use matrix_sdk::identifiers::{RoomId, UserId};
@@ -32,6 +38,7 @@ use matrix_sdk::Room;
 use url::Url;
 
 use async_trait::async_trait;
+use tracing::debug;
 
 use crate::render::RenderableEvent;
 use crate::server::Connection;
@@ -142,9 +149,8 @@ impl RoomBuffer {
             .values()
             .chain(room.invited_members.values())
         {
-            let user_id = user.user_id.to_string();
-            // TODO use display names here
-            let settings = NickSettings::new(&user_id);
+            let display_name = room.member_display_name(&user.user_id);
+            let settings = NickSettings::new(&display_name);
             buffer
                 .add_nick(settings)
                 .expect("Can't add nick to nicklist");
@@ -207,50 +213,69 @@ impl RoomBuffer {
         print_message: bool,
     ) {
         let user_id: &UserId = event.sender();
-        let user_display_name = self.calculate_user_name(user_id);
+        let current_display_name = self.calculate_user_name(user_id);
 
-        let mut buffer = self.weechat_buffer();
-        let content = &event.content;
-
-        match content.membership {
-            MembershipState::Join => {
-                let settings = NickSettings::new(&user_display_name);
-                let _ = buffer.add_nick(settings);
-            }
-            MembershipState::Leave => {
-                buffer.remove_nick(&user_display_name);
-            }
-            MembershipState::Ban => {
-                buffer.remove_nick(&user_display_name);
-            }
-            _ => (),
+        // Handle the event in the model
+        {
+            let mut room = self.room_mut();
+            room.handle_membership(&event);
         }
+
+        let new_display_name = self.calculate_user_name(user_id);
+
+        debug!("Old display name: {}", current_display_name);
+        debug!("New display name: {}", new_display_name);
+
+        {
+            let mut buffer = self.weechat_buffer();
+
+            let change_op = event.membership_change();
+            match change_op {
+                Joined | Invited => {
+                    debug!(
+                        "User {} joining, adding nick {}",
+                        user_id, new_display_name
+                    );
+                    let settings = NickSettings::new(&new_display_name);
+                    let _ = buffer.add_nick(settings);
+                }
+                Left | Banned | Kicked | KickedAndBanned
+                | InvitationRejected | InvitationRevoked => {
+                    debug!(
+                        "User {} leaving, removing nick {}",
+                        user_id, current_display_name
+                    );
+                    buffer.remove_nick(&current_display_name);
+                }
+                ProfileChanged => {
+                    debug!("Profile changed for {}, removing nick {}, adding nick {}", user_id, current_display_name, new_display_name);
+                    let _ = buffer.remove_nick(&current_display_name);
+
+                    let settings = NickSettings::new(&new_display_name);
+                    let _ = buffer.add_nick(settings);
+                }
+                _ => (),
+            };
+        }
+
+        // Names of rooms without display names can get affected by the member list so we need to
+        // update them.
+        self.update_buffer_name();
 
         // The state event should not be printed out, return early here.
         if !print_message {
             return;
         }
 
+        // Display the event message
         let message = self.render_event(event);
-
         let timestamp: u64 = event
             .origin_server_ts
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-
-        // this is needed so we can borrow `self` for `calculate_user_name`
-        let buffer = self.weechat_buffer();
-        buffer.print_date_tags(timestamp as i64, &[], &message);
-
-        {
-            let mut room = self.room_mut();
-            room.handle_membership(&event);
-        }
-
-        // Names of rooms without display names can get affected by the member list so we need to
-        // update them.
-        self.update_buffer_name();
+        self.weechat_buffer()
+            .print_date_tags(timestamp as i64, &[], &message);
     }
 
     pub fn handle_room_message(&mut self, event: &MessageEvent) {

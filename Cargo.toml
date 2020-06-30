@@ -26,6 +26,7 @@ weechat = { git = "https://github.com/poljar/rust-weechat", features = ["async-e
 weechat-sys = { git = "https://github.com/poljar/rust-weechat" }
 
 [dependencies.matrix-sdk]
-git = "https://github.com/matrix-org/matrix-rust-sdk/"
+# git = "https://github.com/matrix-org/matrix-rust-sdk/"
+path = "/home/dkasak/code/dkasak/matrix-rust-sdk/matrix_sdk"
 default-features = false
 features = ["encryption", "sqlite-cryptostore"]
