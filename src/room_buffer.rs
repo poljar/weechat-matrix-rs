@@ -187,8 +187,7 @@ impl RoomBuffer {
     /// Calculate the display name for a room member from its UserId. If no member with that ID is in
     /// the room, the string representation of the ID will be returned.
     fn calculate_user_name(&self, user_id: &UserId) -> String {
-        let room = self.inner.room.borrow();
-        room.member_display_name(user_id).into_owned()
+        self.room().member_display_name(user_id).into_owned()
     }
 
     pub fn update_buffer_name(&mut self) {
