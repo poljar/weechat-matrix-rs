@@ -32,6 +32,14 @@ config!(
             "🔒",
         },
     },
+    Section network {
+        debug_buffer: bool {
+            // Description
+            "Use a separate buffer for debug logs",
+            // Default value.
+            false,
+        }
+    }
 );
 
 /// A wrapper for our config struct that can be cloned around.

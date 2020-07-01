@@ -148,6 +148,13 @@ pub(crate) struct MatrixServer {
     inner: Rc<RefCell<InnerServer>>,
 }
 
+impl std::fmt::Debug for MatrixServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut fmt = f.debug_struct("MatrixServer");
+        fmt.field("name", &self.server_name).finish()
+    }
+}
+
 pub(crate) struct InnerServer {
     server_name: Rc<String>,
     room_buffers: HashMap<RoomId, RoomBuffer>,
@@ -665,8 +672,8 @@ impl MatrixServer {
                         .send(Ok(ThreadMessage::LoginMessage(response)))
                         .await
                 }
-                Err(_e) => {
-                    channel.send(Err("No logging in".to_string())).await;
+                Err(e) => {
+                    channel.send(Err(format!("Failed to log in: {:?}", e))).await;
                     return;
                 }
             }

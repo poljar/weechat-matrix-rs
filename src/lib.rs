@@ -15,7 +15,7 @@ use std::rc::Rc;
 use tracing_subscriber;
 
 use weechat::{
-    buffer::Buffer,
+    buffer::{Buffer, BufferHandle},
     hooks::{BarItemCallback, BarItemHandle},
     weechat_plugin, ArgsWeechat, Weechat, WeechatPlugin,
 };
@@ -26,7 +26,7 @@ use crate::server::MatrixServer;
 
 const PLUGIN_NAME: &str = "matrix";
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Servers(Rc<RefCell<HashMap<String, MatrixServer>>>);
 
 impl Servers {
@@ -51,6 +51,14 @@ struct Matrix {
     config: ConfigHandle,
     #[used]
     status_bar: BarItemHandle,
+    debug_buffer: RefCell<Option<BufferHandle>>,
+}
+
+impl std::fmt::Debug for Matrix {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut fmt = f.debug_struct("Matrix");
+        fmt.field("servers", &self.servers).finish()
+    }
 }
 
 impl Matrix {
@@ -114,7 +122,6 @@ impl WeechatPlugin for Matrix {
         let status_bar =
             Weechat::new_bar_item("matrix_modes", servers.clone())?;
 
-        // TODO make this configurable.
         tracing_subscriber::fmt()
             .with_writer(debug::Debug)
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -139,6 +146,7 @@ impl WeechatPlugin for Matrix {
             commands,
             config: config.clone(),
             status_bar,
+            debug_buffer: RefCell::new(None),
         };
 
         Weechat::spawn(async move {

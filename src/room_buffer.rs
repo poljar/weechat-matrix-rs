@@ -139,8 +139,8 @@ impl RoomBuffer {
 
         let buffer = room_buffer.weechat_buffer();
 
-        for user in room.members.values() {
-            let user_id = user.user_id.to_string();
+        for member in room.joined_members.values() {
+            let user_id = member.user_id.to_string();
             // TODO use display names here
             let settings = NickSettings::new(&user_id);
             buffer
