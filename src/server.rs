@@ -673,7 +673,9 @@ impl MatrixServer {
                         .await
                 }
                 Err(e) => {
-                    channel.send(Err(format!("Failed to log in: {:?}", e))).await;
+                    channel
+                        .send(Err(format!("Failed to log in: {:?}", e)))
+                        .await;
                     return;
                 }
             }
