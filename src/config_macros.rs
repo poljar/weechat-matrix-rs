@@ -1,95 +1,35 @@
-#[allow(unused_macros)]
-macro_rules! string_create {
-    ($option_name:ident, $description:literal, $default:literal) => {
-        paste::item! {
-            fn [<create_option_ $option_name>](section: &mut SectionHandleMut) {
-                let option_name = stringify!($option_name);
-                let option_settings = StringOptionSettings::new(option_name)
-                    .description($description)
-                    .default_value($default);
-
-                section.new_string_option(option_settings)
-                    .expect(&format!("Can't create option {}", option_name));
-            }
+macro_rules! option_settings {
+    ($option_type:ident, $option_name:ident, $description:literal, $default:literal $(,)?) => {
+        paste::expr! {
+            [<$option_type OptionSettings>]::new(stringify!($option_name))
+                .description($description)
+                .default_value($default)
         }
+    };
+    (Integer, $option_name:ident, $description:literal, $default:literal, $min:literal..$max:literal $(,)?) => {
+        IntegerOptionSettings::new(stringify!($option_name))
+            .description($description)
+            .default_value($default)
+            .min($min)
+            .max($max)
+    };
+    (Enum, $option_name:ident, $description:literal, $out_type:ty $(,)?) => {
+        IntegerOptionSettings::new(stringify!($option_name))
+            .description($description)
+            .default_value(<$out_type>::default() as i32)
+            .string_values(<$out_type>::VARIANTS.iter().map(|v| v.to_string()).collect::<Vec<String>>());
+
     };
 }
 
 #[allow(unused_macros)]
-macro_rules! color_create {
-    ($option_name:ident, $description:literal, $default:literal) => {
+macro_rules! option_create {
+    ($option_type:ident, $option_weechat_type:ident, $option_name:ident, $($args:tt)*) => {
         paste::item! {
             fn [<create_option_ $option_name>](section: &mut SectionHandleMut) {
-                let option_name = stringify!($option_name);
-                let option_settings = ColorOptionSettings::new(option_name)
-                    .description($description)
-                    .default_value($default);
-
-                section.new_color_option(option_settings)
-                    .expect(&format!("Can't create option {}", option_name));
-            }
-        }
-    };
-}
-
-#[allow(unused_macros)]
-macro_rules! bool_create {
-    ($option_name:ident, $description:literal, $default:literal) => {
-        paste::item! {
-            fn [<create_option_ $option_name>](section: &mut SectionHandleMut) {
-                let option_name = stringify!($option_name);
-                let option_settings = BooleanOptionSettings::new(option_name)
-                    .description($description)
-                    .default_value($default);
-
-                section.new_boolean_option(option_settings)
-                    .expect(&format!("Can't create option {}", option_name));
-            }
-        }
-    };
-}
-
-#[allow(unused_macros)]
-macro_rules! integer_create {
-    ($option_name:ident, $description:literal, $default:literal, $min:literal, $max:literal) => {
-        paste::item! {
-            fn [<create_option_ $option_name>](section: &mut SectionHandleMut) {
-                let option_name = stringify!($option_name);
-
-                let option_settings = IntegerOptionSettings::new(option_name)
-                    .description($description)
-                    .default_value($default)
-                    .min($min)
-                    .max($max);
-
-                section.new_integer_option(option_settings)
-                    .expect(&format!("Can't create option {}", option_name));
-            }
-        }
-    };
-}
-
-#[allow(unused_macros)]
-macro_rules! enum_create {
-    ($option_name:ident, $description:literal, $out_type:ty) => {
-        paste::item! {
-            fn [<create_option_ $option_name>](section: &mut SectionHandleMut) {
-                let mut string_values: Vec<String> = Vec::new();
-
-                for value in $out_type::VARIANTS {
-                    string_values.push(value.to_string());
-                }
-
-                let default_value = $out_type::default();
-
-                let option_name = stringify!($option_name);
-                let option_settings = IntegerOptionSettings::new(option_name)
-                    .description($description)
-                    .default_value(default_value as i32)
-                    .string_values(string_values);
-
-                section.new_integer_option(option_settings)
-                    .expect(&format!("Can't create option {}", option_name));
+                let option_settings = option_settings!($option_type, $option_name, $($args)*);
+                section.[<new_ $option_weechat_type:lower _option>](option_settings)
+                    .expect(&format!("Can't create option {}", stringify!($option_name)));
             }
         }
     };
@@ -116,33 +56,33 @@ macro_rules! option_getter {
 }
 
 macro_rules! option {
-    (String, $option_name:ident, $description:literal, $default:literal $(,)?) => {
-        string_create!($option_name, $description, $default);
+    (String, $option_name:ident, $($args:tt)*) => {
+        option_create!(String, String, $option_name, $($args)*);
         option_getter!(String, $option_name, String);
     };
 
-    (Color, $option_name:ident, $description:literal, $default:literal $(,)?) => {
-        color_create!($option_name, $description, $default);
+    (Color, $option_name:ident, $($args:tt)*) => {
+        option_create!(Color, Color, $option_name, $($args)*);
         option_getter!(Color, $option_name, String);
     };
 
-    (bool, $option_name:ident, $description:literal, $default:literal $(,)?) => {
-        bool_create!($option_name, $description, $default);
+    (bool, $option_name:ident, $($args:tt)*) => {
+        option_create!(Boolean, Boolean, $option_name, $($args)*);
         option_getter!(Boolean, $option_name, bool);
     };
 
-    (Integer, $option_name:ident, $description:literal, $default:literal, $min:literal..$max:literal $(,)?) => {
-        integer_create!($option_name, $description, $default, $min, $max);
+    (Integer, $option_name:ident, $($args:tt)*) => {
+        option_create!(Integer, Integer, $option_name, $($args)*);
         option_getter!(Integer, $option_name, i64);
     };
 
     (Enum, $option_name:ident, $description:literal, $out_type:ty $(,)?) => {
-        enum_create!($option_name, $description, $out_type);
+        option_create!(Enum, Integer, $option_name, $description, $out_type);
         option_getter!(Integer, $option_name, $out_type);
     };
 
-    (EvaluatedString, $option_name:ident, $description:literal, $default:literal $(,)?) => {
-        string_create!($option_name, $description, $default);
+    (EvaluatedString, $option_name:ident, $($args:tt)*) => {
+        option_create!(String, String, $option_name, $($args)*);
 
         paste::item! {
             pub fn [<$option_name>](&self) -> String {
@@ -310,6 +250,12 @@ macro_rules! config {
     ($config_name:literal, $(Section $section:ident { $($option:tt)* }), * $(,)?) => {
         #[allow(unused_imports)]
         use strum::VariantNames;
+        use std::ops::{Deref, DerefMut};
+        use weechat::config::{
+            SectionHandle, SectionHandleMut, StringOptionSettings,
+            ConfigOption, ConfigSection, ConfigSectionSettings,
+            BooleanOptionSettings, IntegerOptionSettings, ColorOptionSettings,
+        };
         pub struct Config(weechat::config::Config);
 
         impl Deref for Config {

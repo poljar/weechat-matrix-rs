@@ -16,14 +16,10 @@
 //! the section will do so.
 
 use crate::{MatrixServer, Servers};
-use weechat::config::{
-    Conf, ConfigOption, ConfigSection, ConfigSectionSettings, OptionChanged,
-    SectionHandle, SectionHandleMut, SectionReadCallback, StringOptionSettings,
-};
+use weechat::config::{Conf, OptionChanged, SectionReadCallback};
 use weechat::Weechat;
 
 use std::cell::{Ref, RefCell, RefMut};
-use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 config!(
