@@ -17,8 +17,12 @@ macro_rules! option_settings {
         IntegerOptionSettings::new(stringify!($option_name))
             .description($description)
             .default_value(<$out_type>::default() as i32)
-            .string_values(<$out_type>::VARIANTS.iter().map(|v| v.to_string()).collect::<Vec<String>>());
-
+            .string_values(
+                <$out_type>::VARIANTS
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<String>>(),
+            );
     };
 }
 
