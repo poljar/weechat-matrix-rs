@@ -38,6 +38,7 @@ macro_rules! option_create {
 macro_rules! option_getter {
     ($option_type:ident, $option_name:ident, $output_type:ty) => {
         paste::item! {
+            #[allow(dead_code)]
             pub fn [<$option_name>](&self) -> $output_type {
                 let option_name = stringify!($option_name);
 
@@ -251,6 +252,7 @@ macro_rules! config {
         #[allow(unused_imports)]
         use strum::VariantNames;
         use std::ops::{Deref, DerefMut};
+        #[allow(unused_imports)]
         use weechat::config::{
             SectionHandle, SectionHandleMut, StringOptionSettings,
             ConfigOption, ConfigSection, ConfigSectionSettings,
@@ -292,6 +294,7 @@ macro_rules! config {
 
             paste::item! {
                 $(
+                    #[allow(dead_code)]
                     pub fn $section(&self) -> [<$section:camel Section>] {
                         let section_name = stringify!($section);
                         let section = self.0.search_section(section_name)
