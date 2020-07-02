@@ -192,7 +192,7 @@ impl RoomBuffer {
         event: &MemberEvent,
         print_message: bool,
     ) {
-        let mut buffer = self.weechat_buffer();
+        let buffer = self.weechat_buffer();
         let content = &event.content;
 
         match content.membership {

@@ -202,9 +202,9 @@ checksum = "24508e28c677875c380c20f4d28124fab6f8ed4ef929a1397d7b1a31e92f1005"
 
 [[package]]
 name = "cc"
-version = "1.0.56"
+version = "1.0.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c1f1d60091c1b73e2b1f4560ab419204b178e625fa945ded7b660becd2bd46"
+checksum = "0fde55d2a2bfaa4c9668bbc63f531fbdeee3ffe188f4662511ce2c22b3eedebe"
 
 [[package]]
 name = "cexpr"
@@ -223,9 +223,9 @@ checksum = "4785bdd1c96b2a846b2bd7cc02e86b6b3dbf14e7e53446c4f54c92a361040822"
 
 [[package]]
 name = "chrono"
-version = "0.4.11"
+version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80094f509cf8b5ae86a4966a39b3ff66cd7e2a3e594accec3743ff3fabeab5b2"
+checksum = "f0fee792e164f78f5fe0c296cc2eb3688a2ca2b70cdff33040922d298203f0c4"
 dependencies = [
  "num-integer",
  "num-traits",
@@ -2203,7 +2203,7 @@ dependencies = [
 [[package]]
 name = "weechat"
 version = "0.1.0"
-source = "git+https://github.com/poljar/rust-weechat#5ed77acab4e0325da5be8c012921e0ec05ec3b38"
+source = "git+https://github.com/poljar/rust-weechat#3d154ed91a70c587011fdeb31c619037dd82e501"
 dependencies = [
  "async-task",
  "async-trait",
@@ -2217,7 +2217,7 @@ dependencies = [
 [[package]]
 name = "weechat-macro"
 version = "0.1.0"
-source = "git+https://github.com/poljar/rust-weechat#5ed77acab4e0325da5be8c012921e0ec05ec3b38"
+source = "git+https://github.com/poljar/rust-weechat#3d154ed91a70c587011fdeb31c619037dd82e501"
 dependencies = [
  "libc",
  "proc-macro2",
@@ -2248,7 +2248,7 @@ dependencies = [
 [[package]]
 name = "weechat-sys"
 version = "0.1.0"
-source = "git+https://github.com/poljar/rust-weechat#5ed77acab4e0325da5be8c012921e0ec05ec3b38"
+source = "git+https://github.com/poljar/rust-weechat#3d154ed91a70c587011fdeb31c619037dd82e501"
 dependencies = [
  "bindgen",
  "libc",
