@@ -150,8 +150,22 @@ impl RoomBuffer {
 
         room_buffer.inner.room = Rc::new(RefCell::new(room));
         room_buffer.update_buffer_name();
+        room_buffer.restore_messages();
 
         room_buffer
+    }
+
+    pub fn restore_messages(&self) {
+        let room = self.room();
+        let buffer = self.weechat_buffer();
+
+        Weechat::print(&format!("HELLO WORLD RESTORING {}", buffer.name()));
+        if buffer.num_lines() == 0 {
+            for message in room.messages.iter() {
+                Weechat::print(&format!("RESTOGIN MESSAGE {:?}", message));
+                self.handle_room_message(message)
+            }
+        }
     }
 
     pub fn room_mut(&mut self) -> RefMut<'_, Room> {
@@ -245,7 +259,7 @@ impl RoomBuffer {
     }
 
     pub fn handle_text_message(
-        &mut self,
+        &self,
         sender: &str,
         timestamp: u64,
         content: &TextMessageEventContent,
@@ -255,7 +269,7 @@ impl RoomBuffer {
         buffer.print_date_tags(timestamp as i64, &[], &message);
     }
 
-    pub fn handle_room_message(&mut self, event: &MessageEvent) {
+    pub fn handle_room_message(&self, event: &MessageEvent) {
         let sender = &event.sender;
         let timestamp: u64 = event
             .origin_server_ts

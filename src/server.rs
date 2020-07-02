@@ -706,6 +706,7 @@ impl MatrixServer {
         client
             .sync_forever(sync_settings, async move |response| {
                 let channel = sync_channel;
+
                 for (room_id, room) in response.rooms.join {
                     for event in room.state.events {
                         if let Ok(e) = event.deserialize() {
