@@ -59,6 +59,7 @@ use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 use tokio::runtime::Runtime;
+use tracing::error;
 use url::Url;
 use uuid::Uuid;
 
@@ -706,6 +707,8 @@ impl MatrixServer {
                                     e,
                                 )))
                                 .await;
+                        } else {
+                            error!("Failed deserializing state event: {:#?}", event);
                         }
                     }
                     for event in room.timeline.events {
@@ -716,6 +719,8 @@ impl MatrixServer {
                                     e,
                                 )))
                                 .await;
+                        } else {
+                            error!("Failed deserializing timeline event: {:#?}", event);
                         }
                     }
                 }
