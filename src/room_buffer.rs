@@ -38,12 +38,13 @@ use matrix_sdk::Room;
 use url::Url;
 
 use async_trait::async_trait;
-use tracing::debug;
+use tracing::{trace, debug};
 
 use crate::render::RenderableEvent;
 use crate::server::Connection;
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
+use std::collections::HashMap;
 use weechat::buffer::{
     Buffer, BufferHandle, BufferInputCallbackAsync, BufferSettingsAsync,
     NickSettings,
@@ -56,6 +57,14 @@ pub struct RoomBuffer {
 }
 
 #[derive(Clone)]
+pub struct WeechatRoomMember {
+    user_id: String,
+    nick: String,
+    prefix: String,
+    color: String,
+}
+
+#[derive(Clone)]
 pub struct MatrixRoom {
     server_name: Rc<String>,
     homeserver: Rc<Url>,
@@ -64,6 +73,7 @@ pub struct MatrixRoom {
     prev_batch: Rc<RefCell<Option<String>>>,
     typing_notice_time: Rc<RefCell<Option<u64>>>,
     room: Rc<RefCell<Room>>,
+    members: HashMap<UserId, WeechatRoomMember>,
     printed_before_ack_queue: Rc<RefCell<Vec<String>>>,
 }
 
@@ -102,6 +112,7 @@ impl RoomBuffer {
             prev_batch: Rc::new(RefCell::new(None)),
             typing_notice_time: Rc::new(RefCell::new(None)),
             room: Rc::new(RefCell::new(Room::new(&room_id, &own_user_id))),
+            members: HashMap::new(),
             printed_before_ack_queue: Rc::new(RefCell::new(Vec::new())),
         };
 
@@ -142,21 +153,40 @@ impl RoomBuffer {
             &room.own_user_id,
         );
 
-        let buffer = room_buffer.weechat_buffer();
+        debug!("Restoring room {}", room.room_id);
 
-        for user in room
+        let matrix_members = room
             .joined_members
             .values()
-            .chain(room.invited_members.values())
+            .chain(room.invited_members.values());
+
+        let mut weechat_members = HashMap::new();
+
+        for member in matrix_members
         {
-            let display_name = room.member_display_name(&user.user_id);
-            let settings = NickSettings::new(&display_name);
+            let display_name = room.member_display_name(&member.user_id);
+
+            weechat_members.insert(member.user_id.clone(), WeechatRoomMember {
+                user_id: member.user_id.to_string(),
+                nick: display_name.to_string(),
+                // TODO: proper prefix and colour
+                prefix: "".to_string(),
+                color: "#FFFFFF".to_string()
+            });
+        }
+
+        let buffer = room_buffer.weechat_buffer();
+
+        for member in weechat_members.values() {
+            trace!("Restoring member {}", member.user_id);
+            let settings = NickSettings::new(&member.nick);
             buffer
                 .add_nick(settings)
                 .expect("Can't add nick to nicklist");
         }
 
         room_buffer.inner.room = Rc::new(RefCell::new(room));
+        room_buffer.inner.members = weechat_members;
         room_buffer.update_buffer_name();
 
         room_buffer
@@ -213,50 +243,144 @@ impl RoomBuffer {
         print_message: bool,
     ) {
         let user_id: &UserId = event.sender();
-        let current_display_name = self.calculate_user_name(user_id);
+        let current_nick = self.inner.members.get(&user_id).map(|m| m.nick.clone());
+        // let disambiguations;
 
         // Handle the event in the model
         {
             let mut room = self.room_mut();
-            room.handle_membership(&event);
+            // let (_, d) = room.handle_membership(&event);
+            let _ = room.handle_membership(&event);
+            // disambiguations = d;
         }
 
-        let new_display_name = self.calculate_user_name(user_id);
-
-        debug!("Old display name: {}", current_display_name);
-        debug!("New display name: {}", new_display_name);
+        let new_nick = self.calculate_user_name(user_id);
 
         {
-            let mut buffer = self.weechat_buffer();
-
             let change_op = event.membership_change();
             match change_op {
                 Joined | Invited => {
                     debug!(
-                        "User {} joining, adding nick {}",
-                        user_id, new_display_name
+                        "{}: User {} joining, adding nick {}",
+                        self.calculate_buffer_name(), user_id, new_nick
                     );
-                    let settings = NickSettings::new(&new_display_name);
-                    let _ = buffer.add_nick(settings);
+                    self.inner.members.insert(user_id.clone(), WeechatRoomMember {
+                        user_id: user_id.to_string(),
+                        nick: new_nick.clone(),
+                        // TODO: proper prefix and colour
+                        prefix: "".to_string(),
+                        color: "#FFFFFF".to_string()
+                    });
+
+                    {
+                        let buffer = self.weechat_buffer();
+                        let settings = NickSettings::new(&new_nick);
+                        let _ = buffer.add_nick(settings);
+                    }
                 }
                 Left | Banned | Kicked | KickedAndBanned
                 | InvitationRejected | InvitationRevoked => {
-                    debug!(
-                        "User {} leaving, removing nick {}",
-                        user_id, current_display_name
-                    );
-                    buffer.remove_nick(&current_display_name);
+                    match current_nick {
+                        Some(current_nick) => {
+                            debug!(
+                                "{}: User {} leaving, removing nick {}",
+                                self.calculate_buffer_name(), user_id, current_nick
+                            );
+                        self.inner.members.remove(user_id);
+                        {
+                            let mut buffer = self.weechat_buffer();
+                            buffer.remove_nick(&current_nick);
+                        }
+                    }
+                        None => debug!(
+                                "{}: User {} leaving but has no nick",
+                                self.calculate_buffer_name(), user_id,
+                            ),
+
+                    }
                 }
                 ProfileChanged => {
-                    debug!("Profile changed for {}, removing nick {}, adding nick {}", user_id, current_display_name, new_display_name);
-                    let _ = buffer.remove_nick(&current_display_name);
+                    match current_nick {
+                        Some(current_nick) => {
+                            debug!("{}: Profile changed for {}, removing nick {}, adding nick {}", self.calculate_buffer_name(), user_id, current_nick, new_nick);
 
-                    let settings = NickSettings::new(&new_display_name);
-                    let _ = buffer.add_nick(settings);
+                            {
+                                let mut buffer = self.weechat_buffer();
+                                let _ = buffer.remove_nick(&current_nick);
+                            }
+                        }
+
+                        None => {
+                            debug!("{}: Profile changed for {} but they have no current nick", self.calculate_buffer_name(), user_id);
+                        }
+                    }
+
+                    {
+                        let buffer = self.weechat_buffer();
+                        let settings = NickSettings::new(&new_nick);
+                        let _ = buffer.add_nick(settings);
+                    }
                 }
                 _ => (),
             };
         }
+
+        let mut members = self.inner.members.clone();
+
+        // Remember the new nick
+        members.get_mut(user_id).map(|member| {
+            member.nick = new_nick.clone()
+        });
+
+        let mut buffer = self.weechat_buffer();
+
+        // let _ = disambiguations.iter().map(|(affected_member, is_ambiguous)| {
+        //     let current_nick;
+        //     {
+        //         let member = members.get(affected_member).unwrap();
+        //         current_nick = member.nick.clone();
+        //     }
+
+        //     if *is_ambiguous {
+        //             buffer.remove_nick(&current_nick);
+
+        //             let new_nick;
+        //             {
+        //                 let room = self.room();
+        //                 new_nick = room.get_member(affected_member).unwrap().unique_name();
+        //                 let new_nick_settings = NickSettings::new(&new_nick);
+        //                 let _ = buffer.add_nick(new_nick_settings);
+        //             }
+
+        //             debug!("{}: Disambiguating nick: {} -> {}", self.calculate_buffer_name(), current_nick, &new_nick);
+
+        //             // Remember the new nick
+        //             members.get_mut(affected_member).map(|member| {
+        //                 member.nick = new_nick.clone()
+        //             });
+        //     } else {
+        //             // Remove current disambiguated nick
+        //             buffer.remove_nick(&current_nick);
+
+        //             // Use plain display name as the new nick
+        //             let new_nick;
+        //             {
+        //                 let room = self.room();
+        //                 new_nick = room.get_member(affected_member).unwrap().name();
+        //                 let new_nick_settings = NickSettings::new(&new_nick);
+        //                 let _ = buffer.add_nick(new_nick_settings);
+        //             }
+
+        //             debug!("{}: No longer disambiguating: {} -> {}", self.calculate_buffer_name(), current_nick, &new_nick);
+
+        //             // Remember the new nick
+        //             members.get_mut(affected_member).map(|member| {
+        //                 member.nick = new_nick
+        //             });
+        //     }
+        // });
+
+        self.inner.members = members;
 
         // Names of rooms without display names can get affected by the member list so we need to
         // update them.
