@@ -53,7 +53,7 @@
 
 use async_std::sync::channel as async_channel;
 use async_std::sync::{Receiver, Sender};
-use std::cell::{Ref, RefCell};
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
@@ -74,6 +74,7 @@ use matrix_sdk::{
     Client, ClientConfig, Room, SyncSettings,
 };
 
+use weechat::buffer::{BufferHandle, BufferSettings};
 use weechat::config::{
     BooleanOptionSettings, ConfigSection, StringOptionSettings,
 };
@@ -163,6 +164,7 @@ pub(crate) struct InnerServer {
     client: Option<Client>,
     login_state: Option<LoginState>,
     connected_state: Rc<RefCell<Option<Connection>>>,
+    server_buffer: Rc<RefCell<Option<BufferHandle>>>,
 }
 
 impl MatrixServer {
@@ -181,6 +183,7 @@ impl MatrixServer {
             client: None,
             login_state: None,
             connected_state: Rc::new(RefCell::new(None)),
+            server_buffer: Rc::new(RefCell::new(None)),
         };
 
         let server = Rc::new(RefCell::new(server));
@@ -438,10 +441,17 @@ impl MatrixServer {
         Ok(())
     }
 
+    pub fn print(&self, message: &str) {
+        self.inner().print(message)
+    }
+
+    pub fn error(&self, message: &str) {
+        self.inner().error(message)
+    }
+
     pub fn disconnect(&self) {
-        // TODO these messages should go to the server buffer.
         if !self.connected() {
-            Weechat::print(&format!(
+            self.error(&format!(
                 "{}{}: Server {}{}{} is not connected.",
                 Weechat::prefix("error"),
                 PLUGIN_NAME,
@@ -453,15 +463,17 @@ impl MatrixServer {
             return;
         }
 
-        let server = self.inner.borrow_mut();
-        let mut connected_state = server.connected_state.borrow_mut();
-        let state = connected_state.take();
+        {
+            let server = self.inner.borrow_mut();
+            let mut connected_state = server.connected_state.borrow_mut();
+            let state = connected_state.take();
 
-        if let Some(s) = state {
-            s.response_receiver.cancel();
+            if let Some(s) = state {
+                s.response_receiver.cancel();
+            }
         }
 
-        Weechat::print(&format!("{}: Disconnected from server.", PLUGIN_NAME));
+        self.print(&format!("{}: Disconnected from server.", PLUGIN_NAME));
     }
 
     /// Main client sync loop.
@@ -591,21 +603,18 @@ impl MatrixServer {
         server: Weak<RefCell<InnerServer>>,
     ) {
         loop {
-            let ret = match receiver.recv().await {
-                Ok(m) => m,
-                Err(e) => {
-                    Weechat::print(&format!(
-                        "Error receiving message: {:?}",
-                        e
-                    ));
-                    return;
-                }
-            };
-
             let server_cell = server
                 .upgrade()
                 .expect("Can't upgrade server in sync receiver");
             let mut server = server_cell.borrow_mut();
+
+            let ret = match receiver.recv().await {
+                Ok(m) => m,
+                Err(e) => {
+                    server.error(&format!("Error receiving message: {:?}", e));
+                    return;
+                }
+            };
 
             match ret {
                 Ok(message) => match message {
@@ -620,7 +629,7 @@ impl MatrixServer {
                         server.restore_room(room)
                     }
                 },
-                Err(e) => Weechat::print(&format!("Ruma error {}", e)),
+                Err(e) => server.error(&format!("Ruma error {}", e)),
             };
         }
     }
@@ -730,6 +739,55 @@ impl InnerServer {
         );
 
         self.room_buffers.insert(room_id, buffer);
+    }
+
+    fn create_server_buffer(&self) -> BufferHandle {
+        let buffer_handle = Weechat::buffer_new(BufferSettings::new(&format!(
+            "server.{}",
+            self.server_name
+        )))
+        .expect("Can't create Matrix debug buffer");
+
+        let buffer = buffer_handle
+            .upgrade()
+            .expect("Can't upgrade newly created server buffer");
+
+        buffer.set_short_name(&self.server_name);
+        buffer.set_localvar("type", "server");
+        buffer.set_localvar("nick", &self.settings.username);
+        buffer.set_localvar("server", &self.server_name);
+
+        buffer_handle
+    }
+
+    pub fn server_buffer<'a>(
+        &self,
+        server_buffer: &'a mut RefMut<Option<BufferHandle>>,
+    ) -> &'a BufferHandle {
+        if let Some(buffer) = server_buffer.as_ref() {
+            if buffer.upgrade().is_err() {
+                let buffer = self.create_server_buffer();
+                **server_buffer = Some(buffer);
+            }
+        } else {
+            let buffer = self.create_server_buffer();
+            **server_buffer = Some(buffer);
+        }
+
+        server_buffer.as_ref().unwrap()
+    }
+
+    /// Print a neutral message to the server buffer.
+    pub fn print(&self, message: &str) {
+        let mut server_buffer = self.server_buffer.borrow_mut();
+        let buffer = self.server_buffer(&mut server_buffer).upgrade().unwrap();
+        buffer.print(message);
+    }
+
+    pub fn error(&self, message: &str) {
+        let mut server_buffer = self.server_buffer.borrow_mut();
+        let buffer = self.server_buffer(&mut server_buffer).upgrade().unwrap();
+        buffer.print(&format!("{}\t{}", Weechat::prefix("error"), message));
     }
 
     /// Is the server connected.
