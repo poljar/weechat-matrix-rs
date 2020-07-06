@@ -64,7 +64,6 @@ pub struct MatrixRoom {
 #[async_trait(?Send)]
 impl BufferInputCallbackAsync for MatrixRoom {
     async fn callback(&mut self, buffer: BufferHandle, input: String) {
-        let room_id = &self.room_id;
         let connection = &self.connection;
 
         let buffer = buffer
@@ -73,7 +72,10 @@ impl BufferInputCallbackAsync for MatrixRoom {
 
         if let Some(c) = &*connection.borrow() {
             // TODO check for errors and print them out.
-            c.send_message(&room_id, &input).await;
+            match c.send_message(&self.room_id, input).await {
+                Ok(_r) => (),
+                Err(_e) => (),
+            }
         } else {
             buffer.print("Error not connected");
             return;
@@ -159,10 +161,8 @@ impl RoomBuffer {
         let room = self.room();
         let buffer = self.weechat_buffer();
 
-        Weechat::print(&format!("HELLO WORLD RESTORING {}", buffer.name()));
         if buffer.num_lines() == 0 {
             for message in room.messages.iter() {
-                Weechat::print(&format!("RESTOGIN MESSAGE {:?}", message));
                 self.handle_room_message(message)
             }
         }

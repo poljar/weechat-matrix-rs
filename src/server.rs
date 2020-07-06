@@ -6,11 +6,14 @@
 //! server they need to be removed from the server section when the server is
 //! dropped.
 //!
-//! The server will create a tokio runtime which will spawn two tasks, one for
-//! the sync loop and one to send out room messages.
+//! The server will create a tokio runtime which will spawn a task for the sync
+//! loop.
 //!
-//! If will also spawn a task on the Weechat mainloop, this one waits for
+//! It will also spawn a task on the Weechat mainloop, this one waits for
 //! responses from the sync loop.
+//!
+//! A separate task is spawned every time Weechat wants to send a message to the
+//! server.
 //!
 //!
 //! Schematically this looks like the following diagram.
@@ -29,8 +32,8 @@
 //!   |   |  +--------------------+   |        |   +----------------+   |  |
 //!   |   |                           |        |                        |  |
 //!   |   |  +--------------------+   |        |   +----------------+   |  |
-//!   |   |  |                    |   |        |   |                |   |  |
-//!   |   |  |  Roombuffer input  +--------------->+   Send loop    |   |  |
+//!   |   |  |                    |   |  Spawn |   |                |   |  |
+//!   |   |  |  Roombuffer input  +--------------->+ Send coroutine |   |  |
 //!   |   |  |      callback      +<---------------+                |   |  |
 //!   |   |  |                    |   |        |   |                |   |  |
 //!   |   |  +--------------------+   |        |   +----------------+   |  |
@@ -66,12 +69,13 @@ use matrix_sdk::api::r0::session::login::Response as LoginResponse;
 
 use matrix_sdk::{
     self,
+    api::r0::message::create_message_event::Response as RoomSendResponse,
     events::{
         collections::all::{RoomEvent, StateEvent},
         room::message::{MessageEventContent, TextMessageEventContent},
     },
     identifiers::{RoomId, UserId},
-    Client, ClientConfig, Room, SyncSettings,
+    Client, ClientConfig, Result as MatrixResult, Room, SyncSettings,
 };
 
 use weechat::buffer::{BufferHandle, BufferSettings};
@@ -100,10 +104,6 @@ pub enum ServerError {
     IoError(String),
 }
 
-pub enum ServerMessage {
-    RoomSend(RoomId, String),
-}
-
 #[derive(Default)]
 pub struct ServerSettings {
     homeserver: Option<Url>,
@@ -124,22 +124,43 @@ pub struct LoginInfo {
 }
 
 pub struct Connection {
-    client_channel: Sender<ServerMessage>,
     response_receiver: JoinHandle<(), ()>,
-    // TODO move the runtime into the plugin, once we're able to cancel tokio
-    // tasks.
+    client: Client,
     #[used]
     runtime: Runtime,
 }
 
 impl Connection {
-    pub async fn send_message(&self, room_id: &RoomId, message: &str) {
-        self.client_channel
-            .send(ServerMessage::RoomSend(
-                room_id.to_owned(),
-                message.to_owned(),
-            ))
+    pub async fn send_message(
+        &self,
+        room_id: &RoomId,
+        message: String,
+    ) -> MatrixResult<RoomSendResponse> {
+        let room_id = room_id.to_owned();
+        let client = self.client.clone();
+
+        let handle = self
+            .runtime
+            .spawn(async move {
+                let content =
+                    MessageEventContent::Text(TextMessageEventContent {
+                        body: message,
+                        format: None,
+                        formatted_body: None,
+                        relates_to: None,
+                    });
+
+                let ret = client
+                    .room_send(&room_id, content, Some(Uuid::new_v4()))
+                    .await;
+                ret
+            })
             .await;
+
+        match handle {
+            Ok(response) => response,
+            Err(e) => panic!("Tokio error while sending a message {:?}", e),
+        }
     }
 }
 
@@ -427,14 +448,11 @@ impl MatrixServer {
             MatrixServer::response_receiver(rx, Rc::downgrade(&self.inner)),
         );
 
-        let (client_sender, client_receiver) = async_channel(10);
-        runtime.spawn(MatrixServer::send_loop(client, client_receiver));
-
         let mut connected_state = server.connected_state.borrow_mut();
 
         *connected_state = Some(Connection {
+            client,
             response_receiver,
-            client_channel: client_sender,
             runtime,
         });
 
@@ -464,7 +482,7 @@ impl MatrixServer {
         }
 
         {
-            let server = self.inner.borrow_mut();
+            let server = self.inner();
             let mut connected_state = server.connected_state.borrow_mut();
             let state = connected_state.take();
 
@@ -633,38 +651,6 @@ impl MatrixServer {
                 },
                 Err(e) => server.error(&format!("Ruma error {}", e)),
             };
-        }
-    }
-
-    /// Send loop that waits for requests that need to be sent out using our
-    /// Matrix client.
-    pub async fn send_loop(client: Client, channel: Receiver<ServerMessage>) {
-        while let Ok(message) = channel.recv().await {
-            match message {
-                ServerMessage::RoomSend(room_id, message) => {
-                    let content =
-                        MessageEventContent::Text(TextMessageEventContent {
-                            body: message,
-                            format: None,
-                            formatted_body: None,
-                            relates_to: None,
-                        });
-
-                    // TODO awaiting here means we can only send one message
-                    // at a time, we need to spawn a task here and return a
-                    // oneshot channel that the caller can await.
-                    // TODO the room should remember the UUID for the local echo
-                    // implementation.
-                    let ret = client
-                        .room_send(&room_id, content, Some(Uuid::new_v4()))
-                        .await;
-
-                    match ret {
-                        Ok(_r) => (),
-                        Err(_e) => (),
-                    }
-                }
-            }
         }
     }
 }
