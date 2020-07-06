@@ -603,12 +603,14 @@ impl MatrixServer {
         server: Weak<RefCell<InnerServer>>,
     ) {
         loop {
+            let ret = receiver.recv().await;
+
             let server_cell = server
                 .upgrade()
                 .expect("Can't upgrade server in sync receiver");
             let mut server = server_cell.borrow_mut();
 
-            let ret = match receiver.recv().await {
+            let message = match ret {
                 Ok(m) => m,
                 Err(e) => {
                     server.error(&format!("Error receiving message: {:?}", e));
@@ -616,7 +618,7 @@ impl MatrixServer {
                 }
             };
 
-            match ret {
+            match message {
                 Ok(message) => match message {
                     ClientMessage::LoginMessage(r) => server.receive_login(r),
                     ClientMessage::SyncEvent(r, e) => {
