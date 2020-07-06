@@ -119,7 +119,7 @@ impl ServerSettings {
     }
 }
 
-pub struct LoginState {
+pub struct LoginInfo {
     user_id: UserId,
 }
 
@@ -162,7 +162,7 @@ pub(crate) struct InnerServer {
     settings: ServerSettings,
     config: ConfigHandle,
     client: Option<Client>,
-    login_state: Option<LoginState>,
+    login_state: Option<LoginInfo>,
     connected_state: Rc<RefCell<Option<Connection>>>,
     server_buffer: Rc<RefCell<Option<BufferHandle>>>,
 }
@@ -814,7 +814,7 @@ impl InnerServer {
     }
 
     pub fn receive_login(&mut self, response: LoginResponse) {
-        let login_state = LoginState {
+        let login_state = LoginInfo {
             user_id: response.user_id,
         };
         self.login_state = Some(login_state);
