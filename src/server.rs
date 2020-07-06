@@ -87,7 +87,7 @@ use crate::{config::Config, ConfigHandle};
 
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub enum ThreadMessage {
+pub enum ClientMessage {
     LoginMessage(LoginResponse),
     SyncState(RoomId, StateEvent),
     SyncEvent(RoomId, RoomEvent),
@@ -481,7 +481,7 @@ impl MatrixServer {
     /// It communicates with the main Weechat thread using a async channel.
     pub async fn sync_loop(
         client: Client,
-        channel: Sender<Result<ThreadMessage, String>>,
+        channel: Sender<Result<ClientMessage, String>>,
         username: String,
         password: String,
         server_name: String,
@@ -531,7 +531,7 @@ impl MatrixServer {
                     }
 
                     channel
-                        .send(Ok(ThreadMessage::LoginMessage(response)))
+                        .send(Ok(ClientMessage::LoginMessage(response)))
                         .await
                 }
                 Err(e) => {
@@ -548,7 +548,7 @@ impl MatrixServer {
                     let room = room.read().await;
                     let room: &Room = &*room;
                     channel
-                        .send(Ok(ThreadMessage::RestoredRoom(room.clone())))
+                        .send(Ok(ClientMessage::RestoredRoom(room.clone())))
                         .await
                 }
             }
@@ -573,7 +573,7 @@ impl MatrixServer {
                     for event in room.state.events {
                         if let Ok(e) = event.deserialize() {
                             channel
-                                .send(Ok(ThreadMessage::SyncState(
+                                .send(Ok(ClientMessage::SyncState(
                                     room_id.clone(),
                                     e,
                                 )))
@@ -583,7 +583,7 @@ impl MatrixServer {
                     for event in room.timeline.events {
                         if let Ok(e) = event.deserialize() {
                             channel
-                                .send(Ok(ThreadMessage::SyncEvent(
+                                .send(Ok(ClientMessage::SyncEvent(
                                     room_id.clone(),
                                     e,
                                 )))
@@ -599,7 +599,7 @@ impl MatrixServer {
     /// This runs on the main Weechat thread and listens for responses coming
     /// from the client running in the tokio executor.
     pub async fn response_receiver(
-        receiver: Receiver<Result<ThreadMessage, String>>,
+        receiver: Receiver<Result<ClientMessage, String>>,
         server: Weak<RefCell<InnerServer>>,
     ) {
         loop {
@@ -618,14 +618,14 @@ impl MatrixServer {
 
             match ret {
                 Ok(message) => match message {
-                    ThreadMessage::LoginMessage(r) => server.receive_login(r),
-                    ThreadMessage::SyncEvent(r, e) => {
+                    ClientMessage::LoginMessage(r) => server.receive_login(r),
+                    ClientMessage::SyncEvent(r, e) => {
                         server.receive_joined_timeline_event(&r, e)
                     }
-                    ThreadMessage::SyncState(r, e) => {
+                    ClientMessage::SyncState(r, e) => {
                         server.receive_joined_state_event(&r, e)
                     }
-                    ThreadMessage::RestoredRoom(room) => {
+                    ClientMessage::RestoredRoom(room) => {
                         server.restore_room(room)
                     }
                 },
