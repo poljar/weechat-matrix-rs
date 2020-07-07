@@ -452,11 +452,10 @@ impl RoomBuffer {
         match &event {
             StateEvent::RoomMember(e) => self.handle_membership_event(e, false),
             StateEvent::RoomName(n) => self.handle_room_name(n),
-            _ => (),
-        }
-        {
-            let mut room = self.room_mut();
-            room.receive_state_event(&event);
+            _ => {
+                let mut room = self.room_mut();
+                room.receive_state_event(&event);
+            }
         }
     }
 }
