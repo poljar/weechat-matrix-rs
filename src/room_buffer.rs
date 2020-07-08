@@ -404,6 +404,13 @@ impl RoomBuffer {
         if state_event {
             use MembershipState::*;
 
+            // FIXME: Handle gaps (e.g. long disconnects) properly.
+            //
+            // For joins and invites, first we need to check whether a member with some MXID
+            // exists. If he does, we have to update *that* member with the new state. Only if they
+            // do not exist yet do we create a new one.
+            //
+            // For leaves and bans we just need to remove the member.
             match event.content.membership {
                 Invite | Join => {
                     let display_name = self.room().get_member(&target_id).unwrap().display_name.clone();
