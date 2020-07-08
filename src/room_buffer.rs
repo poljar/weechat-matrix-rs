@@ -86,7 +86,7 @@ impl BufferInputCallbackAsync for MatrixRoom {
 impl RoomBuffer {
     pub fn new(
         server_name: &str,
-        connected_state: &Rc<RefCell<Option<Connection>>>,
+        connection: &Rc<RefCell<Option<Connection>>>,
         homeserver: &Url,
         room_id: RoomId,
         own_user_id: &UserId,
@@ -95,7 +95,7 @@ impl RoomBuffer {
             server_name: Rc::new(server_name.to_owned()),
             homeserver: Rc::new(homeserver.clone()),
             room_id: Rc::new(room_id.clone()),
-            connection: connected_state.clone(),
+            connection: connection.clone(),
             prev_batch: Rc::new(RefCell::new(None)),
             typing_notice_time: Rc::new(RefCell::new(None)),
             room: Rc::new(RefCell::new(Room::new(&room_id, &own_user_id))),
@@ -128,12 +128,12 @@ impl RoomBuffer {
     pub fn restore(
         room: Room,
         server_name: &str,
-        connected_state: &Rc<RefCell<Option<Connection>>>,
+        connection: &Rc<RefCell<Option<Connection>>>,
         homeserver: &Url,
     ) -> Self {
         let mut room_buffer = RoomBuffer::new(
             server_name,
-            connected_state,
+            connection,
             homeserver,
             room.room_id.clone(),
             &room.own_user_id,

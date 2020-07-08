@@ -184,7 +184,7 @@ pub(crate) struct InnerServer {
     config: ConfigHandle,
     client: Option<Client>,
     login_state: Option<LoginInfo>,
-    connected_state: Rc<RefCell<Option<Connection>>>,
+    connection: Rc<RefCell<Option<Connection>>>,
     server_buffer: Rc<RefCell<Option<BufferHandle>>>,
 }
 
@@ -203,7 +203,7 @@ impl MatrixServer {
             config: config.clone(),
             client: None,
             login_state: None,
-            connected_state: Rc::new(RefCell::new(None)),
+            connection: Rc::new(RefCell::new(None)),
             server_buffer: Rc::new(RefCell::new(None)),
         };
 
@@ -448,9 +448,9 @@ impl MatrixServer {
             MatrixServer::response_receiver(rx, Rc::downgrade(&self.inner)),
         );
 
-        let mut connected_state = server.connected_state.borrow_mut();
+        let mut connection = server.connection.borrow_mut();
 
-        *connected_state = Some(Connection {
+        *connection = Some(Connection {
             client,
             response_receiver,
             runtime,
@@ -483,8 +483,8 @@ impl MatrixServer {
 
         {
             let server = self.inner();
-            let mut connected_state = server.connected_state.borrow_mut();
-            let state = connected_state.take();
+            let mut connection = server.connection.borrow_mut();
+            let state = connection.take();
 
             if let Some(s) = state {
                 s.response_receiver.cancel();
@@ -691,7 +691,7 @@ impl InnerServer {
                 .expect("Receiving events while not being logged in");
             let buffer = RoomBuffer::new(
                 &self.server_name,
-                &self.connected_state,
+                &self.connection,
                 homeserver,
                 room_id.clone(),
                 &login_state.user_id,
@@ -722,7 +722,7 @@ impl InnerServer {
         let buffer = RoomBuffer::restore(
             room,
             &self.server_name,
-            &self.connected_state,
+            &self.connection,
             homeserver,
         );
 
@@ -780,7 +780,7 @@ impl InnerServer {
 
     /// Is the server connected.
     pub fn connected(&self) -> bool {
-        self.connected_state.borrow().is_some()
+        self.connection.borrow().is_some()
     }
 
     pub(crate) fn receive_joined_state_event(
