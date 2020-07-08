@@ -511,6 +511,8 @@ impl RoomBuffer {
                             user_id
                         ),
                     }
+
+                    self.get_member_mut(&target_id).unwrap().display_name = event.content.displayname.clone();
                 }
                 _ => {
                     sender = self.get_member(&sender_id).cloned();

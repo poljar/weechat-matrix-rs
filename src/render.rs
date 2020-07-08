@@ -46,7 +46,7 @@ pub fn render_membership(
         KickedAndBanned => "was kicked and banned by",
         InvitationRejected => "rejected the invitation",
         InvitationRevoked => "had the invitation revoked by",
-        ProfileChanged => "changed their display name or avatar",
+        ProfileChanged => "_",
         NotImplemented => "performed an unimplemented operation",
     };
 
@@ -79,14 +79,14 @@ pub fn render_membership(
         color_reset = Weechat::color("reset")
     );
 
-    let target = format!(
+    let target_name = format!(
         "{color_user}{target_name}{color_reset}",
         target_name = formatted_name(target),
         color_user = Weechat::color("reset"), // TODO
         color_reset = Weechat::color("reset")
     );
 
-    let sender = format!(
+    let sender_name = format!(
         "{color_user}{sender_name}{color_reset}",
         sender_name = formatted_name(sender),
         color_user = Weechat::color("reset"), // TODO
@@ -94,20 +94,67 @@ pub fn render_membership(
     );
 
     match change_op {
-        None | Error | Joined | Left | InvitationRejected | ProfileChanged
-        | NotImplemented => format!(
+        ProfileChanged => {
+            let old_display_name = &target.display_name;
+            let new_display_name = &member.content.displayname;
+
+            let old_avatar = member.prev_content.as_ref().and_then(|prev| prev.avatar_url.as_ref());
+            let new_avatar = member.content.avatar_url.as_ref();
+
+            match (old_display_name != new_display_name, old_avatar != new_avatar) {
+                (false, true) =>
+                    format!(
+                        "{prefix} {target} changed their avatar",
+                        prefix = Weechat::prefix(prefix),
+                        target = target_name,
+                        ),
+                (true, false) => {
+                    match new_display_name {
+                        Some(name) => format!(
+                            "{prefix} {target} changed their display name to {new}",
+                            prefix = Weechat::prefix(prefix),
+                            target = target_name,
+                            new = name
+                            ),
+                        std::option::Option::None => format!(
+                            "{prefix} {target} removed their display name",
+                            prefix = Weechat::prefix(prefix),
+                            target = target_name,
+                            ),
+                    }
+                }
+                (true, true) =>
+                    match new_display_name {
+                        Some(name) => format!(
+                            "{prefix} {target} changed their avatar and changed their display name to {new}",
+                            prefix = Weechat::prefix(prefix),
+                            target = target_name,
+                            new = name
+                            ),
+                        std::option::Option::None => format!(
+                            "{prefix} {target} changed their avatar and removed display name",
+                            prefix = Weechat::prefix(prefix),
+                            target = target_name,
+                            ),
+                    }
+                (false, false) =>
+                    format!("Cannot happen: got profile changed but nothing really changed")
+            }
+
+        }
+        None | Error | Joined | Left | InvitationRejected | NotImplemented => format!(
             "{prefix} {target} {op}",
             prefix = Weechat::prefix(prefix),
-            target = target,
+            target = target_name,
             op = operation
         ),
         Banned | Unbanned | Kicked | Invited | InvitationRevoked
         | KickedAndBanned => format!(
             "{prefix} {target} {op} {sender}",
             prefix = Weechat::prefix(prefix),
-            target = target,
+            target = target_name,
             op = operation,
-            sender = sender
+            sender = sender_name
         ),
     }
 }
