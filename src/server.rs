@@ -698,6 +698,7 @@ impl MatrixServer {
         client
             .sync_forever(sync_settings, async move |response| {
                 let channel = sync_channel;
+
                 for (room_id, room) in response.rooms.join {
                     for event in room.state.events {
                         if let Ok(e) = event.deserialize() {
@@ -708,7 +709,10 @@ impl MatrixServer {
                                 )))
                                 .await;
                         } else {
-                            error!("Failed deserializing state event: {:#?}", event);
+                            error!(
+                                "Failed deserializing state event: {:#?}",
+                                event
+                            );
                         }
                     }
                     for event in room.timeline.events {
@@ -720,7 +724,10 @@ impl MatrixServer {
                                 )))
                                 .await;
                         } else {
-                            error!("Failed deserializing timeline event: {:#?}", event);
+                            error!(
+                                "Failed deserializing timeline event: {:#?}",
+                                event
+                            );
                         }
                     }
                 }
