@@ -50,6 +50,22 @@ pub fn render_membership(
         NotImplemented => "performed an unimplemented operation",
     };
 
+    fn formatted_name(member: &WeechatRoomMember) -> String {
+        match &member.display_name {
+            Some(display_name) => {
+                format!("{name} {color_delim}({color_reset}{user_id}{color_delim}){color_reset}",
+                        name = display_name,
+                        user_id = &member.user_id,
+                        color_delim = Weechat::color("chat_delimiters"),
+                        color_reset = Weechat::color("reset"))
+            }
+
+            std::option::Option::None => {
+                member.user_id.as_ref().to_string()
+            }
+        }
+    }
+
     let (prefix, color_action) = match change_op {
         Joined => ("join", "green"),
         Banned | ProfileChanged | Invited => ("network", "magenta"),
@@ -63,21 +79,16 @@ pub fn render_membership(
         color_reset = Weechat::color("reset")
     );
 
-    // TODO: When we have the display name and MXID available separately, add back colored delims:
-    //
-    // "{prefix}{color_user}{target_name} {color_deli}({color_reset}{sender_id}{color_deli})"
     let target = format!(
-        "{color_user}{target_name} ({id}){color_reset}",
-        target_name = target.nick,
-        id = target.user_id,
+        "{color_user}{target_name}{color_reset}",
+        target_name = formatted_name(target),
         color_user = Weechat::color("reset"), // TODO
         color_reset = Weechat::color("reset")
     );
 
     let sender = format!(
-        "{color_user}{sender_name} ({id}){color_reset}",
-        sender_name = sender.nick,
-        id = sender.user_id,
+        "{color_user}{sender_name}{color_reset}",
+        sender_name = formatted_name(sender),
         color_user = Weechat::color("reset"), // TODO
         color_reset = Weechat::color("reset")
     );

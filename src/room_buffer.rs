@@ -62,6 +62,7 @@ pub struct RoomBuffer {
 pub struct WeechatRoomMember {
     pub user_id: UserId,
     pub nick: String,
+    pub display_name: Option<String>,
     pub prefix: String,
     pub color: String,
 }
@@ -169,13 +170,14 @@ impl RoomBuffer {
         let mut weechat_members = HashMap::new();
 
         for member in matrix_members {
-            let display_name = room.member_display_name(&member.user_id);
+            let display_name = room.get_member(&member.user_id).unwrap().display_name.clone();
 
             weechat_members.insert(
                 member.user_id.clone(),
                 WeechatRoomMember {
                     user_id: member.user_id.clone(),
-                    nick: display_name.to_string(),
+                    nick: room.member_display_name(&member.user_id).to_string(),
+                    display_name,
                     // TODO: proper prefix and colour
                     prefix: "".to_string(),
                     color: "#FFFFFF".to_string(),
@@ -404,9 +406,12 @@ impl RoomBuffer {
 
             match event.content.membership {
                 Invite | Join => {
+                    let display_name = self.room().get_member(&target_id).unwrap().display_name.clone();
+
                     self.add_member(WeechatRoomMember {
-                        user_id: target_id,
+                        user_id: target_id.clone(),
                         nick: new_nick.clone(),
+                        display_name,
                         // TODO: proper prefix and colour
                         prefix: "".to_string(),
                         color: "#FFFFFF".to_string(),
@@ -437,9 +442,12 @@ impl RoomBuffer {
                         new_nick
                     );
 
+                    let display_name = self.room().get_member(&target_id).unwrap().display_name.clone();
+
                     let member = WeechatRoomMember {
                         user_id: target_id.clone(),
                         nick: new_nick.clone(),
+                        display_name,
                         // TODO: proper prefix and colour
                         prefix: "".to_string(),
                         color: "#FFFFFF".to_string(),
