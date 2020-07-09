@@ -72,11 +72,14 @@ pub fn render_membership(
         _ => ("quit", "red"),
     };
 
+    let color_action = Weechat::color(color_action);
+    let color_reset = Weechat::color("reset");
+
     let operation = format!(
         "{color_action}{op}{color_reset}",
-        color_action = Weechat::color(color_action),
+        color_action = color_action,
         op = operation,
-        color_reset = Weechat::color("reset")
+        color_reset = color_reset
     );
 
     let target_name = format!(
@@ -104,37 +107,47 @@ pub fn render_membership(
             match (old_display_name != new_display_name, old_avatar != new_avatar) {
                 (false, true) =>
                     format!(
-                        "{prefix} {target} changed their avatar",
+                        "{prefix} {target} {color_action}changed their avatar{color_reset}",
                         prefix = Weechat::prefix(prefix),
                         target = target_name,
+                        color_action = color_action,
+                        color_reset = color_reset
                         ),
                 (true, false) => {
                     match new_display_name {
                         Some(name) => format!(
-                            "{prefix} {target} changed their display name to {new}",
+                            "{prefix} {target} {color_action}changed their display name to{color_reset} {new}",
                             prefix = Weechat::prefix(prefix),
                             target = target_name,
-                            new = name
+                            new = name,
+                            color_action = color_action,
+                            color_reset = color_reset
                             ),
                         std::option::Option::None => format!(
-                            "{prefix} {target} removed their display name",
+                            "{prefix} {target} {color_action}removed their display name{color_reset}",
                             prefix = Weechat::prefix(prefix),
                             target = target_name,
+                            color_action = color_action,
+                            color_reset = color_reset
                             ),
                     }
                 }
                 (true, true) =>
                     match new_display_name {
                         Some(name) => format!(
-                            "{prefix} {target} changed their avatar and changed their display name to {new}",
+                            "{prefix} {target} {color_action}changed their avatar and changed their display name to{color_reset} {new}",
                             prefix = Weechat::prefix(prefix),
                             target = target_name,
-                            new = name
+                            new = name,
+                            color_action = color_action,
+                            color_reset = color_reset
                             ),
                         std::option::Option::None => format!(
-                            "{prefix} {target} changed their avatar and removed display name",
+                            "{prefix} {target} {color_action}changed their avatar and removed display name{color_reset}",
                             prefix = Weechat::prefix(prefix),
                             target = target_name,
+                            color_action = color_action,
+                            color_reset = color_reset
                             ),
                     }
                 (false, false) =>
