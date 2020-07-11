@@ -35,9 +35,11 @@ use url::Url;
 
 use async_trait::async_trait;
 
-use crate::server::Connection;
+use crate::server::{Connection, TYPING_NOTICE_TIMEOUT};
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 use weechat::buffer::{
     Buffer, BufferHandle, BufferInputCallbackAsync, BufferSettingsAsync,
     NickSettings,
@@ -45,6 +47,9 @@ use weechat::buffer::{
 use weechat::Weechat;
 
 pub struct RoomBuffer {
+    own_user_id: Rc<UserId>,
+    room_id: Rc<RoomId>,
+    typing_in_flight: Rc<AtomicBool>,
     inner: MatrixRoom,
     buffer_handle: BufferHandle,
 }
@@ -56,7 +61,7 @@ pub struct MatrixRoom {
     room_id: Rc<RoomId>,
     connection: Rc<RefCell<Option<Connection>>>,
     prev_batch: Rc<RefCell<Option<String>>>,
-    typing_notice_time: Rc<RefCell<Option<u64>>>,
+    typing_notice_time: Rc<RefCell<Option<Instant>>>,
     room: Rc<RefCell<Room>>,
     printed_before_ack_queue: Rc<RefCell<Vec<String>>>,
 }
@@ -120,6 +125,9 @@ impl RoomBuffer {
         buffer.enable_nicklist();
 
         RoomBuffer {
+            room_id: Rc::new(room_id),
+            own_user_id: Rc::new(own_user_id.to_owned()),
+            typing_in_flight: Rc::new(AtomicBool::from(false)),
             inner: room,
             buffer_handle,
         }
@@ -196,9 +204,87 @@ impl RoomBuffer {
         }
     }
 
-    pub fn update_buffer_name(&mut self) {
+    pub fn update_buffer_name(&self) {
         let name = self.calculate_buffer_name();
         self.weechat_buffer().set_name(&name)
+    }
+
+    /// Send out a typing notice.
+    ///
+    /// This will send out a typing notice or reset one if needed. It will make
+    /// sure that only one typing notice request is in flight at a time.
+    ///
+    /// Typing notices are sent out only if we have more than 4 letters in the
+    /// input and the input isn't a command.
+    ///
+    /// If the input is empty the typing notice is disabled.
+    pub fn update_typing_notice(&self) {
+        // We're in the process of sending out a typing notice, so don't make
+        // the same request twice.
+        if self.typing_in_flight.load(Ordering::Relaxed) {
+            return;
+        }
+
+        let buffer = self.weechat_buffer();
+        let input = buffer.input();
+
+        if input.starts_with("/") && !input.starts_with("//") {
+            // Don't send typing notices for commands.
+            return;
+        }
+
+        let connection = self.inner.connection.clone();
+        let room_id = self.room_id.clone();
+        let user_id = self.own_user_id.clone();
+        let typing_notice_time = self.inner.typing_notice_time.clone();
+        let typing_in_flight = self.typing_in_flight.clone();
+
+        let send = async move |typing: bool| {
+            let typing_time = typing_notice_time;
+
+            if let Some(connection) = &*connection.borrow() {
+                let response = connection
+                    .send_typing_notice(&*room_id, &*user_id, typing)
+                    .await;
+
+                // If we got a successfull response mark when we sent out the
+                // notice so we don't send out another one while this one is
+                // active, or if we disabled the notice mark that no notice is
+                // active.
+                if response.is_ok() {
+                    if typing {
+                        *typing_time.borrow_mut() = Some(Instant::now());
+                    } else {
+                        *typing_time.borrow_mut() = None;
+                    }
+                }
+            };
+
+            typing_in_flight.store(false, Ordering::Relaxed);
+        };
+
+        let typing_time = self.inner.typing_notice_time.borrow_mut();
+
+        if input.len() < 4 && typing_time.is_some() {
+            // If we have an active typing notice and our input is short, e.g.
+            // we removed the input set the typing notice to false.
+            self.typing_in_flight.store(true, Ordering::Release);
+            Weechat::spawn(send(false));
+        } else if input.len() >= 4 {
+            if let Some(typing_time) = &*typing_time {
+                // If we have some valid input, check if the typing notice
+                // expired and send one out if it indeed expired.
+                if typing_time.elapsed() > TYPING_NOTICE_TIMEOUT {
+                    self.typing_in_flight.store(true, Ordering::Release);
+                    Weechat::spawn(send(true));
+                }
+            } else {
+                // If we have some valid input and no active typing notice send
+                // one out.
+                self.typing_in_flight.store(true, Ordering::Release);
+                Weechat::spawn(send(true));
+            }
+        }
     }
 
     pub fn handle_membership_event(
