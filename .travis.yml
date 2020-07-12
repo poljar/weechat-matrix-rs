@@ -2,15 +2,28 @@ language: rust
 rust: nightly
 
 jobs:
+  allow_failures:
+    - os: osx
+      name: macOS 10.15
+
   include:
-    - os: linux
-      dist: bionic
+    - stage: Lint
+      os: linux
+      before_script:
+        - rustup component add rustfmt
+        - rustup component add clippy
+      script:
+        - cargo fmt --all -- --check
+
+    - stage: Build
+      os: linux
 
     - os: osx
 
-before_script:
-  - rustup component add rustfmt
+    - os: osx
+      name: macOS 10.15
+      osx_image: xcode12
+
 
 script:
   - cargo build
-  - cargo fmt --all -- --check
