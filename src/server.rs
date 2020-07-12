@@ -185,10 +185,9 @@ impl Connection {
                     None
                 };
 
-                let ret = client
+                client
                     .typing_notice(&room_id, &user_id, typing, timeout)
-                    .await;
-                ret
+                    .await
             })
             .await;
 

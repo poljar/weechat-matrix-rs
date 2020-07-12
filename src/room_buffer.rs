@@ -228,7 +228,7 @@ impl RoomBuffer {
         let buffer = self.weechat_buffer();
         let input = buffer.input();
 
-        if input.starts_with("/") && !input.starts_with("//") {
+        if input.starts_with('/') && !input.starts_with("//") {
             // Don't send typing notices for commands.
             return;
         }
