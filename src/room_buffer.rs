@@ -78,7 +78,6 @@ impl BufferInputCallbackAsync for MatrixRoom {
             }
         } else {
             buffer.print("Error not connected");
-            return;
         }
     }
 }
@@ -188,7 +187,7 @@ impl RoomBuffer {
 
         if room_name == "#" {
             "##".to_owned()
-        } else if room_name.starts_with("#") {
+        } else if room_name.starts_with('#') {
             room_name
         } else {
             // TODO: only do this for non-direct chats
@@ -277,11 +276,8 @@ impl RoomBuffer {
             .unwrap_or_default()
             .as_secs();
 
-        match &event.content {
-            MessageEventContent::Text(t) => {
-                self.handle_text_message(&sender.to_string(), timestamp, t)
-            }
-            _ => (),
+        if let MessageEventContent::Text(t) = &event.content {
+            self.handle_text_message(&sender.to_string(), timestamp, t)
         }
     }
 

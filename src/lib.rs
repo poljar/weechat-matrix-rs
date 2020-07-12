@@ -12,7 +12,6 @@ mod server;
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
-use tracing_subscriber;
 
 use weechat::{
     buffer::{Buffer, BufferHandle},
@@ -100,10 +99,8 @@ impl BarItemCallback for Servers {
             for room in server.room_buffers().values() {
                 let room_buffer = room.weechat_buffer();
 
-                if &room_buffer == buffer {
-                    if room.room().is_encrypted() {
-                        return server.config().look().encrypted_room_sign();
-                    }
+                if &room_buffer == buffer && room.room().is_encrypted() {
+                    return server.config().look().encrypted_room_sign();
                 }
             }
         }
@@ -144,7 +141,7 @@ impl WeechatPlugin for Matrix {
         let plugin = Matrix {
             servers: servers.clone(),
             commands,
-            config: config.clone(),
+            config,
             status_bar,
             debug_buffer: RefCell::new(None),
         };

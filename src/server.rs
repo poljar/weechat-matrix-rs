@@ -150,10 +150,9 @@ impl Connection {
                         relates_to: None,
                     });
 
-                let ret = client
+                client
                     .room_send(&room_id, content, Some(Uuid::new_v4()))
-                    .await;
-                ret
+                    .await
             })
             .await;
 
