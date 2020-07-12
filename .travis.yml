@@ -14,6 +14,7 @@ jobs:
         - rustup component add clippy
       script:
         - cargo fmt --all -- --check
+        - cargo clippy -- -D warnings
 
     - stage: Build
       os: linux
