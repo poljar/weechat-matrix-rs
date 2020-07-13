@@ -247,10 +247,14 @@ impl RoomBuffer {
                     .send_typing_notice(&*room_id, &*user_id, typing)
                     .await;
 
-                // If we got a successfull response mark when we sent out the
-                // notice so we don't send out another one while this one is
-                // active, or if we disabled the notice mark that no notice is
-                // active.
+                // We need to record the time when the last typing notice was
+                // sent to ensure we don't send out new ones while a previous
+                // one is active. If we cancelled the last notice (`!typing`),
+                // we record that there is currently no active notice.
+                //
+                // An unsuccessful response indicates the send operation failed.
+                // In this case we need to retry, so we don't update anything.
+
                 if response.is_ok() {
                     if typing {
                         *typing_time.borrow_mut() = Some(Instant::now());
