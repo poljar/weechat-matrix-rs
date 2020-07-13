@@ -38,7 +38,7 @@ use async_trait::async_trait;
 use crate::server::{Connection, TYPING_NOTICE_TIMEOUT};
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::Instant;
 use weechat::buffer::{
     Buffer, BufferHandle, BufferInputCallbackAsync, BufferSettingsAsync,
@@ -49,7 +49,7 @@ use weechat::Weechat;
 pub struct RoomBuffer {
     own_user_id: Rc<UserId>,
     room_id: Rc<RoomId>,
-    typing_in_flight: Rc<AtomicBool>,
+    typing_in_flight: Mutex<()>,
     inner: MatrixRoom,
     buffer_handle: BufferHandle,
 }
@@ -127,7 +127,7 @@ impl RoomBuffer {
         RoomBuffer {
             room_id: Rc::new(room_id),
             own_user_id: Rc::new(own_user_id.to_owned()),
-            typing_in_flight: Rc::new(AtomicBool::from(false)),
+            typing_in_flight: Mutex::new(()),
             inner: room,
             buffer_handle,
         }
@@ -221,9 +221,10 @@ impl RoomBuffer {
     pub fn update_typing_notice(&self) {
         // We're in the process of sending out a typing notice, so don't make
         // the same request twice.
-        if self.typing_in_flight.load(Ordering::Relaxed) {
-            return;
-        }
+        let guard = match self.typing_in_flight.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
 
         let buffer = self.weechat_buffer();
         let input = buffer.input();
@@ -237,9 +238,8 @@ impl RoomBuffer {
         let room_id = self.room_id.clone();
         let user_id = self.own_user_id.clone();
         let typing_notice_time = self.inner.typing_notice_time.clone();
-        let typing_in_flight = self.typing_in_flight.clone();
 
-        let send = async move |typing: bool| {
+        let send = async move |typing: bool, _guard| {
             let typing_time = typing_notice_time;
 
             if let Some(connection) = &*connection.borrow() {
@@ -264,7 +264,8 @@ impl RoomBuffer {
                 }
             };
 
-            typing_in_flight.store(false, Ordering::Relaxed);
+            // The `_guard` expires here, releasing the mutex taken at the beginning of
+            // `update_typing_notice`.
         };
 
         let typing_time = self.inner.typing_notice_time.borrow_mut();
@@ -272,21 +273,18 @@ impl RoomBuffer {
         if input.len() < 4 && typing_time.is_some() {
             // If we have an active typing notice and our input is short, e.g.
             // we removed the input set the typing notice to false.
-            self.typing_in_flight.store(true, Ordering::Release);
-            Weechat::spawn(send(false));
+            Weechat::spawn(send(false, guard));
         } else if input.len() >= 4 {
             if let Some(typing_time) = &*typing_time {
                 // If we have some valid input, check if the typing notice
                 // expired and send one out if it indeed expired.
                 if typing_time.elapsed() > TYPING_NOTICE_TIMEOUT {
-                    self.typing_in_flight.store(true, Ordering::Release);
-                    Weechat::spawn(send(true));
+                    Weechat::spawn(send(true, guard));
                 }
             } else {
                 // If we have some valid input and no active typing notice, send
                 // one out.
-                self.typing_in_flight.store(true, Ordering::Release);
-                Weechat::spawn(send(true));
+                Weechat::spawn(send(true, guard));
             }
         }
     }
