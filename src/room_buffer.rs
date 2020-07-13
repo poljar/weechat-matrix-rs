@@ -283,7 +283,7 @@ impl RoomBuffer {
                     Weechat::spawn(send(true));
                 }
             } else {
-                // If we have some valid input and no active typing notice send
+                // If we have some valid input and no active typing notice, send
                 // one out.
                 self.typing_in_flight.store(true, Ordering::Release);
                 Weechat::spawn(send(true));
