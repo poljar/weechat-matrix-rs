@@ -265,8 +265,8 @@ impl RoomBuffer {
                 }
             };
 
-            // The `_guard` expires here, releasing the mutex taken at the beginning of
-            // `update_typing_notice`.
+            // The `guard` expires here, releasing the mutex taken at the
+            // beginning of `update_typing_notice`.
         };
 
         let typing_time = self.inner.typing_notice_time.borrow_mut();
