@@ -15,8 +15,10 @@ use std::rc::Rc;
 
 use weechat::{
     buffer::{Buffer, BufferHandle},
-    hooks::{BarItemCallback, BarItemHandle},
-    weechat_plugin, ArgsWeechat, Weechat, WeechatPlugin,
+    hooks::{
+        BarItemCallback, BarItemHandle, SignalCallback, SignalData, SignalHook,
+    },
+    weechat_plugin, ArgsWeechat, ReturnCode, Weechat, WeechatPlugin,
 };
 
 use crate::commands::Commands;
@@ -42,6 +44,32 @@ impl Servers {
     }
 }
 
+impl SignalCallback for Servers {
+    fn callback(
+        &mut self,
+        _: &Weechat,
+        _signal_name: &str,
+        data: Option<SignalData>,
+    ) -> ReturnCode {
+        if let Some(data) = data {
+            if let SignalData::Buffer(buffer) = data {
+                let servers = self.borrow();
+
+                for server in servers.values() {
+                    for room_buffer in server.inner().room_buffers.values() {
+                        if buffer == room_buffer.weechat_buffer() {
+                            room_buffer.update_typing_notice();
+
+                            return ReturnCode::Ok;
+                        }
+                    }
+                }
+            }
+        }
+        ReturnCode::Ok
+    }
+}
+
 struct Matrix {
     servers: Servers,
     #[used]
@@ -50,6 +78,8 @@ struct Matrix {
     config: ConfigHandle,
     #[used]
     status_bar: BarItemHandle,
+    #[used]
+    typing_notice_signal: SignalHook,
     debug_buffer: RefCell<Option<BufferHandle>>,
 }
 
@@ -138,12 +168,16 @@ impl WeechatPlugin for Matrix {
             }
         }
 
+        let typing = SignalHook::new("input_text_changed", servers.clone())
+            .expect("Can't create signal hook for the typing notice cb");
+
         let plugin = Matrix {
             servers: servers.clone(),
             commands,
             config,
             status_bar,
             debug_buffer: RefCell::new(None),
+            typing_notice_signal: typing,
         };
 
         Weechat::spawn(async move {

@@ -69,7 +69,10 @@ use matrix_sdk::api::r0::session::login::Response as LoginResponse;
 
 use matrix_sdk::{
     self,
-    api::r0::message::create_message_event::Response as RoomSendResponse,
+    api::r0::{
+        message::create_message_event::Response as RoomSendResponse,
+        typing::create_typing_event::Response as TypingResponse,
+    },
     events::{
         collections::all::{RoomEvent, StateEvent},
         room::message::{MessageEventContent, TextMessageEventContent},
@@ -90,6 +93,7 @@ use crate::PLUGIN_NAME;
 use crate::{config::Config, ConfigHandle};
 
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
+pub const TYPING_NOTICE_TIMEOUT: Duration = Duration::from_secs(4);
 
 pub enum ClientMessage {
     LoginMessage(LoginResponse),
@@ -161,6 +165,36 @@ impl Connection {
             Err(e) => panic!("Tokio error while sending a message {:?}", e),
         }
     }
+    pub async fn send_typing_notice(
+        &self,
+        room_id: &RoomId,
+        user_id: &UserId,
+        typing: bool,
+    ) -> MatrixResult<TypingResponse> {
+        let room_id = room_id.to_owned();
+        let user_id = user_id.to_owned();
+        let client = self.client.clone();
+
+        let handle = self
+            .runtime
+            .spawn(async move {
+                let timeout = if typing {
+                    Some(TYPING_NOTICE_TIMEOUT)
+                } else {
+                    None
+                };
+
+                client
+                    .typing_notice(&room_id, &user_id, typing, timeout)
+                    .await
+            })
+            .await;
+
+        match handle {
+            Ok(response) => response,
+            Err(e) => panic!("Tokio error while sending a message {:?}", e),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -178,7 +212,7 @@ impl std::fmt::Debug for MatrixServer {
 
 pub(crate) struct InnerServer {
     server_name: Rc<String>,
-    room_buffers: HashMap<RoomId, RoomBuffer>,
+    pub room_buffers: HashMap<RoomId, RoomBuffer>,
     settings: ServerSettings,
     config: ConfigHandle,
     client: Option<Client>,
