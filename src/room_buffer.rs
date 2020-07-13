@@ -211,8 +211,9 @@ impl RoomBuffer {
 
     /// Send out a typing notice.
     ///
-    /// This will send out a typing notice or reset one if needed. It will make
-    /// sure that only one typing notice request is in flight at a time.
+    /// This will send out a typing notice or reset the one in progress, if
+    /// needed. It will make sure that only one typing notice request is in
+    /// flight at a time.
     ///
     /// Typing notices are sent out only if we have more than 4 letters in the
     /// input and the input isn't a command.
