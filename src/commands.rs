@@ -267,7 +267,6 @@ impl CommandCallback for MatrixCommand {
 
 impl Commands {
     pub fn hook_all(
-        weechat: &Weechat,
         servers: &Servers,
         config: &ConfigHandle,
     ) -> Result<Commands, ()> {
@@ -293,14 +292,14 @@ Use /matrix [command] help to find out more.\n",
             .add_completion("reconnect")
             .add_completion("help server|connect|disconnect|reconnect");
 
-        let matrix = weechat.hook_command(
+        let matrix = Command::new(
             matrix_settings,
             MatrixCommand {
                 servers: servers.clone(),
                 config: config.clone(),
             },
-        );
+        )?;
 
-        Ok(Commands { _matrix: matrix? })
+        Ok(Commands { _matrix: matrix })
     }
 }
