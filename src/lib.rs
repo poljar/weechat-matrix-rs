@@ -1,8 +1,5 @@
 #![feature(async_closure)]
 
-#[macro_use]
-mod config_macros;
-
 mod commands;
 mod config;
 mod debug;
@@ -143,7 +140,7 @@ impl WeechatPlugin for Matrix {
     fn init(weechat: &Weechat, _args: ArgsWeechat) -> Result<Self, ()> {
         let servers = Servers::new();
         let config = ConfigHandle::new(&servers);
-        let commands = Commands::hook_all(weechat, &servers, &config);
+        let commands = Commands::hook_all(weechat, &servers, &config)?;
 
         // TODO move the bar creation into a separate file.
         let status_bar =

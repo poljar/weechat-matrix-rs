@@ -132,9 +132,9 @@ checksum = "3441f0f7b02788e948e47f457ca01f1d7e6d92c693bc132c22b087d3141c03ff"
 
 [[package]]
 name = "bindgen"
-version = "0.54.0"
+version = "0.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66c0bb6167449588ff70803f4127f0684f9063097eca5016f37eb52b92c2cf36"
+checksum = "f4d49b80beb70d76cdac92f5681e666f9a697c737c4f4117a67229a0386dc736"
 dependencies = [
  "bitflags",
  "cexpr",
@@ -796,9 +796,9 @@ checksum = "b294d6fa9ee409a054354afc4352b0b9ef7ca222c69b8812cbea9e7d2bf3783f"
 
 [[package]]
 name = "libc"
-version = "0.2.71"
+version = "0.2.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9457b06509d27052635f90d6466700c65095fdf75409b3fbdd903e988b886f49"
+checksum = "a9f8082297d534141b30c8d39e9b1773713ab50fdbe4ff30f750d063b3bfd701"
 
 [[package]]
 name = "libloading"
@@ -1777,9 +1777,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.33"
+version = "1.0.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8d5d96e8cbb005d6959f119f773bfaebb5684296108fb32600c00cde305b2cd"
+checksum = "936cae2873c940d92e697597c5eee105fb570cd5689c695806f672883653349b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2203,13 +2203,15 @@ dependencies = [
 [[package]]
 name = "weechat"
 version = "0.1.0"
-source = "git+https://github.com/poljar/rust-weechat#647e9a93560e6febab50b1c9456b30a8d440c22b"
+source = "git+https://github.com/poljar/rust-weechat#7defc24d659aa920d519f47e7cb25982926647a9"
 dependencies = [
  "async-task",
  "async-trait",
  "futures",
  "libc",
+ "paste",
  "pipe-channel",
+ "strum",
  "weechat-macro",
  "weechat-sys",
 ]
@@ -2217,7 +2219,7 @@ dependencies = [
 [[package]]
 name = "weechat-macro"
 version = "0.1.0"
-source = "git+https://github.com/poljar/rust-weechat#647e9a93560e6febab50b1c9456b30a8d440c22b"
+source = "git+https://github.com/poljar/rust-weechat#7defc24d659aa920d519f47e7cb25982926647a9"
 dependencies = [
  "libc",
  "proc-macro2",
@@ -2232,23 +2234,19 @@ dependencies = [
  "async-std",
  "async-trait",
  "clap",
- "libc",
  "matrix-sdk",
- "paste",
- "strum",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "url",
  "uuid",
  "weechat",
- "weechat-sys",
 ]
 
 [[package]]
 name = "weechat-sys"
 version = "0.1.0"
-source = "git+https://github.com/poljar/rust-weechat#647e9a93560e6febab50b1c9456b30a8d440c22b"
+source = "git+https://github.com/poljar/rust-weechat#7defc24d659aa920d519f47e7cb25982926647a9"
 dependencies = [
  "bindgen",
  "libc",

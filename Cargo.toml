@@ -10,7 +10,6 @@ name = "matrix"
 crate-type = ["cdylib"]
 
 [dependencies]
-libc = "0.2.71"
 url = "2.1.1"
 tokio = { version = "0.2.21", features = [ "rt-threaded", "sync" ] }
 tracing = "0.1.15"
@@ -18,12 +17,11 @@ tracing-subscriber = "0.2.6"
 async-std = { version = "1.6.2", features = [ "unstable" ] }
 clap = "2.33.1"
 async-trait = "0.1.36"
-paste = "0.1"
-strum = "0.18.0"
 uuid = { version = "0.8.1", features = ["v4"] }
 
-weechat = { git = "https://github.com/poljar/rust-weechat", features = ["async-executor"] }
-weechat-sys = { git = "https://github.com/poljar/rust-weechat" }
+[dependencies.weechat]
+git = "https://github.com/poljar/rust-weechat"
+features = ["async-executor", "config-macro"]
 
 [dependencies.matrix-sdk]
 git = "https://github.com/matrix-org/matrix-rust-sdk/"

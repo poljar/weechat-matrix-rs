@@ -270,7 +270,7 @@ impl Commands {
         weechat: &Weechat,
         servers: &Servers,
         config: &ConfigHandle,
-    ) -> Commands {
+    ) -> Result<Commands, ()> {
         let matrix_settings = CommandSettings::new("matrix")
             .description("Matrix chat protocol command.")
             .add_argument("server add <server-name> <hostname>[:<port>]")
@@ -301,6 +301,6 @@ Use /matrix [command] help to find out more.\n",
             },
         );
 
-        Commands { _matrix: matrix }
+        Ok(Commands { _matrix: matrix? })
     }
 }
