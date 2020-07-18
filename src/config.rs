@@ -17,7 +17,7 @@
 
 use crate::{MatrixServer, Servers};
 use weechat::config::{Conf, OptionChanged, SectionReadCallback};
-use weechat::{Weechat, config};
+use weechat::{config, Weechat};
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
