@@ -102,7 +102,7 @@ impl MatrixCommand {
         ));
     }
 
-    fn list_servers(&self) {
+    fn list_servers(&self, details: bool) {
         if self.servers.borrow().is_empty() {
             return;
         }
@@ -110,12 +110,8 @@ impl MatrixCommand {
         Weechat::print("\nAll Matrix servers:");
 
         // TODO print out some stats if the server is connected.
-        for server in self.servers.borrow().keys() {
-            Weechat::print(&format!(
-                "    {}{}",
-                Weechat::color("chat_server"),
-                server
-            ));
+        for server in self.servers.borrow().values() {
+            Weechat::print(&format!("    {}", server.get_info_str(details)));
         }
     }
 
@@ -123,8 +119,9 @@ impl MatrixCommand {
         match args.subcommand() {
             ("add", Some(subargs)) => self.add_server(subargs),
             ("delete", Some(subargs)) => self.delete_server(subargs),
-            ("list", _) => self.list_servers(),
-            _ => self.list_servers(),
+            ("list", _) => self.list_servers(false),
+            ("listfull", _) => self.list_servers(true),
+            _ => self.list_servers(false),
         }
     }
 
@@ -211,6 +208,10 @@ impl CommandCallback for MatrixCommand {
             .subcommand(
                 SubCommand::with_name("list")
                     .about("List the configured Matrix servers."),
+            )
+            .subcommand(
+                SubCommand::with_name("listfull")
+                    .about("List detailed information about the configured Matrix servers."),
             );
 
         let argparse = Argparse::new("matrix")
