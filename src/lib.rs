@@ -12,9 +12,7 @@ use std::rc::Rc;
 
 use weechat::{
     buffer::{Buffer, BufferHandle},
-    hooks::{
-        BarItemCallback, BarItemHandle, SignalCallback, SignalData, SignalHook,
-    },
+    hooks::{BarItem, BarItemCallback, SignalCallback, SignalData, SignalHook},
     weechat_plugin, ArgsWeechat, ReturnCode, Weechat, WeechatPlugin,
 };
 
@@ -74,7 +72,7 @@ struct Matrix {
     #[used]
     config: ConfigHandle,
     #[used]
-    status_bar: BarItemHandle,
+    status_bar: BarItem,
     #[used]
     typing_notice_signal: SignalHook,
     debug_buffer: RefCell<Option<BufferHandle>>,
@@ -143,8 +141,7 @@ impl WeechatPlugin for Matrix {
         let commands = Commands::hook_all(&servers, &config)?;
 
         // TODO move the bar creation into a separate file.
-        let status_bar =
-            Weechat::new_bar_item("matrix_modes", servers.clone())?;
+        let status_bar = BarItem::new("matrix_modes", servers.clone())?;
 
         tracing_subscriber::fmt()
             .with_writer(debug::Debug)
