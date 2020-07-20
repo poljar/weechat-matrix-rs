@@ -8,7 +8,7 @@ use crate::PLUGIN_NAME;
 use crate::{MatrixServer, Servers};
 use weechat::buffer::Buffer;
 use weechat::hooks::{Command, CommandCallback, CommandSettings};
-use weechat::{ArgsWeechat, Weechat};
+use weechat::{Args, Weechat};
 
 pub struct Commands {
     _matrix: Command,
@@ -181,7 +181,7 @@ impl CommandCallback for MatrixCommand {
         &mut self,
         _weechat: &Weechat,
         _buffer: &Buffer,
-        arguments: ArgsWeechat,
+        arguments: Args,
     ) {
         let server_command = SubCommand::with_name("server")
             .about("List, add or delete Matrix servers.")

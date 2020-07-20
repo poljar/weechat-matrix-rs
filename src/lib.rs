@@ -13,7 +13,7 @@ use std::rc::Rc;
 use weechat::{
     buffer::{Buffer, BufferHandle},
     hooks::{BarItem, BarItemCallback, SignalCallback, SignalData, SignalHook},
-    weechat_plugin, ArgsWeechat, ReturnCode, Weechat, WeechatPlugin,
+    weechat_plugin, Args, Plugin, ReturnCode, Weechat,
 };
 
 use crate::commands::Commands;
@@ -134,8 +134,8 @@ impl BarItemCallback for Servers {
     }
 }
 
-impl WeechatPlugin for Matrix {
-    fn init(_: &Weechat, _args: ArgsWeechat) -> Result<Self, ()> {
+impl Plugin for Matrix {
+    fn init(_: &Weechat, _args: Args) -> Result<Self, ()> {
         let servers = Servers::new();
         let config = ConfigHandle::new(&servers);
         let commands = Commands::hook_all(&servers, &config)?;
