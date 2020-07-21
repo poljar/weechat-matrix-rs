@@ -686,6 +686,43 @@ impl MatrixServer {
             };
         }
     }
+
+    pub fn get_info_str(&self, details: bool) -> String {
+        let mut s = String::from(&format!(
+            "{}{}{} [{}]",
+            Weechat::color("chat_server"),
+            self.server_name.as_ref().to_owned(),
+            Weechat::color("reset"),
+            if self.connected() {
+                "connected"
+            } else {
+                "not connected"
+            }
+        ));
+
+        if !details {
+            return s;
+        }
+
+        let settings = &self.inner.borrow().settings;
+        s.push_str(&format!(
+            "\n\
+                 {:indent$}homeserver: {}\n\
+                 {:indent$}proxy: {}\n\
+                 {:indent$}autoconnect: {}\n\
+                 {:indent$}username: {}\n",
+            "",
+            settings.homeserver.as_ref().map_or("", |url| url.as_str()),
+            "",
+            settings.proxy.as_ref().map_or("", |url| url.as_str()),
+            "",
+            settings.autoconnect,
+            "",
+            settings.username,
+            indent = 8
+        ));
+        s
+    }
 }
 
 impl Drop for MatrixServer {

@@ -1,7 +1,7 @@
 WEECHAT_HOME ?= $(HOME)/.weechat
 PREFIX ?= $(WEECHAT_HOME)
 
-.PHONY: install install-dir phony lint
+.PHONY: install install-dir lint
 
 target/debug/libmatrix.so: src/lib.rs src/server.rs src/room_buffer.rs src/commands.rs src/config.rs
 	cargo build
