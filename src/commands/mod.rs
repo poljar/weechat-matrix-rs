@@ -16,7 +16,7 @@ impl Commands {
         config: &ConfigHandle,
     ) -> Result<Commands, ()> {
         Ok(Commands {
-            _matrix: MatrixCommand::new(servers, config)?,
+            _matrix: MatrixCommand::create(servers, config)?,
         })
     }
 }

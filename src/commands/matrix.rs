@@ -17,7 +17,7 @@ pub struct MatrixCommand {
 }
 
 impl MatrixCommand {
-    pub fn new(
+    pub fn create(
         servers: &Servers,
         config: &ConfigHandle,
     ) -> Result<Command, ()> {
