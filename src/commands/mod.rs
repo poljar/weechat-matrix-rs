@@ -20,6 +20,38 @@ struct MatrixCommand {
 }
 
 impl MatrixCommand {
+    fn new(servers: &Servers, config: &ConfigHandle) -> Result<Command, ()> {
+        let matrix_settings = CommandSettings::new("matrix")
+            .description("Matrix chat protocol command.")
+            .add_argument("server add <server-name> <hostname>[:<port>]")
+            .add_argument("server delete|list|listfull <server-name>")
+            .add_argument("connect <server-name>")
+            .add_argument("disconnect <server-name>")
+            .add_argument("reconnect <server-name>")
+            .add_argument("help <matrix-command> [<matrix-subcommand>]")
+            .arguments_description(
+                "      server: List, add, or remove Matrix servers.
+     connect: Connect to Matrix servers.
+  disconnect: Disconnect from one or all Matrix servers.
+   reconnect: Reconnect to server(s).
+        help: Show detailed command help.\n
+Use /matrix [command] help to find out more.\n",
+            )
+            .add_completion("server |add|delete|list|listfull")
+            .add_completion("connect")
+            .add_completion("disconnect")
+            .add_completion("reconnect")
+            .add_completion("help server|connect|disconnect|reconnect");
+
+        Command::new(
+            matrix_settings,
+            MatrixCommand {
+                servers: servers.clone(),
+                config: config.clone(),
+            },
+        )
+    }
+
     fn add_server(&self, args: &ArgMatches) {
         let server_name = args
             .value_of("name")
@@ -271,36 +303,8 @@ impl Commands {
         servers: &Servers,
         config: &ConfigHandle,
     ) -> Result<Commands, ()> {
-        let matrix_settings = CommandSettings::new("matrix")
-            .description("Matrix chat protocol command.")
-            .add_argument("server add <server-name> <hostname>[:<port>]")
-            .add_argument("server delete|list|listfull <server-name>")
-            .add_argument("connect <server-name>")
-            .add_argument("disconnect <server-name>")
-            .add_argument("reconnect <server-name>")
-            .add_argument("help <matrix-command> [<matrix-subcommand>]")
-            .arguments_description(
-                "     server: List, add, or remove Matrix servers.
-    connect: Connect to Matrix servers.
- disconnect: Disconnect from one or all Matrix servers.
-  reconnect: Reconnect to server(s).
-       help: Show detailed command help.\n
-Use /matrix [command] help to find out more.\n",
-            )
-            .add_completion("server |add|delete|list|listfull")
-            .add_completion("connect")
-            .add_completion("disconnect")
-            .add_completion("reconnect")
-            .add_completion("help server|connect|disconnect|reconnect");
-
-        let matrix = Command::new(
-            matrix_settings,
-            MatrixCommand {
-                servers: servers.clone(),
-                config: config.clone(),
-            },
-        )?;
-
-        Ok(Commands { _matrix: matrix })
+        Ok(Commands {
+            _matrix: MatrixCommand::new(servers, config)?,
+        })
     }
 }
