@@ -1,17 +1,20 @@
-use crate::Matrix;
 use std::cell::RefMut;
 use std::io;
+
 use weechat::{
-    buffer::{BufferHandle, BufferSettings},
+    buffer::{BufferBuilder, BufferHandle},
     Weechat,
 };
+
+use crate::Matrix;
 
 #[derive(Clone)]
 pub struct Debug();
 
 impl Debug {
     fn create_debug_buffer(debug_buffer: &mut RefMut<Option<BufferHandle>>) {
-        let buffer = Weechat::buffer_new(BufferSettings::new("Matrix debug"))
+        let buffer = BufferBuilder::new("Matrix debug")
+            .build()
             .expect("Can't create Matrix debug buffer");
         **debug_buffer = Some(buffer);
     }

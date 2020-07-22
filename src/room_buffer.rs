@@ -41,7 +41,7 @@ use std::rc::Rc;
 use std::sync::Mutex;
 use std::time::Instant;
 use weechat::buffer::{
-    Buffer, BufferHandle, BufferInputCallbackAsync, BufferSettingsAsync,
+    Buffer, BufferBuilderAsync, BufferHandle, BufferInputCallbackAsync,
     NickSettings,
 };
 use weechat::Weechat;
@@ -106,15 +106,14 @@ impl RoomBuffer {
             printed_before_ack_queue: Rc::new(RefCell::new(Vec::new())),
         };
 
-        let buffer_settings = BufferSettingsAsync::new(&room_id.to_string())
+        let buffer_handle = BufferBuilderAsync::new(&room_id.to_string())
             .input_callback(room.clone())
             .close_callback(|_weechat: &Weechat, _buffer: &Buffer| {
                 // TODO remove the roombuffer from the server here.
                 // TODO leave the room if the plugin isn't unloading.
                 Ok(())
-            });
-
-        let buffer_handle = Weechat::buffer_new_with_async(buffer_settings)
+            })
+            .build()
             .expect("Can't create new room buffer");
 
         let buffer = buffer_handle

@@ -81,7 +81,7 @@ use matrix_sdk::{
     Client, ClientConfig, Result as MatrixResult, Room, SyncSettings,
 };
 
-use weechat::buffer::{BufferHandle, BufferSettings};
+use weechat::buffer::{BufferBuilder, BufferHandle};
 use weechat::config::{
     BooleanOptionSettings, ConfigSection, StringOptionSettings,
 };
@@ -800,11 +800,10 @@ impl InnerServer {
     }
 
     fn create_server_buffer(&self) -> BufferHandle {
-        let buffer_handle = Weechat::buffer_new(BufferSettings::new(&format!(
-            "server.{}",
-            self.server_name
-        )))
-        .expect("Can't create Matrix debug buffer");
+        let buffer_handle =
+            BufferBuilder::new(&format!("server.{}", self.server_name))
+                .build()
+                .expect("Can't create Matrix debug buffer");
 
         let buffer = buffer_handle
             .upgrade()
