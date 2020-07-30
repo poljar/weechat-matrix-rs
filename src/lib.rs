@@ -3,6 +3,7 @@
 mod commands;
 mod config;
 mod debug;
+mod render;
 mod room_buffer;
 mod server;
 
