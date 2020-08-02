@@ -614,29 +614,42 @@ impl RoomBuffer {
                     }
                 }
 
-                ProfileChanged { .. } => {
+                ProfileChanged {
+                    displayname_changed,
+                    avatar_url_changed,
+                } => {
                     sender = self.get_member(&sender_id).cloned();
                     target = self.get_member(&target_id).cloned();
 
-                    // FIXME: might be an avatar change
-                    match self.rename_member(&target_id, new_nick.clone()) {
-                        Ok(old_nick) => debug!(
-                            "{}: Profile changed for {}, renaming {} -> {}",
-                            self.calculate_buffer_name(),
-                            &target_id,
-                            old_nick,
-                            &new_nick
-                        ),
+                    if displayname_changed {
+                        match self.rename_member(&target_id, new_nick.clone()) {
+                            Ok(old_nick) => debug!(
+                                "{}: Profile changed for {}, renaming {} -> {}",
+                                self.calculate_buffer_name(),
+                                &target_id,
+                                old_nick,
+                                &new_nick
+                            ),
 
-                        Err(RoomError::NonExistentMember(user_id)) => error!(
-                            "{}: Profile changed for {} but they are not a member",
-                            self.calculate_buffer_name(),
-                            user_id
-                        ),
+                            Err(RoomError::NonExistentMember(user_id)) => error!(
+                                "{}: Profile changed for {} but they are not a member",
+                                self.calculate_buffer_name(),
+                                user_id
+                            ),
+                        }
+
+                        self.get_member_mut(&target_id).unwrap().display_name =
+                            event.content.displayname.clone();
                     }
 
-                    self.get_member_mut(&target_id).unwrap().display_name =
-                        event.content.displayname.clone();
+                    if avatar_url_changed {
+                        debug!(
+                            "{}: Avatar changed for {}, new avatar {:#?}",
+                            self.calculate_buffer_name(),
+                            &target_id,
+                            event.content.avatar_url
+                        );
+                    }
                 }
                 _ => {
                     sender = self.get_member(&sender_id).cloned();
