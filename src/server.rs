@@ -75,8 +75,8 @@ use matrix_sdk::{
         typing::create_typing_event::Response as TypingResponse,
     },
     events::{
-        AnySyncStateEvent, AnySyncRoomEvent,
         room::message::{MessageEventContent, TextMessageEventContent},
+        AnySyncRoomEvent, AnySyncStateEvent,
     },
     identifiers::{RoomId, UserId},
     Client, ClientConfig, Result as MatrixResult, Room, SyncSettings,

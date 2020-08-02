@@ -170,7 +170,8 @@ pub fn render_membership(
 
         // This means an unsupported membership change happened so we just print a generic
         // message to indicate this.
-        _ => format!("{prefix} {sender} {op}",
+        _ => format!(
+            "{prefix} {sender} {op}",
             prefix = Weechat::prefix(prefix),
             sender = sender_name,
             op = operation,

@@ -22,16 +22,21 @@
 //! we're sending ourselves before we receive them in a sync response, or if we
 //! decrypt a previously undecryptable event.
 
-use matrix_sdk::events::{AnySyncRoomEvent, AnySyncStateEvent, AnySyncMessageEvent, AnyPossiblyRedactedSyncMessageEvent, SyncStateEvent};
-use matrix_sdk::events::room::name::NameEventContent;
-use matrix_sdk::events::room::member::{MemberEventContent, MembershipState,
+use matrix_sdk::events::room::member::{
+    MemberEventContent,
     MembershipChange::{
         Banned, InvitationRejected, InvitationRevoked, Invited, Joined, Kicked,
         KickedAndBanned, Left, ProfileChanged,
-    }
+    },
+    MembershipState,
+};
+use matrix_sdk::events::room::name::NameEventContent;
+use matrix_sdk::events::{
+    AnyPossiblyRedactedSyncMessageEvent, AnySyncMessageEvent, AnySyncRoomEvent,
+    AnySyncStateEvent, SyncStateEvent,
 };
 use matrix_sdk::identifiers::{RoomId, UserId};
-use matrix_sdk::{Room, PossiblyRedactedExt};
+use matrix_sdk::{PossiblyRedactedExt, Room};
 use url::Url;
 
 use async_trait::async_trait;
@@ -175,7 +180,11 @@ impl RoomBuffer {
         let mut weechat_members = HashMap::new();
 
         for member in matrix_members {
-            let display_name = room.get_member(&member.user_id).unwrap().display_name.clone();
+            let display_name = room
+                .get_member(&member.user_id)
+                .unwrap()
+                .display_name
+                .clone();
 
             weechat_members.insert(
                 member.user_id.clone(),
@@ -299,7 +308,9 @@ impl RoomBuffer {
 
                 buffer.remove_nick(&member.nick);
                 let nick_settings = NickSettings::new(&new_nick);
-                buffer.add_nick(nick_settings).expect("Can't add nick to nicklist");
+                buffer
+                    .add_nick(nick_settings)
+                    .expect("Can't add nick to nicklist");
             }
 
             let old_nick;
@@ -345,7 +356,10 @@ impl RoomBuffer {
     /// If no member with that ID is in the room, the string representation of the ID will be
     /// returned.
     fn calculate_user_name(&self, user_id: &UserId) -> String {
-        self.room().get_member(user_id).expect(&format!("No such member {}", user_id)).disambiguated_name()
+        self.room()
+            .get_member(user_id)
+            .expect(&format!("No such member {}", user_id))
+            .disambiguated_name()
     }
 
     /// Send out a typing notice.
@@ -495,7 +509,8 @@ impl RoomBuffer {
         }
 
         // Handle the event in the SDK room model
-        let (_, disambiguations) = self.room_mut().handle_membership(event, state_event);
+        let (_, disambiguations) =
+            self.room_mut().handle_membership(event, state_event);
 
         let new_nick = self.calculate_user_name(&target_id);
 
@@ -511,7 +526,12 @@ impl RoomBuffer {
             // For leaves and bans we just need to remove the member.
             match event.content.membership {
                 Invite | Join => {
-                    let display_name = self.room().get_member(&target_id).unwrap().display_name.clone();
+                    let display_name = self
+                        .room()
+                        .get_member(&target_id)
+                        .unwrap()
+                        .display_name
+                        .clone();
 
                     self.add_member(WeechatRoomMember {
                         user_id: target_id.clone(),
@@ -547,7 +567,12 @@ impl RoomBuffer {
                         new_nick
                     );
 
-                    let display_name = self.room().get_member(&target_id).unwrap().display_name.clone();
+                    let display_name = self
+                        .room()
+                        .get_member(&target_id)
+                        .unwrap()
+                        .display_name
+                        .clone();
 
                     let member = WeechatRoomMember {
                         user_id: target_id.clone(),
@@ -610,7 +635,8 @@ impl RoomBuffer {
                         ),
                     }
 
-                    self.get_member_mut(&target_id).unwrap().display_name = event.content.displayname.clone();
+                    self.get_member_mut(&target_id).unwrap().display_name =
+                        event.content.displayname.clone();
                 }
                 _ => {
                     sender = self.get_member(&sender_id).cloned();
@@ -661,7 +687,10 @@ impl RoomBuffer {
         }
     }
 
-    pub fn handle_room_message(&self, event: &AnyPossiblyRedactedSyncMessageEvent) {
+    pub fn handle_room_message(
+        &self,
+        event: &AnyPossiblyRedactedSyncMessageEvent,
+    ) {
         let timestamp: u64 = event
             .origin_server_ts()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
@@ -674,28 +703,34 @@ impl RoomBuffer {
         buffer.print_date_tags(timestamp as i64, &[], &message);
     }
 
-    pub fn handle_room_name(&mut self, event: &SyncStateEvent<NameEventContent>) {
+    pub fn handle_room_name(
+        &mut self,
+        event: &SyncStateEvent<NameEventContent>,
+    ) {
         self.room_mut().handle_room_name(event);
         self.update_buffer_name();
     }
 
     pub fn handle_room_event(&mut self, event: AnySyncRoomEvent) {
         match &event {
-            AnySyncRoomEvent::Message(message) => {
-                match message {
-                    AnySyncMessageEvent::RoomMessage(_) |
-                    AnySyncMessageEvent::RoomEncrypted(_) => self.handle_room_message(&AnyPossiblyRedactedSyncMessageEvent::Regular(message.to_owned())),
-                    _ => (),
-                }
-            }
+            AnySyncRoomEvent::Message(message) => match message {
+                AnySyncMessageEvent::RoomMessage(_)
+                | AnySyncMessageEvent::RoomEncrypted(_) => self
+                    .handle_room_message(
+                        &AnyPossiblyRedactedSyncMessageEvent::Regular(
+                            message.to_owned(),
+                        ),
+                    ),
+                _ => (),
+            },
 
-            AnySyncRoomEvent::State(event) => {
-                match &event {
-                    AnySyncStateEvent::RoomMember(e) => self.handle_membership_event(e, false),
-                    AnySyncStateEvent::RoomName(n) => self.handle_room_name(n),
-                    _ => (),
+            AnySyncRoomEvent::State(event) => match &event {
+                AnySyncStateEvent::RoomMember(e) => {
+                    self.handle_membership_event(e, false)
                 }
-            }
+                AnySyncStateEvent::RoomName(n) => self.handle_room_name(n),
+                _ => (),
+            },
 
             event => {
                 let mut room = self.room_mut();
@@ -706,7 +741,9 @@ impl RoomBuffer {
 
     pub fn handle_state_event(&mut self, event: AnySyncStateEvent) {
         match &event {
-            AnySyncStateEvent::RoomMember(e) => self.handle_membership_event(e, true),
+            AnySyncStateEvent::RoomMember(e) => {
+                self.handle_membership_event(e, true)
+            }
             AnySyncStateEvent::RoomName(n) => self.handle_room_name(n),
             _ => {
                 let mut room = self.room_mut();
