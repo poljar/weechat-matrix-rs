@@ -358,7 +358,7 @@ impl RoomBuffer {
     fn calculate_user_name(&self, user_id: &UserId) -> String {
         self.room()
             .get_member(user_id)
-            .expect(&format!("No such member {}", user_id))
+            .unwrap_or_else(|| panic!("No such member {}", user_id))
             .disambiguated_name()
     }
 
@@ -534,8 +534,8 @@ impl RoomBuffer {
                         .clone();
 
                     self.add_member(WeechatRoomMember {
-                        user_id: target_id.clone(),
-                        nick: new_nick.clone(),
+                        user_id: target_id,
+                        nick: new_nick,
                         display_name,
                         // TODO: proper prefix and colour
                         prefix: "".to_string(),
@@ -576,7 +576,7 @@ impl RoomBuffer {
 
                     let member = WeechatRoomMember {
                         user_id: target_id.clone(),
-                        nick: new_nick.clone(),
+                        nick: new_nick,
                         display_name,
                         // TODO: proper prefix and colour
                         prefix: "".to_string(),

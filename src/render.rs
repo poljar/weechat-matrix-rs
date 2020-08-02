@@ -152,7 +152,7 @@ pub fn render_membership(
                             ),
                     }
                 (false, false) =>
-                    format!("Cannot happen: got profile changed but nothing really changed")
+                    "Cannot happen: got profile changed but nothing really changed".to_string()
             }
         }
         None | Error | Joined | Left | InvitationRejected | NotImplemented => {
@@ -201,7 +201,7 @@ pub fn render_message(
     // that it doesn't change with display name changes.
     let colorname_user =
         Weechat::info_get("nick_color_name", message.sender().as_ref())
-            .unwrap_or(String::from("default"));
+            .unwrap_or_else(|| String::from("default"));
     let color_user = Weechat::color(&colorname_user);
 
     let color_reset = Weechat::color("reset");
