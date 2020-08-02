@@ -75,7 +75,7 @@ use matrix_sdk::{
         typing::create_typing_event::Response as TypingResponse,
     },
     events::{
-        collections::all::{RoomEvent, StateEvent},
+        AnySyncStateEvent, AnySyncRoomEvent,
         room::message::{MessageEventContent, TextMessageEventContent},
     },
     identifiers::{RoomId, UserId},
@@ -98,8 +98,8 @@ pub const TYPING_NOTICE_TIMEOUT: Duration = Duration::from_secs(4);
 
 pub enum ClientMessage {
     LoginMessage(LoginResponse),
-    SyncState(RoomId, StateEvent),
-    SyncEvent(RoomId, RoomEvent),
+    SyncState(RoomId, AnySyncStateEvent),
+    SyncEvent(RoomId, AnySyncRoomEvent),
     RestoredRoom(Room),
 }
 
@@ -150,8 +150,7 @@ impl Connection {
                 let content =
                     MessageEventContent::Text(TextMessageEventContent {
                         body: message,
-                        format: None,
-                        formatted_body: None,
+                        formatted: None,
                         relates_to: None,
                     });
 
@@ -414,7 +413,7 @@ impl MatrixServer {
     ) -> std::io::Result<()> {
         server_path.push(user_name);
         server_path.set_extension("device_id");
-        std::fs::write(&server_path, &response.device_id)
+        std::fs::write(&server_path, &response.device_id.to_string())
     }
 
     fn load_device_id(
@@ -866,7 +865,7 @@ impl InnerServer {
     pub(crate) fn receive_joined_state_event(
         &mut self,
         room_id: &RoomId,
-        event: StateEvent,
+        event: AnySyncStateEvent,
     ) {
         let room = self.get_or_create_room(room_id);
         room.handle_state_event(event)
@@ -875,7 +874,7 @@ impl InnerServer {
     pub(crate) fn receive_joined_timeline_event(
         &mut self,
         room_id: &RoomId,
-        event: RoomEvent,
+        event: AnySyncRoomEvent,
     ) {
         let room = self.get_or_create_room(room_id);
         room.handle_room_event(event)

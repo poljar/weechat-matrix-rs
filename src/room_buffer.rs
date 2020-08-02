@@ -22,26 +22,22 @@
 //! we're sending ourselves before we receive them in a sync response, or if we
 //! decrypt a previously undecryptable event.
 
-use matrix_sdk::events::collections::all::{RoomEvent, StateEvent};
-use matrix_sdk::events::room::encrypted::EncryptedEvent;
-use matrix_sdk::events::room::member::{MemberEvent, MembershipState,
+use matrix_sdk::events::{AnySyncRoomEvent, AnySyncStateEvent, AnySyncMessageEvent, AnyPossiblyRedactedSyncMessageEvent, SyncStateEvent};
+use matrix_sdk::events::room::name::NameEventContent;
+use matrix_sdk::events::room::member::{MemberEventContent, MembershipState,
     MembershipChange::{
         Banned, InvitationRejected, InvitationRevoked, Invited, Joined, Kicked,
         KickedAndBanned, Left, ProfileChanged,
     }
 };
-use matrix_sdk::events::room::message::{
-    MessageEvent, MessageEventContent, TextMessageEventContent,
-};
-use matrix_sdk::events::room::name::NameEvent;
 use matrix_sdk::identifiers::{RoomId, UserId};
-use matrix_sdk::Room;
+use matrix_sdk::{Room, PossiblyRedactedExt};
 use url::Url;
 
 use async_trait::async_trait;
 use tracing::{debug, error, trace};
 
-use crate::render::{render_encrypted, render_membership, render_message};
+use crate::render::{render_membership, render_message};
 use crate::server::{Connection, TYPING_NOTICE_TIMEOUT};
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
@@ -185,7 +181,7 @@ impl RoomBuffer {
                 member.user_id.clone(),
                 WeechatRoomMember {
                     user_id: member.user_id.clone(),
-                    nick: room.member_display_name(&member.user_id).to_string(),
+                    nick: member.disambiguated_name(),
                     display_name,
                     // TODO: proper prefix and colour
                     prefix: "".to_string(),
@@ -218,7 +214,7 @@ impl RoomBuffer {
 
         if buffer.num_lines() == 0 {
             for message in room.messages.iter() {
-                self.handle_room_message(message)
+                self.handle_room_message(&message.0)
             }
         }
     }
@@ -262,7 +258,7 @@ impl RoomBuffer {
         &mut self,
         user_id: &UserId,
     ) -> Result<WeechatRoomMember, RoomError> {
-        let mut buffer = self.weechat_buffer();
+        let buffer = self.weechat_buffer();
 
         match self.get_member(user_id) {
             Some(member) => {
@@ -299,7 +295,7 @@ impl RoomBuffer {
                     &new_nick
                 );
 
-                let mut buffer = self.weechat_buffer();
+                let buffer = self.weechat_buffer();
 
                 buffer.remove_nick(&member.nick);
                 let nick_settings = NickSettings::new(&new_nick);
@@ -349,7 +345,7 @@ impl RoomBuffer {
     /// If no member with that ID is in the room, the string representation of the ID will be
     /// returned.
     fn calculate_user_name(&self, user_id: &UserId) -> String {
-        self.room().member_display_name(user_id).into_owned()
+        self.room().get_member(user_id).expect(&format!("No such member {}", user_id)).disambiguated_name()
     }
 
     /// Send out a typing notice.
@@ -483,7 +479,7 @@ impl RoomBuffer {
 
     pub fn handle_membership_event(
         &mut self,
-        event: &MemberEvent,
+        event: &SyncStateEvent<MemberEventContent>,
         state_event: bool,
     ) {
         let sender_id = event.sender.clone();
@@ -499,7 +495,7 @@ impl RoomBuffer {
         }
 
         // Handle the event in the SDK room model
-        let (_, disambiguations) = self.room_mut().handle_membership(&event, state_event);
+        let (_, disambiguations) = self.room_mut().handle_membership(event, state_event);
 
         let new_nick = self.calculate_user_name(&target_id);
 
@@ -593,7 +589,7 @@ impl RoomBuffer {
                     }
                 }
 
-                ProfileChanged => {
+                ProfileChanged { .. } => {
                     sender = self.get_member(&sender_id).cloned();
                     target = self.get_member(&target_id).cloned();
 
@@ -665,41 +661,42 @@ impl RoomBuffer {
         }
     }
 
-    pub fn handle_room_message(&self, event: &MessageEvent) {
-        let sender = &event.sender;
+    pub fn handle_room_message(&self, event: &AnyPossiblyRedactedSyncMessageEvent) {
         let timestamp: u64 = event
-            .origin_server_ts
+            .origin_server_ts()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
         let message =
-            render_message(event, self.calculate_user_name(&event.sender));
-
-    pub fn handle_encrypted_message(&mut self, event: &EncryptedEvent) {
-        let timestamp: u64 = event
-            .origin_server_ts
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let message =
-            render_encrypted(event, self.calculate_user_name(&event.sender));
+            render_message(event, self.calculate_user_name(event.sender()));
         let buffer = self.weechat_buffer();
         buffer.print_date_tags(timestamp as i64, &[], &message);
     }
 
-    pub fn handle_room_name(&mut self, event: &NameEvent) {
+    pub fn handle_room_name(&mut self, event: &SyncStateEvent<NameEventContent>) {
         self.room_mut().handle_room_name(event);
         self.update_buffer_name();
     }
 
-    pub fn handle_room_event(&mut self, event: RoomEvent) {
+    pub fn handle_room_event(&mut self, event: AnySyncRoomEvent) {
         match &event {
-            RoomEvent::RoomMember(e) => self.handle_membership_event(e, false),
-            RoomEvent::RoomMessage(m) => self.handle_room_message(m),
-            RoomEvent::RoomEncrypted(m) => self.handle_encrypted_message(m),
-            RoomEvent::RoomName(n) => self.handle_room_name(n),
+            AnySyncRoomEvent::Message(message) => {
+                match message {
+                    AnySyncMessageEvent::RoomMessage(_) |
+                    AnySyncMessageEvent::RoomEncrypted(_) => self.handle_room_message(&AnyPossiblyRedactedSyncMessageEvent::Regular(message.to_owned())),
+                    _ => (),
+                }
+            }
+
+            AnySyncRoomEvent::State(event) => {
+                match &event {
+                    AnySyncStateEvent::RoomMember(e) => self.handle_membership_event(e, false),
+                    AnySyncStateEvent::RoomName(n) => self.handle_room_name(n),
+                    _ => (),
+                }
+            }
+
             event => {
                 let mut room = self.room_mut();
                 room.receive_timeline_event(event);
@@ -707,10 +704,10 @@ impl RoomBuffer {
         }
     }
 
-    pub fn handle_state_event(&mut self, event: StateEvent) {
+    pub fn handle_state_event(&mut self, event: AnySyncStateEvent) {
         match &event {
-            StateEvent::RoomMember(e) => self.handle_membership_event(e, true),
-            StateEvent::RoomName(n) => self.handle_room_name(n),
+            AnySyncStateEvent::RoomMember(e) => self.handle_membership_event(e, true),
+            AnySyncStateEvent::RoomName(n) => self.handle_room_name(n),
             _ => {
                 let mut room = self.room_mut();
                 room.receive_state_event(&event);

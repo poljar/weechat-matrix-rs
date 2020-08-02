@@ -1,33 +1,27 @@
 use crate::room_buffer::WeechatRoomMember;
-use matrix_sdk::events::room::{
-    encrypted::EncryptedEvent,
-    member::{MemberEvent, MembershipChange},
-    message::{
-        AudioMessageEventContent, EmoteMessageEventContent,
-        FileMessageEventContent, ImageMessageEventContent, MessageEvent,
-        MessageEventContent, NoticeMessageEventContent,
-        TextMessageEventContent, VideoMessageEventContent,
+use matrix_sdk::{
+    events::{
+        room::{
+            member::{MemberEventContent, MembershipChange},
+            message::{
+                AudioMessageEventContent, EmoteMessageEventContent,
+                FileMessageEventContent, ImageMessageEventContent,
+                MessageEventContent, NoticeMessageEventContent,
+                TextMessageEventContent, VideoMessageEventContent,
+            },
+        },
+        {
+            AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
+            SyncStateEvent,
+        },
     },
+    PossiblyRedactedExt,
 };
 use weechat::Weechat;
 
-/// Rendering function for encrypted events.
-// FIXME: Pass room member
-pub fn render_encrypted(_: &EncryptedEvent, displayname: String) -> String {
-    let color_user = Weechat::color("green"); // TODO: get per-user color
-    let color_reset = Weechat::color("reset");
-    format!(
-        "{color_user}{}{color_reset}\t{}",
-        displayname,
-        "Unable to decrypt message",
-        color_user = color_user,
-        color_reset = color_reset
-    )
-}
-
 /// Rendering function for membership events (joins, leaves, bans, profile changes, etc).
 pub fn render_membership(
-    member: &MemberEvent,
+    member: &SyncStateEvent<MemberEventContent>,
     sender: &WeechatRoomMember,
     target: &WeechatRoomMember,
 ) -> String {
@@ -46,8 +40,9 @@ pub fn render_membership(
         KickedAndBanned => "was kicked and banned by",
         InvitationRejected => "rejected the invitation",
         InvitationRevoked => "had the invitation revoked by",
-        ProfileChanged => "_",
+        ProfileChanged { .. } => "_",
         NotImplemented => "performed an unimplemented operation",
+        _ => "caused an unhandled membership change",
     };
 
     fn formatted_name(member: &WeechatRoomMember) -> String {
@@ -68,7 +63,7 @@ pub fn render_membership(
 
     let (prefix, color_action) = match change_op {
         Joined => ("join", "green"),
-        Banned | ProfileChanged | Invited => ("network", "magenta"),
+        Banned | ProfileChanged { .. } | Invited => ("network", "magenta"),
         _ => ("quit", "red"),
     };
 
@@ -97,14 +92,16 @@ pub fn render_membership(
     );
 
     match change_op {
-        ProfileChanged => {
-            let old_display_name = &target.display_name;
+        ProfileChanged {
+            displayname_changed,
+            avatar_url_changed,
+        } => {
             let new_display_name = &member.content.displayname;
 
-            let old_avatar = member.prev_content.as_ref().and_then(|prev| prev.avatar_url.as_ref());
-            let new_avatar = member.content.avatar_url.as_ref();
+            // TODO: Should we display the new avatar URL?
+            // let new_avatar = member.content.avatar_url.as_ref();
 
-            match (old_display_name != new_display_name, old_avatar != new_avatar) {
+            match (displayname_changed, avatar_url_changed) {
                 (false, true) =>
                     format!(
                         "{prefix} {target} {color_action}changed their avatar{color_reset}",
@@ -153,14 +150,15 @@ pub fn render_membership(
                 (false, false) =>
                     format!("Cannot happen: got profile changed but nothing really changed")
             }
-
         }
-        None | Error | Joined | Left | InvitationRejected | NotImplemented => format!(
-            "{prefix} {target} {op}",
-            prefix = Weechat::prefix(prefix),
-            target = target_name,
-            op = operation
-        ),
+        None | Error | Joined | Left | InvitationRejected | NotImplemented => {
+            format!(
+                "{prefix} {target} {op}",
+                prefix = Weechat::prefix(prefix),
+                target = target_name,
+                op = operation
+            )
+        }
         Banned | Unbanned | Kicked | Invited | InvitationRevoked
         | KickedAndBanned => format!(
             "{prefix} {target} {op} {sender}",
@@ -169,12 +167,24 @@ pub fn render_membership(
             op = operation,
             sender = sender_name
         ),
+
+        // This means an unsupported membership change happened so we just print a generic
+        // message to indicate this.
+        _ => format!("{prefix} {sender} {op}",
+            prefix = Weechat::prefix(prefix),
+            sender = sender_name,
+            op = operation,
+        ),
     }
 }
 
 /// Rendering function for room messages.
 // FIXME: Pass room member
-pub fn render_message(message: &MessageEvent, displayname: String) -> String {
+pub fn render_message(
+    message: &AnyPossiblyRedactedSyncMessageEvent,
+    displayname: String,
+) -> String {
+    use AnyPossiblyRedactedSyncMessageEvent::*;
     use MessageEventContent::*;
 
     // TODO: Need to render power level indicators as well.
@@ -182,87 +192,119 @@ pub fn render_message(message: &MessageEvent, displayname: String) -> String {
     // In case it's not clear, self.sender is the MXID. We're basing the nick color on it so
     // that it doesn't change with display name changes.
     let colorname_user =
-        Weechat::info_get("nick_color_name", message.sender.as_ref())
+        Weechat::info_get("nick_color_name", message.sender().as_ref())
             .unwrap_or(String::from("default"));
     let color_user = Weechat::color(&colorname_user);
 
     let color_reset = Weechat::color("reset");
 
-    match &message.content {
-        // TODO: formatting for inline markdown and so on
-        Text(t) => format!(
-            "{color_user}{}{color_reset}\t{}",
-            displayname,
-            t.resolve_body(),
-            color_user = color_user,
-            color_reset = color_reset
-        ),
-        Emote(e) => format!(
-            "{prefix}\t{color_user}{}{color_reset} {}",
-            displayname,
-            e.resolve_body(),
-            prefix = Weechat::prefix("action"),
-            color_user = color_user,
-            color_reset = color_reset
-        ),
-        Audio(a) => format!(
-            "{color_user}{}{color_reset}\t{}: {}",
-            displayname,
-            a.body,
-            a.resolve_url(),
-            color_user = color_user,
-            color_reset = color_reset
-        ),
-        File(f) => format!(
-            "{color_user}{}{color_reset}\t{}: {}",
-            displayname,
-            f.body,
-            f.resolve_url(),
-            color_user = color_user,
-            color_reset = color_reset
-        ),
-        Image(i) => format!(
-            "{color_user}{}{color_reset}\t{}: {}",
-            displayname,
-            i.body,
-            i.resolve_url(),
-            color_user = color_user,
-            color_reset = color_reset
-        ),
-        Location(l) => format!(
-            "{color_user}{}{color_reset}\t{}: {}",
-            displayname,
-            l.body,
-            l.geo_uri,
-            color_user = color_user,
-            color_reset = color_reset
-        ),
-        Notice(n) => format!(
-            "{prefix}{color_notice}Notice{color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
-            displayname,
-            n.resolve_body(),
-            prefix = Weechat::prefix("network"),
-            color_notice = Weechat::color("irc.color.notice"),
-            color_delim = Weechat::color("chat_delimiters"),
-            color_reset = color_reset
-        ),
-        Video(v) => format!(
-            "{color_user}{}{color_reset}\t{}: {}",
-            displayname,
-            v.body,
-            v.resolve_url(),
-            color_user = color_user,
-            color_reset = color_reset
-        ),
-        ServerNotice(n) => format!(
-            "{prefix}{color_notice}Server notice{color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
-            displayname,
-            n.body,
-            prefix = Weechat::prefix("network"),
-            color_notice = Weechat::color("irc.color.notice"),
-            color_delim = Weechat::color("chat_delimiters"),
-            color_reset = color_reset
-        ),
+    match message {
+        Regular(message) => {
+            match message.content() {
+                AnyMessageEventContent::RoomEncrypted(_) => format!(
+                    "{color_user}{}{color_reset}\t{}",
+                    displayname,
+                    "Unable to decrypt message",
+                    color_user = color_user,
+                    color_reset = color_reset
+                ),
+
+                AnyMessageEventContent::RoomMessage(content) => {
+                    match content {
+                        // TODO: formatting for inline markdown and so on
+                        Text(t) => format!(
+                            "{color_user}{}{color_reset}\t{}",
+                            displayname,
+                            t.resolve_body(),
+                            color_user = color_user,
+                            color_reset = color_reset
+                        ),
+                        Emote(e) => format!(
+                            "{prefix}\t{color_user}{}{color_reset} {}",
+                            displayname,
+                            e.resolve_body(),
+                            prefix = Weechat::prefix("action"),
+                            color_user = color_user,
+                            color_reset = color_reset
+                        ),
+                        Audio(a) => format!(
+                            "{color_user}{}{color_reset}\t{}: {}",
+                            displayname,
+                            a.body,
+                            a.resolve_url(),
+                            color_user = color_user,
+                            color_reset = color_reset
+                        ),
+                        File(f) => format!(
+                            "{color_user}{}{color_reset}\t{}: {}",
+                            displayname,
+                            f.body,
+                            f.resolve_url(),
+                            color_user = color_user,
+                            color_reset = color_reset
+                        ),
+                        Image(i) => format!(
+                            "{color_user}{}{color_reset}\t{}: {}",
+                            displayname,
+                            i.body,
+                            i.resolve_url(),
+                            color_user = color_user,
+                            color_reset = color_reset
+                        ),
+                        Location(l) => format!(
+                            "{color_user}{}{color_reset}\t{}: {}",
+                            displayname,
+                            l.body,
+                            l.geo_uri,
+                            color_user = color_user,
+                            color_reset = color_reset
+                        ),
+                        Notice(n) => format!(
+                            "{prefix}{color_notice}Notice{color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
+                            displayname,
+                            n.resolve_body(),
+                            prefix = Weechat::prefix("network"),
+                            color_notice = Weechat::color("irc.color.notice"),
+                            color_delim = Weechat::color("chat_delimiters"),
+                            color_reset = color_reset
+                        ),
+                        Video(v) => format!(
+                            "{color_user}{}{color_reset}\t{}: {}",
+                            displayname,
+                            v.body,
+                            v.resolve_url(),
+                            color_user = color_user,
+                            color_reset = color_reset
+                        ),
+                        ServerNotice(n) => format!(
+                            "{prefix}{color_notice}Server notice{color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
+                            displayname,
+                            n.body,
+                            prefix = Weechat::prefix("network"),
+                            color_notice = Weechat::color("irc.color.notice"),
+                            color_delim = Weechat::color("chat_delimiters"),
+                            color_reset = color_reset
+                        ),
+                        e => format!(
+                            "{color_user}{}{color_reset}\tUnknown message type: {:#?}",
+                            displayname,
+                            e,
+                            color_user = color_user,
+                            color_reset = color_reset
+                        ),
+                    }
+                }
+                _ => {
+                    // TODO: Handle rendering of message types other than RoomMessage
+                    todo!("Handle rendering of message types other than RoomMessage");
+                }
+            }
+        }
+
+        AnyPossiblyRedactedSyncMessageEvent::Redacted(_message) => {
+            // TODO: Handle rendering redacted events
+            todo!("Handle rendering redacted events");
+        }
     }
 }
 
@@ -289,7 +331,7 @@ macro_rules! has_formatted_body {
 
             #[inline]
             fn formatted_body(&self) -> Option<&str> {
-                self.formatted_body.as_deref()
+                self.formatted.as_ref().map(|f| f.body.as_ref())
             }
         }
     };
