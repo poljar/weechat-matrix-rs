@@ -657,17 +657,16 @@ impl RoomBuffer {
                 }
 
                 _ => {
-                    match sender {
-                        None => error!(
+                    if sender.is_none() {
+                        error!(
                             "Cannot render event since event sender {} is not a room member",
-                            sender_id),
-                        _ => ()
+                            sender_id);
                     }
-                    match target {
-                        None => error!(
+
+                    if target.is_none() {
+                        error!(
                             "Cannot render event since event target {} is not a room member",
-                            target_id),
-                        _ => ()
+                            target_id);
                     }
 
                     "ERROR: cannot render event since sender or target are not a room member".into()
