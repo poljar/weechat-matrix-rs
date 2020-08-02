@@ -347,11 +347,16 @@ impl MatrixServer {
                     .expect("Server got deleted while server config is alive");
 
                 let mut server = server_ref.borrow_mut();
-                let proxy = Url::parse(option.value().as_ref()).expect(
-                    "Can't parse proxy URL, did the check callback fail?",
-                );
 
-                server.settings.proxy = Some(proxy)
+                if option.value().is_empty() {
+                    server.settings.proxy = None
+                } else {
+                    let proxy = Url::parse(option.value().as_ref()).expect(
+                        "Can't parse proxy URL, did the check callback fail?",
+                    );
+
+                    server.settings.proxy = Some(proxy)
+                }
             });
 
         server_section
