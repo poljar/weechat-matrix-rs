@@ -223,7 +223,7 @@ impl RoomBuffer {
 
         if buffer.num_lines() == 0 {
             for message in room.messages.iter() {
-                self.handle_room_message(&message.0)
+                self.handle_room_message(&message)
             }
         }
     }
