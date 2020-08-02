@@ -740,7 +740,9 @@ impl Drop for MatrixServer {
             .search_section_mut("server")
             .expect("Can't get server section");
 
-        for option_name in &["homeserver", "autoconnect"] {
+        for option_name in
+            &["homeserver", "autoconnect", "password", "proxy", "username"]
+        {
             let option_name = &format!("{}.{}", self.name(), option_name);
             section.free_option(option_name).unwrap_or_else(|_| {
                 panic!(format!("Can't free option {}", option_name))
