@@ -19,7 +19,11 @@ use matrix_sdk::{
 };
 use weechat::Weechat;
 
-/// Rendering function for membership events (joins, leaves, bans, profile changes, etc).
+/// Rendering function for membership events (joins, leaves, bans, profile
+/// changes, etc).
+// TODO: We should not return raw strings here but something like [Block]
+// where Block is (String, [Tags]). Each Block represents one or several lines
+// which have the same tags.
 pub fn render_membership(
     member: &SyncStateEvent<MemberEventContent>,
     sender: &WeechatRoomMember,
@@ -181,6 +185,9 @@ pub fn render_membership(
 
 /// Rendering function for room messages.
 // FIXME: Pass room member
+// TODO: We should not return raw strings here but something like [Block]
+// where Block is (String, [Tags]). Each Block represents one or several lines
+// which have the same tags.
 pub fn render_message(
     message: &AnyPossiblyRedactedSyncMessageEvent,
     displayname: String,
