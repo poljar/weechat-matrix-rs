@@ -586,7 +586,7 @@ impl RoomBuffer {
                     self.add_member(member.clone());
 
                     sender = self.get_member(&sender_id).cloned();
-                    target = Some(member.clone());
+                    target = Some(member);
                 }
 
                 Left | Banned | Kicked | KickedAndBanned
