@@ -14,7 +14,7 @@ use std::rc::Rc;
 use weechat::{
     buffer::{Buffer, BufferHandle},
     hooks::{BarItem, BarItemCallback, SignalCallback, SignalData, SignalHook},
-    weechat_plugin, Args, Plugin, ReturnCode, Weechat,
+    plugin, Args, Plugin, ReturnCode, Weechat,
 };
 
 use crate::commands::Commands;
@@ -200,7 +200,7 @@ impl Drop for Matrix {
     }
 }
 
-weechat_plugin!(
+plugin!(
     Matrix,
     name: "matrix",
     author: "Damir Jelić <poljar@termina.org.uk>",
