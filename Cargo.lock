@@ -37,6 +37,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "assign"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4af5687fe33aec5e70ef14caac5e0d363e335e5e5d6385fb75978d0c241b1d67"
+
+[[package]]
 name = "async-channel"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -123,9 +129,12 @@ dependencies = [
 
 [[package]]
 name = "atomic"
-version = "0.4.6"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64f46ca51dca4837f1520754d1c8c36636356b81553d928dc9c177025369a06e"
+checksum = "c3410529e8288c463bedb5930f82833bc0c90e5d2fe639a56582a4d09220b281"
+dependencies = [
+ "autocfg",
+]
 
 [[package]]
 name = "atomic-waker"
@@ -281,9 +290,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "2.33.1"
+version = "2.33.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdfa80d47f954d53a35a64987ca1422f495b8d6483c0fe9f7117b36c2a792129"
+checksum = "10040cdf04294b565d9e0319955430099ec3813a64c952b86a41200ad714ae48"
 dependencies = [
  "ansi_term 0.11.0",
  "atty",
@@ -296,9 +305,9 @@ dependencies = [
 
 [[package]]
 name = "concurrent-queue"
-version = "1.2.0"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e296417c8154304ac70aceda41f05318f986f7c0c767bcb0a2366fbb890e78e1"
+checksum = "30ed07550be01594c6026cff2a1d7fe9c8f683caa798e12b68694ac9e88286a3"
 dependencies = [
  "cache-padded",
 ]
@@ -363,12 +372,13 @@ dependencies = [
 
 [[package]]
 name = "dashmap"
-version = "3.11.9"
+version = "3.11.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ad86b725566cbbf4c0cb01a17bfd1c9ad1830786a02dfc11c380b21b08f02ed"
+checksum = "0f260e2fc850179ef410018660006951c1b55b79e8087e87111a2c388994b9b5"
 dependencies = [
  "ahash",
  "cfg-if",
+ "num_cpus",
 ]
 
 [[package]]
@@ -407,15 +417,15 @@ dependencies = [
 
 [[package]]
 name = "event-listener"
-version = "2.3.0"
+version = "2.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "298f00c3b04c1d9b4cb86aefaaa35348af0957d98b30a5306fc635f8e718923d"
+checksum = "7f14646a9e0430150a87951622ba9675472b68e384b7701b8423b30560805c7a"
 
 [[package]]
 name = "fastrand"
-version = "1.3.3"
+version = "1.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36a9cb09840f81cd211e435d00a4e487edd263dc3c8ff815c32dd76ad668ebed"
+checksum = "4bd3bdaaf0a72155260a1c098989b60db1cbb22d6a628e64f16237aa4da93cc7"
 
 [[package]]
 name = "fnv"
@@ -644,9 +654,9 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34f595585f103464d8d2f6e9864682d74c1601fed5e07d62b1c9058dba8246fb"
+checksum = "e91b62f79061a0bc2e046024cb7ba44b08419ed238ecbd9adbd787434b9e8c25"
 dependencies = [
  "autocfg",
 ]
@@ -761,9 +771,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "1.5.0"
+version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b88cd59ee5f71fea89a62248fc8f387d44400cefe05ef548466d61ced9029a7"
+checksum = "86b45e59b16c76b11bf9738fd5d38879d3bd28ad292d7b313608becb17ae2df9"
 dependencies = [
  "autocfg",
  "hashbrown",
@@ -911,8 +921,9 @@ checksum = "7ffc5c5338469d4d3ea17d269fa8ea3512ad247247c30bd2df69e68309ed0a08"
 [[package]]
 name = "matrix-sdk"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/#79e661d1d98ca20c4cde5edcf45dceead0a2a150"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/#42a4ad60e87ebc2bfaa20bdc48a0d6a2d50287d1"
 dependencies = [
+ "async-trait",
  "futures-timer",
  "http",
  "matrix-sdk-base",
@@ -929,7 +940,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-base"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/#79e661d1d98ca20c4cde5edcf45dceead0a2a150"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/#42a4ad60e87ebc2bfaa20bdc48a0d6a2d50287d1"
 dependencies = [
  "async-trait",
  "matrix-sdk-common",
@@ -946,7 +957,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-common"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/#79e661d1d98ca20c4cde5edcf45dceead0a2a150"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/#42a4ad60e87ebc2bfaa20bdc48a0d6a2d50287d1"
 dependencies = [
  "futures-locks",
  "instant",
@@ -959,7 +970,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-common-macros"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/#79e661d1d98ca20c4cde5edcf45dceead0a2a150"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/#42a4ad60e87ebc2bfaa20bdc48a0d6a2d50287d1"
 dependencies = [
  "quote",
  "syn",
@@ -968,7 +979,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-crypto"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/#79e661d1d98ca20c4cde5edcf45dceead0a2a150"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/#42a4ad60e87ebc2bfaa20bdc48a0d6a2d50287d1"
 dependencies = [
  "async-trait",
  "atomic",
@@ -1130,8 +1141,7 @@ dependencies = [
 [[package]]
 name = "olm-rs"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "033e81431ecd7c359ab02e4c3f08ebe803acbcccf92765ae56252e95561038c9"
+source = "git+https://gitlab.gnome.org/jhaye/olm-rs/#320d33c44300b73d6528bfed4e0f083d6ceff664"
 dependencies = [
  "getrandom",
  "olm-sys",
@@ -1142,9 +1152,9 @@ dependencies = [
 
 [[package]]
 name = "olm-sys"
-version = "0.1.5"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d77deffdae89bf5b2ff17a9c54fab4b3b92c5440e9e4645e8bb08d7c6ace8fc"
+checksum = "38da14ca5e2ca81f3c0a91f0bf7cade30ec256f162f8be6929a26bbfca065bb1"
 
 [[package]]
 name = "once_cell"
@@ -1399,8 +1409,7 @@ dependencies = [
 [[package]]
 name = "reqwest"
 version = "0.10.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12427a5577082c24419c9c417db35cfeb65962efc7675bb6b0d5f1f9d315bfe6"
+source = "git+https://github.com/seanmonstar/reqwest?rev=dd8441fd23dae6ffb79b4cea2862e5bca0c59743#dd8441fd23dae6ffb79b4cea2862e5bca0c59743"
 dependencies = [
  "base64",
  "bytes",
@@ -1433,21 +1442,20 @@ dependencies = [
 
 [[package]]
 name = "ruma"
-version = "0.1.0"
-source = "git+https://github.com/ruma/ruma?rev=e047c647ddcb368e7eb1e05ae8823a9494273457#e047c647ddcb368e7eb1e05ae8823a9494273457"
+version = "0.0.1"
+source = "git+https://github.com/ruma/ruma?rev=9cf552f36186eedff44ebe0c6a32d598315f5860#9cf552f36186eedff44ebe0c6a32d598315f5860"
 dependencies = [
  "ruma-api",
  "ruma-client-api",
  "ruma-common",
  "ruma-events",
  "ruma-identifiers",
- "ruma-identifiers-macros",
 ]
 
 [[package]]
 name = "ruma-api"
-version = "0.16.1"
-source = "git+https://github.com/ruma/ruma?rev=e047c647ddcb368e7eb1e05ae8823a9494273457#e047c647ddcb368e7eb1e05ae8823a9494273457"
+version = "0.17.0-alpha.1"
+source = "git+https://github.com/ruma/ruma?rev=9cf552f36186eedff44ebe0c6a32d598315f5860#9cf552f36186eedff44ebe0c6a32d598315f5860"
 dependencies = [
  "http",
  "percent-encoding",
@@ -1456,13 +1464,13 @@ dependencies = [
  "ruma-serde",
  "serde",
  "serde_json",
- "strum",
+ "strum 0.19.2",
 ]
 
 [[package]]
 name = "ruma-api-macros"
-version = "0.16.1"
-source = "git+https://github.com/ruma/ruma?rev=e047c647ddcb368e7eb1e05ae8823a9494273457#e047c647ddcb368e7eb1e05ae8823a9494273457"
+version = "0.17.0-alpha.1"
+source = "git+https://github.com/ruma/ruma?rev=9cf552f36186eedff44ebe0c6a32d598315f5860#9cf552f36186eedff44ebe0c6a32d598315f5860"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1471,9 +1479,10 @@ dependencies = [
 
 [[package]]
 name = "ruma-client-api"
-version = "0.9.0"
-source = "git+https://github.com/ruma/ruma?rev=e047c647ddcb368e7eb1e05ae8823a9494273457#e047c647ddcb368e7eb1e05ae8823a9494273457"
+version = "0.10.0-alpha.1"
+source = "git+https://github.com/ruma/ruma?rev=9cf552f36186eedff44ebe0c6a32d598315f5860#9cf552f36186eedff44ebe0c6a32d598315f5860"
 dependencies = [
+ "assign",
  "http",
  "js_int",
  "ruma-api",
@@ -1483,25 +1492,26 @@ dependencies = [
  "ruma-serde",
  "serde",
  "serde_json",
- "strum",
+ "strum 0.19.2",
 ]
 
 [[package]]
 name = "ruma-common"
 version = "0.2.0"
-source = "git+https://github.com/ruma/ruma?rev=e047c647ddcb368e7eb1e05ae8823a9494273457#e047c647ddcb368e7eb1e05ae8823a9494273457"
+source = "git+https://github.com/ruma/ruma?rev=9cf552f36186eedff44ebe0c6a32d598315f5860#9cf552f36186eedff44ebe0c6a32d598315f5860"
 dependencies = [
  "js_int",
+ "ruma-identifiers",
  "ruma-serde",
  "serde",
  "serde_json",
- "strum",
+ "strum 0.19.2",
 ]
 
 [[package]]
 name = "ruma-events"
-version = "0.21.3"
-source = "git+https://github.com/ruma/ruma?rev=e047c647ddcb368e7eb1e05ae8823a9494273457#e047c647ddcb368e7eb1e05ae8823a9494273457"
+version = "0.22.0-alpha.1"
+source = "git+https://github.com/ruma/ruma?rev=9cf552f36186eedff44ebe0c6a32d598315f5860#9cf552f36186eedff44ebe0c6a32d598315f5860"
 dependencies = [
  "js_int",
  "ruma-common",
@@ -1510,13 +1520,13 @@ dependencies = [
  "ruma-serde",
  "serde",
  "serde_json",
- "strum",
+ "strum 0.19.2",
 ]
 
 [[package]]
 name = "ruma-events-macros"
-version = "0.21.3"
-source = "git+https://github.com/ruma/ruma?rev=e047c647ddcb368e7eb1e05ae8823a9494273457#e047c647ddcb368e7eb1e05ae8823a9494273457"
+version = "0.22.0-alpha.1"
+source = "git+https://github.com/ruma/ruma?rev=9cf552f36186eedff44ebe0c6a32d598315f5860#9cf552f36186eedff44ebe0c6a32d598315f5860"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1525,28 +1535,39 @@ dependencies = [
 
 [[package]]
 name = "ruma-identifiers"
-version = "0.17.1"
-source = "git+https://github.com/ruma/ruma?rev=e047c647ddcb368e7eb1e05ae8823a9494273457#e047c647ddcb368e7eb1e05ae8823a9494273457"
+version = "0.17.4"
+source = "git+https://github.com/ruma/ruma?rev=9cf552f36186eedff44ebe0c6a32d598315f5860#9cf552f36186eedff44ebe0c6a32d598315f5860"
 dependencies = [
+ "ruma-identifiers-macros",
+ "ruma-identifiers-validation",
  "serde",
- "strum",
+ "strum 0.19.2",
 ]
 
 [[package]]
 name = "ruma-identifiers-macros"
-version = "0.17.1"
-source = "git+https://github.com/ruma/ruma?rev=e047c647ddcb368e7eb1e05ae8823a9494273457#e047c647ddcb368e7eb1e05ae8823a9494273457"
+version = "0.17.4"
+source = "git+https://github.com/ruma/ruma?rev=9cf552f36186eedff44ebe0c6a32d598315f5860#9cf552f36186eedff44ebe0c6a32d598315f5860"
 dependencies = [
  "proc-macro2",
  "quote",
- "ruma-identifiers",
+ "ruma-identifiers-validation",
  "syn",
 ]
 
 [[package]]
+name = "ruma-identifiers-validation"
+version = "0.1.1"
+source = "git+https://github.com/ruma/ruma?rev=9cf552f36186eedff44ebe0c6a32d598315f5860#9cf552f36186eedff44ebe0c6a32d598315f5860"
+dependencies = [
+ "serde",
+ "strum 0.19.2",
+]
+
+[[package]]
 name = "ruma-serde"
-version = "0.2.2"
-source = "git+https://github.com/ruma/ruma?rev=e047c647ddcb368e7eb1e05ae8823a9494273457#e047c647ddcb368e7eb1e05ae8823a9494273457"
+version = "0.2.3"
+source = "git+https://github.com/ruma/ruma?rev=9cf552f36186eedff44ebe0c6a32d598315f5860#9cf552f36186eedff44ebe0c6a32d598315f5860"
 dependencies = [
  "form_urlencoded",
  "itoa",
@@ -1614,18 +1635,18 @@ checksum = "f638d531eccd6e23b980caf34876660d38e265409d8e99b397ab71eb3612fad0"
 
 [[package]]
 name = "serde"
-version = "1.0.114"
+version = "1.0.115"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5317f7588f0a5078ee60ef675ef96735a1442132dc645eb1d12c018620ed8cd3"
+checksum = "e54c9a88f2da7238af84b5101443f0c0d0a3bbdc455e34a5c9497b1903ed55d5"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.114"
+version = "1.0.115"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a0be94b04690fbaed37cddffc5c134bf537c8e3329d53e982fe04c374978f8e"
+checksum = "609feed1d0a73cc36a0182a840a9b37b4a82f0b1150369f0536a9e3f2a31dc48"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1791,15 +1812,21 @@ name = "strum"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57bd81eb48f4c437cadc685403cad539345bf703d78e63707418431cecd4522b"
+
+[[package]]
+name = "strum"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3924a58d165da3b7b2922c667ab0673c7b5fd52b5c19ea3442747bcb3cd15abe"
 dependencies = [
  "strum_macros",
 ]
 
 [[package]]
 name = "strum_macros"
-version = "0.18.0"
+version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87c85aa3f8ea653bfd3ddf25f7ee357ee4d204731f6aa9ad04002306f6e2774c"
+checksum = "2d2ab682ecdcae7f5f45ae85cd7c1e6c8e68ea42c8a612d47fedf831c037146a"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -1809,9 +1836,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.36"
+version = "1.0.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cdb98bcb1f9d81d07b536179c269ea15999b5d14ea958196413869445bb5250"
+checksum = "e69abc24912995b3038597a7a593be5053eb0fb44f3cc5beec0deb421790c1f4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1957,9 +1984,9 @@ checksum = "e987b6bf443f4b5b3b6f38704195592cca41c5bb7aedd3c3693c7081f8289860"
 
 [[package]]
 name = "tracing"
-version = "0.1.18"
+version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0aae59226cf195d8e74d4b34beae1859257efb4e5fed3f147d2dc2c7d372178"
+checksum = "6d79ca061b032d6ce30c660fded31189ca0b9922bf483cd70759f13a2d86786c"
 dependencies = [
  "cfg-if",
  "log",
@@ -1969,9 +1996,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-attributes"
-version = "0.1.9"
+version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0693bf8d6f2bf22c690fc61a9d21ac69efdbb894a17ed596b9af0f01e64b84b"
+checksum = "1fe233f4227389ab7df5b32649239da7ebe0b281824b4e84b342d04d3fd8c25e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1980,9 +2007,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-core"
-version = "0.1.12"
+version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2734b5a028fa697686f16c6d18c2c6a3c7e41513f9a213abb6754c4acb3c8d7"
+checksum = "db63662723c316b43ca36d833707cc93dff82a02ba3d7e354f342682cc8b3545"
 dependencies = [
  "lazy_static",
 ]
@@ -2020,9 +2047,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-subscriber"
-version = "0.2.10"
+version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7b33f8b2ef2ab0c3778c12646d9c42a24f7772bee4cdafc72199644a9f58fdc"
+checksum = "abd165311cc4d7a555ad11cc77a37756df836182db0d81aac908c8184c584f40"
 dependencies = [
  "ansi_term 0.12.1",
  "chrono",
@@ -2033,6 +2060,7 @@ dependencies = [
  "serde_json",
  "sharded-slab",
  "smallvec",
+ "thread_local",
  "tracing-core",
  "tracing-log",
  "tracing-serde",
@@ -2244,7 +2272,7 @@ dependencies = [
  "libc",
  "paste",
  "pipe-channel",
- "strum",
+ "strum 0.18.0",
  "weechat-macro",
  "weechat-sys",
 ]

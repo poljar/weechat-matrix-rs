@@ -71,7 +71,7 @@ use matrix_sdk::api::r0::session::login::Response as LoginResponse;
 use matrix_sdk::{
     self,
     api::r0::{
-        message::create_message_event::Response as RoomSendResponse,
+        message::send_message_event::Response as RoomSendResponse,
         typing::create_typing_event::Response as TypingResponse,
     },
     events::{
