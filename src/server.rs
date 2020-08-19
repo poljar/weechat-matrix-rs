@@ -588,10 +588,10 @@ impl MatrixServer {
 
             let ret = client
                 .login(
-                    username.clone(),
-                    password,
-                    device_id,
-                    Some("Weechat-Matrix-rs".to_owned()),
+                    &username,
+                    &password,
+                    device_id.as_deref(),
+                    Some("Weechat-Matrix-rs"),
                 )
                 .await;
 
