@@ -26,4 +26,4 @@ features = ["async", "config_macro"]
 [dependencies.matrix-sdk]
 git = "https://github.com/matrix-org/matrix-rust-sdk/"
 default-features = false
-features = ["encryption", "sqlite-cryptostore", "messages"]
+features = ["encryption", "sqlite_cryptostore", "messages"]
