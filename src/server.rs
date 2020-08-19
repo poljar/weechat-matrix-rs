@@ -858,6 +858,7 @@ impl InnerServer {
         buffer.print(message);
     }
 
+    /// Print an error message to the server buffer.
     pub fn error(&self, message: &str) {
         let mut server_buffer = self.server_buffer.borrow_mut();
         let buffer = self.server_buffer(&mut server_buffer).upgrade().unwrap();
