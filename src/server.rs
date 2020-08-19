@@ -90,7 +90,6 @@ use weechat::JoinHandle;
 use weechat::Weechat;
 
 use crate::room_buffer::RoomBuffer;
-use crate::PLUGIN_NAME;
 use crate::{config::Config, ConfigHandle};
 
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
@@ -449,6 +448,13 @@ impl MatrixServer {
 
     pub fn connect(&self) -> Result<(), ServerError> {
         if self.connected() {
+            self.print_error(&format!(
+                "Already connected to {}{}{}",
+                Weechat::color("chat_server"),
+                self.name(),
+                Weechat::color("reset")
+            ));
+
             return Ok(());
         }
 
@@ -494,6 +500,13 @@ impl MatrixServer {
             runtime,
         });
 
+        server.print_network(&format!(
+            "Connected to {}{}{}",
+            Weechat::color("chat_server"),
+            self.name(),
+            Weechat::color("reset")
+        ));
+
         Ok(())
     }
 
@@ -501,16 +514,22 @@ impl MatrixServer {
         self.inner().print(message)
     }
 
-    pub fn error(&self, message: &str) {
-        self.inner().error(message)
+    pub fn print_with_prefix(&self, prefix: &str, message: &str) {
+        self.inner().print_with_prefix(prefix, message)
+    }
+
+    pub fn print_network(&self, message: &str) {
+        self.inner().print_network(message)
+    }
+
+    pub fn print_error(&self, message: &str) {
+        self.inner().print_error(message)
     }
 
     pub fn disconnect(&self) {
         if !self.connected() {
-            self.error(&format!(
-                "{}{}: Server {}{}{} is not connected.",
-                Weechat::prefix("error"),
-                PLUGIN_NAME,
+            self.print_error(&format!(
+                "Not connected to {}{}{}",
                 Weechat::color("chat_server"),
                 self.name(),
                 Weechat::color("reset")
@@ -529,7 +548,12 @@ impl MatrixServer {
             }
         }
 
-        self.print(&format!("{}: Disconnected from server.", PLUGIN_NAME));
+        self.print_network(&format!(
+            "Disconnected from {}{}{}",
+            Weechat::color("chat_server"),
+            self.name(),
+            Weechat::color("reset")
+        ));
     }
 
     /// Main client sync loop.
@@ -679,7 +703,10 @@ impl MatrixServer {
             let message = match ret {
                 Ok(m) => m,
                 Err(e) => {
-                    server.error(&format!("Error receiving message: {:?}", e));
+                    server.print_error(&format!(
+                        "Error receiving message: {:?}",
+                        e
+                    ));
                     return;
                 }
             };
@@ -697,7 +724,7 @@ impl MatrixServer {
                         server.restore_room(room)
                     }
                 },
-                Err(e) => server.error(&format!("Ruma error {}", e)),
+                Err(e) => server.print_error(&format!("Ruma error {}", e)),
             };
         }
     }
@@ -858,11 +885,19 @@ impl InnerServer {
         buffer.print(message);
     }
 
+    /// Print a message with a given prefix to the server buffer.
+    pub fn print_with_prefix(&self, prefix: &str, message: &str) {
+        self.print(&format!("{}\t{}", prefix, message));
+    }
+
+    /// Print an network message to the server buffer.
+    pub fn print_network(&self, message: &str) {
+        self.print_with_prefix(Weechat::prefix("network"), message);
+    }
+
     /// Print an error message to the server buffer.
-    pub fn error(&self, message: &str) {
-        let mut server_buffer = self.server_buffer.borrow_mut();
-        let buffer = self.server_buffer(&mut server_buffer).upgrade().unwrap();
-        buffer.print(&format!("{}\t{}", Weechat::prefix("error"), message));
+    pub fn print_error(&self, message: &str) {
+        self.print_with_prefix(Weechat::prefix("error"), message);
     }
 
     /// Is the server connected.
