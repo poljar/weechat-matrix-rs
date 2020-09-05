@@ -1,7 +1,4 @@
-use clap::{
-    App as Argparse, AppSettings as ArgParseSettings, Arg,
-    SubCommand,
-};
+use clap::{App as Argparse, AppSettings as ArgParseSettings, Arg, SubCommand};
 
 use weechat::{
     buffer::Buffer,
@@ -55,12 +52,7 @@ impl DevicesCommand {
 }
 
 impl CommandCallback for DevicesCommand {
-    fn callback(
-        &mut self,
-        _: &Weechat,
-        buffer: &Buffer,
-        arguments: Args,
-    ) {
+    fn callback(&mut self, _: &Weechat, buffer: &Buffer, arguments: Args) {
         let argparse = Argparse::new("devices")
             .global_setting(ArgParseSettings::DisableHelpFlags)
             .global_setting(ArgParseSettings::DisableVersion)
@@ -79,7 +71,7 @@ impl CommandCallback for DevicesCommand {
                 SubCommand::with_name("set-name")
                     .about("Set the human readable name of the given device")
                     .arg(Arg::with_name("device-id").required(true))
-                    .arg(Arg::with_name("name").required(true))
+                    .arg(Arg::with_name("name").required(true)),
             );
 
         let matches = match argparse.get_matches_from_safe(arguments) {
@@ -99,7 +91,10 @@ impl CommandCallback for DevicesCommand {
 
         match matches.subcommand() {
             ("list", _) => self.list(buffer),
-            _ => Weechat::print(&format!("{}Subcommand isn't implemented", Weechat::prefix("error"))),
+            _ => Weechat::print(&format!(
+                "{}Subcommand isn't implemented",
+                Weechat::prefix("error")
+            )),
         }
     }
 }

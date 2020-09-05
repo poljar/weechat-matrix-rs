@@ -10,7 +10,7 @@ use weechat::{
     Args, Weechat,
 };
 
-use crate::{PLUGIN_NAME, config::ConfigHandle, MatrixServer, Servers};
+use crate::{config::ConfigHandle, MatrixServer, Servers, PLUGIN_NAME};
 
 pub struct MatrixCommand {
     servers: Servers,

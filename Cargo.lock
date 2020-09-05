@@ -876,7 +876,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "matrix-sdk"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/#6c7dbb814bcec79b9b3292ac2743adf355d41c62"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/#34cdf31cc5e03e763e794c662ec239c452a74829"
 dependencies = [
  "async-trait 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
  "dashmap 3.11.10 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -896,7 +896,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-base"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/#6c7dbb814bcec79b9b3292ac2743adf355d41c62"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/#34cdf31cc5e03e763e794c662ec239c452a74829"
 dependencies = [
  "async-trait 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
  "matrix-sdk-common 0.1.0 (git+https://github.com/matrix-org/matrix-rust-sdk/)",
@@ -913,7 +913,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-common"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/#6c7dbb814bcec79b9b3292ac2743adf355d41c62"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/#34cdf31cc5e03e763e794c662ec239c452a74829"
 dependencies = [
  "assign 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-locks 0.5.1-pre (git+https://github.com/asomers/futures-locks)",
@@ -927,7 +927,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-common-macros"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/#6c7dbb814bcec79b9b3292ac2743adf355d41c62"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/#34cdf31cc5e03e763e794c662ec239c452a74829"
 dependencies = [
  "quote 1.0.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "syn 1.0.39 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -936,7 +936,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-crypto"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/#6c7dbb814bcec79b9b3292ac2743adf355d41c62"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/#34cdf31cc5e03e763e794c662ec239c452a74829"
 dependencies = [
  "async-trait 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
  "atomic 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",

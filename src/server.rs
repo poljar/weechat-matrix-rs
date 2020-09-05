@@ -54,7 +54,6 @@
 //! receiver fetches events individually from a mpsc channel. This makes sure
 //! that processing events will not block the Weechat mainloop for too long.
 
-use async_std::sync::{channel as async_channel, Receiver, Sender};
 use chrono::{offset::Utc, DateTime};
 use indoc::indoc;
 use std::{
@@ -62,47 +61,27 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     rc::{Rc, Weak},
-    time::Duration,
 };
-use tokio::runtime::Runtime;
-use tracing::error;
 use url::Url;
-use uuid::Uuid;
-
-use matrix_sdk::api::r0::session::login::Response as LoginResponse;
 
 use matrix_sdk::{
     self,
-    api::r0::{
-        device::get_devices::Response as DevicesResponse,
-        message::send_message_event::Response as RoomSendResponse,
-        typing::create_typing_event::{Response as TypingResponse, Typing},
-    },
-    events::{
-        room::message::{MessageEventContent, TextMessageEventContent},
-        AnyMessageEventContent, AnySyncRoomEvent, AnySyncStateEvent,
-    },
+    api::r0::session::login::Response as LoginResponse,
+    events::{AnySyncRoomEvent, AnySyncStateEvent},
     identifiers::{RoomId, UserId},
-    Client, ClientConfig, Result as MatrixResult, Room, SyncSettings,
+    Client, ClientConfig, Room,
 };
 
 use weechat::{
     buffer::{BufferBuilder, BufferHandle},
     config::{BooleanOptionSettings, ConfigSection, StringOptionSettings},
-    JoinHandle, Weechat,
+    Weechat,
 };
 
-use crate::{config::Config, room_buffer::RoomBuffer, ConfigHandle};
-
-const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
-pub const TYPING_NOTICE_TIMEOUT: Duration = Duration::from_secs(4);
-
-pub enum ClientMessage {
-    LoginMessage(LoginResponse),
-    SyncState(RoomId, AnySyncStateEvent),
-    SyncEvent(RoomId, AnySyncRoomEvent),
-    RestoredRoom(Room),
-}
+use crate::{
+    config::Config, connection::Connection, room_buffer::RoomBuffer,
+    ConfigHandle,
+};
 
 #[derive(Debug)]
 pub enum ServerError {
@@ -112,11 +91,11 @@ pub enum ServerError {
 
 #[derive(Default)]
 pub struct ServerSettings {
-    homeserver: Option<Url>,
-    proxy: Option<Url>,
-    autoconnect: bool,
-    username: String,
-    password: String,
+    pub homeserver: Option<Url>,
+    pub proxy: Option<Url>,
+    pub autoconnect: bool,
+    pub username: String,
+    pub password: String,
 }
 
 impl ServerSettings {
@@ -127,91 +106,6 @@ impl ServerSettings {
 
 pub struct LoginInfo {
     user_id: UserId,
-}
-
-pub struct Connection {
-    response_receiver: JoinHandle<(), ()>,
-    client: Client,
-    #[used]
-    runtime: Runtime,
-}
-
-impl Connection {
-    pub async fn send_message(
-        &self,
-        room_id: &RoomId,
-        message: String,
-    ) -> MatrixResult<RoomSendResponse> {
-        let room_id = room_id.to_owned();
-        let client = self.client.clone();
-
-        let handle = self
-            .runtime
-            .spawn(async move {
-                let content =
-                    MessageEventContent::Text(TextMessageEventContent {
-                        body: message,
-                        formatted: None,
-                        relates_to: None,
-                    });
-
-                client
-                    .room_send(
-                        &room_id,
-                        AnyMessageEventContent::RoomMessage(content),
-                        Some(Uuid::new_v4()),
-                    )
-                    .await
-            })
-            .await;
-
-        match handle {
-            Ok(response) => response,
-            Err(e) => panic!("Tokio error while sending a message {:?}", e),
-        }
-    }
-
-    pub async fn devices(&self) -> MatrixResult<DevicesResponse> {
-        let client = self.client.clone();
-        let handle = self
-            .runtime
-            .spawn(async move { client.devices().await })
-            .await;
-
-        match handle {
-            Ok(response) => response,
-            Err(e) => panic!("Tokio error while sending a message {:?}", e),
-        }
-    }
-
-    pub async fn send_typing_notice(
-        &self,
-        room_id: &RoomId,
-        user_id: &UserId,
-        typing: bool,
-    ) -> MatrixResult<TypingResponse> {
-        let room_id = room_id.to_owned();
-        let user_id = user_id.to_owned();
-        let client = self.client.clone();
-
-        let handle = self
-            .runtime
-            .spawn(async move {
-                let typing = if typing {
-                    Typing::Yes(TYPING_NOTICE_TIMEOUT)
-                } else {
-                    Typing::No
-                };
-
-                client.typing_notice(&room_id, &user_id, typing).await
-            })
-            .await;
-
-        match handle {
-            Ok(response) => response,
-            Err(e) => panic!("Tokio error while sending a message {:?}", e),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -272,6 +166,10 @@ impl MatrixServer {
 
     pub fn inner(&self) -> Ref<'_, InnerServer> {
         self.inner.borrow()
+    }
+
+    pub fn clone_inner_weak(&self) -> Weak<RefCell<InnerServer>> {
+        Rc::downgrade(&self.inner)
     }
 
     pub fn connection(&self) -> Rc<RefCell<Option<Connection>>> {
@@ -508,42 +406,6 @@ impl MatrixServer {
         self.inner.borrow().settings.autoconnect
     }
 
-    fn save_device_id(
-        user_name: &str,
-        mut server_path: PathBuf,
-        response: &LoginResponse,
-    ) -> std::io::Result<()> {
-        server_path.push(user_name);
-        server_path.set_extension("device_id");
-        std::fs::write(&server_path, &response.device_id.to_string())
-    }
-
-    fn load_device_id(
-        user_name: &str,
-        mut server_path: PathBuf,
-    ) -> std::io::Result<Option<String>> {
-        server_path.push(user_name);
-        server_path.set_extension("device_id");
-
-        let device_id = std::fs::read_to_string(server_path);
-
-        if let Err(e) = device_id {
-            // A file not found error is ok, report the rest.
-            if e.kind() != std::io::ErrorKind::NotFound {
-                return Err(e);
-            }
-            return Ok(None);
-        };
-
-        let device_id = device_id.unwrap_or_default();
-
-        if device_id.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(device_id))
-        }
-    }
-
     pub fn connect(&self) -> Result<(), ServerError> {
         if self.connected() {
             self.print_error(&format!(
@@ -556,49 +418,12 @@ impl MatrixServer {
             return Ok(());
         }
 
-        let runtime = Runtime::new().unwrap();
-        let mut server = self.inner.borrow_mut();
+        let client = self.inner.borrow_mut().get_or_creaet_client()?;
+        let connection = Connection::new(&self, &client);
 
-        let client = if let Some(c) = server.client.as_ref() {
-            c.clone()
-        } else {
-            server.create_client()?
-        };
+        *self.inner.borrow_mut().connection.borrow_mut() = Some(connection);
 
-        // Check if the homeserver setting changed and swap our client if it
-        // did.
-        let client = if client.homeserver()
-            != server.settings.homeserver.as_ref().unwrap()
-        {
-            // TODO close all the room buffers of the server here, they don't
-            // belong to our client anymore.
-            server.create_client()?
-        } else {
-            client
-        };
-
-        let (tx, rx) = async_channel(1000);
-        runtime.spawn(MatrixServer::sync_loop(
-            client.clone(),
-            tx,
-            server.settings.username.to_string(),
-            server.settings.password.to_string(),
-            server.server_name.to_string(),
-            server.get_server_path(),
-        ));
-        let response_receiver = Weechat::spawn(
-            MatrixServer::response_receiver(rx, Rc::downgrade(&self.inner)),
-        );
-
-        let mut connection = server.connection.borrow_mut();
-
-        *connection = Some(Connection {
-            client,
-            response_receiver,
-            runtime,
-        });
-
-        server.print_network(&format!(
+        self.print_network(&format!(
             "Connected to {}{}{}",
             Weechat::color("chat_server"),
             self.name(),
@@ -639,11 +464,7 @@ impl MatrixServer {
         {
             let server = self.inner();
             let mut connection = server.connection.borrow_mut();
-            let state = connection.take();
-
-            if let Some(s) = state {
-                s.response_receiver.cancel();
-            }
+            connection.take();
         }
 
         self.print_network(&format!(
@@ -652,179 +473,6 @@ impl MatrixServer {
             self.name(),
             Weechat::color("reset")
         ));
-    }
-
-    /// Main client sync loop.
-    /// This runs on the per server tokio executor.
-    /// It communicates with the main Weechat thread using a async channel.
-    pub async fn sync_loop(
-        client: Client,
-        channel: Sender<Result<ClientMessage, String>>,
-        username: String,
-        password: String,
-        server_name: String,
-        server_path: PathBuf,
-    ) {
-        if !client.logged_in().await {
-            let device_id =
-                MatrixServer::load_device_id(&username, server_path.clone());
-
-            let device_id = match device_id {
-                Err(e) => {
-                    channel
-                        .send(Err(format!(
-                        "Error while reading the device id for server {}: {:?}",
-                        server_name, e
-                    )))
-                        .await;
-                    return;
-                }
-                Ok(d) => d,
-            };
-
-            let first_login = device_id.is_none();
-
-            let ret = client
-                .login(
-                    &username,
-                    &password,
-                    device_id.as_deref(),
-                    Some("Weechat-Matrix-rs"),
-                )
-                .await;
-
-            match ret {
-                Ok(response) => {
-                    if let Err(e) = MatrixServer::save_device_id(
-                        &username,
-                        server_path.clone(),
-                        &response,
-                    ) {
-                        channel
-                            .send(Err(format!(
-                            "Error while writing the device id for server {}: {:?}",
-                            server_name, e
-                        ))).await;
-                        return;
-                    }
-
-                    channel
-                        .send(Ok(ClientMessage::LoginMessage(response)))
-                        .await
-                }
-                Err(e) => {
-                    channel
-                        .send(Err(format!("Failed to log in: {:?}", e)))
-                        .await;
-                    return;
-                }
-            }
-
-            if !first_login {
-                let joined_rooms = client.joined_rooms();
-                for room in joined_rooms.read().await.values() {
-                    let room = room.read().await;
-                    let room: &Room = &*room;
-                    channel
-                        .send(Ok(ClientMessage::RestoredRoom(room.clone())))
-                        .await
-                }
-            }
-        }
-
-        let sync_token = client.sync_token().await;
-        let sync_settings = SyncSettings::new().timeout(DEFAULT_SYNC_TIMEOUT);
-
-        let sync_settings = if let Some(t) = sync_token {
-            sync_settings.token(t)
-        } else {
-            sync_settings
-        };
-
-        let sync_channel = &channel;
-
-        client
-            .sync_forever(sync_settings, async move |response| {
-                let channel = sync_channel;
-
-                for (room_id, room) in response.rooms.join {
-                    for event in room.state.events {
-                        if let Ok(e) = event.deserialize() {
-                            channel
-                                .send(Ok(ClientMessage::SyncState(
-                                    room_id.clone(),
-                                    e,
-                                )))
-                                .await;
-                        } else {
-                            error!(
-                                "Failed deserializing state event: {:#?}",
-                                event
-                            );
-                        }
-                    }
-                    for event in room.timeline.events {
-                        if let Ok(e) = event.deserialize() {
-                            channel
-                                .send(Ok(ClientMessage::SyncEvent(
-                                    room_id.clone(),
-                                    e,
-                                )))
-                                .await;
-                        } else {
-                            error!(
-                                "Failed deserializing timeline event: {:#?}",
-                                event
-                            );
-                        }
-                    }
-                }
-            })
-            .await;
-    }
-
-    /// Response receiver loop.
-    /// This runs on the main Weechat thread and listens for responses coming
-    /// from the client running in the tokio executor.
-    pub async fn response_receiver(
-        receiver: Receiver<Result<ClientMessage, String>>,
-        server: Weak<RefCell<InnerServer>>,
-    ) {
-        loop {
-            let ret = receiver.recv().await;
-
-            let server_cell = server
-                .upgrade()
-                .expect("Can't upgrade server in sync receiver");
-            let mut server = server_cell.borrow_mut();
-
-            let message = match ret {
-                Ok(m) => m,
-                Err(e) => {
-                    server.print_error(&format!(
-                        "Error receiving message: {:?}",
-                        e
-                    ));
-                    return;
-                }
-            };
-
-            match message {
-                Ok(message) => match message {
-                    ClientMessage::LoginMessage(r) => server.receive_login(r),
-                    ClientMessage::SyncEvent(r, e) => {
-                        server.receive_joined_timeline_event(&r, e)
-                    }
-                    ClientMessage::SyncState(r, e) => {
-                        server.receive_joined_state_event(&r, e)
-                    }
-                    ClientMessage::RestoredRoom(room) => {
-                        server.restore_room(room)
-                    }
-                },
-                Err(e) => server.print_error(&format!("Ruma error {}", e)),
-            };
-        }
     }
 
     pub fn get_info_str(&self, details: bool) -> String {
@@ -914,6 +562,10 @@ impl InnerServer {
         self.room_buffers.get_mut(room_id).unwrap()
     }
 
+    pub fn settings(&self) -> &ServerSettings {
+        &self.settings
+    }
+
     pub fn room_buffers(&self) -> &HashMap<RoomId, RoomBuffer> {
         &self.room_buffers
     }
@@ -922,7 +574,7 @@ impl InnerServer {
         self.config.borrow()
     }
 
-    fn restore_room(&mut self, room: Room) {
+    pub fn restore_room(&mut self, room: Room) {
         let homeserver = self
             .settings
             .homeserver
@@ -957,6 +609,30 @@ impl InnerServer {
         buffer.set_localvar("server", &self.server_name);
 
         buffer_handle
+    }
+
+    fn get_or_creaet_client(&mut self) -> Result<Client, ServerError> {
+        let client = if let Some(c) = self.client.as_ref() {
+            c.clone()
+        } else {
+            self.create_client()?
+        };
+
+        // Check if the homeserver setting changed and swap our client if it
+        // did.
+        if client.homeserver()
+            != self
+                .settings
+                .homeserver
+                .as_ref()
+                .expect("Homeserver URL isn't set")
+        {
+            // TODO close all the room buffers of the server here, they don't
+            // belong to our client anymore.
+            self.create_client()
+        } else {
+            Ok(client)
+        }
     }
 
     /// Borrow the server buffer handle.
@@ -1041,7 +717,7 @@ impl InnerServer {
         std::fs::create_dir_all(path)
     }
 
-    fn get_server_path(&self) -> PathBuf {
+    pub fn get_server_path(&self) -> PathBuf {
         let mut path = Weechat::home_dir();
         let server_name: &str = &self.server_name;
         path.push("matrix-rust");
@@ -1076,6 +752,7 @@ impl InnerServer {
         let client =
             Client::new_with_config(homeserver.clone(), client_config).unwrap();
         self.client = Some(client.clone());
+
         Ok(client)
     }
 }

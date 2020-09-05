@@ -47,8 +47,8 @@ use async_trait::async_trait;
 use tracing::{debug, error, trace};
 
 use crate::{
+    connection::{Connection, TYPING_NOTICE_TIMEOUT},
     render::{render_membership, render_message},
-    server::{Connection, TYPING_NOTICE_TIMEOUT},
 };
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -106,6 +106,7 @@ impl BufferInputCallbackAsync for MatrixRoom {
     async fn callback(&mut self, buffer: BufferHandle, input: String) {
         let connection = &self.connection;
 
+        // FIXME move this logic into the `MatrixRoom`
         if let Some(c) = &*connection.borrow() {
             // TODO check for errors and print them out.
             match c.send_message(&self.room_id, input).await {
@@ -401,16 +402,14 @@ impl RoomBuffer {
 
         let connection = self.inner.connection.clone();
         let room_id = self.room_id.clone();
-        let user_id = self.own_user_id.clone();
         let typing_notice_time = self.inner.typing_notice_time.clone();
 
         let send = async move |typing: bool, _guard| {
             let typing_time = typing_notice_time;
 
             if let Some(connection) = &*connection.borrow() {
-                let response = connection
-                    .send_typing_notice(&*room_id, &*user_id, typing)
-                    .await;
+                let response =
+                    connection.send_typing_notice(&*room_id, typing).await;
 
                 // We need to record the time when the last typing notice was
                 // sent to ensure we don't send out new ones while a previous
