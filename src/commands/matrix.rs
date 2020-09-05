@@ -227,7 +227,7 @@ impl CommandCallback for MatrixCommand {
                     .arg(
                         Arg::with_name("homeserver")
                             .required(true)
-                            .validator(MatrixServer::parse_homeserver_url),
+                            .validator(MatrixServer::parse_url),
                     ),
             )
             .subcommand(

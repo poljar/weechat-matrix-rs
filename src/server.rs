@@ -257,7 +257,24 @@ impl MatrixServer {
         self.inner.borrow()
     }
 
-    pub fn parse_homeserver_url(value: String) -> Result<(), String> {
+    /// Parse an URL returning a None if the string is empty.
+    ///
+    /// # Panics
+    ///
+    /// This panics if the string can't be parsed as an URL.
+    fn parse_url_unchecked(value: &str) -> Option<Url> {
+        if value.is_empty() {
+            None
+        } else {
+            Some(
+                Url::parse(value)
+                    .expect("Can't parse URL, did the check callback fail?"),
+            )
+        }
+    }
+
+    /// Parse an URL returning an error if the parse step fails.
+    pub fn parse_url(value: String) -> Result<(), String> {
         let url = Url::parse(&value);
 
         match url {
@@ -269,6 +286,15 @@ impl MatrixServer {
                 }
             }
             Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// Check if the provided value is a valid URL.
+    fn is_url_valid(value: &str) -> bool {
+        if value.is_empty() {
+            true
+        } else {
+            MatrixServer::parse_url(value.to_string()).is_ok()
         }
     }
 
@@ -303,12 +329,7 @@ impl MatrixServer {
         let homeserver =
             StringOptionSettings::new(format!("{}.homeserver", server_name))
                 .set_check_callback(|_, _, value| {
-                    if value.is_empty() {
-                        true
-                    } else {
-                        MatrixServer::parse_homeserver_url(value.to_string())
-                            .is_ok()
-                    }
+                    MatrixServer::is_url_valid(&value)
                 })
                 .set_change_callback(move |_, option| {
                     let server = server.clone();
@@ -318,15 +339,8 @@ impl MatrixServer {
 
                     let mut server = server_ref.borrow_mut();
 
-                    if option.value().is_empty() {
-                        let homeserver = Url::parse(option.value().as_ref()).expect(
-                    "Can't parse homeserver URL, did the check callback fail?",
-                        );
-
-                        server.settings.homeserver = Some(homeserver)
-                    } else {
-                        server.settings.homeserver = None;
-                    }
+                    server.settings.homeserver =
+                        MatrixServer::parse_url_unchecked(&option.value());
                 });
 
         server_section
@@ -338,12 +352,7 @@ impl MatrixServer {
 
         let proxy = StringOptionSettings::new(format!("{}.proxy", server_name))
             .set_check_callback(|_, _, value| {
-                if value.is_empty() {
-                    true
-                } else {
-                    MatrixServer::parse_homeserver_url(value.to_string())
-                        .is_ok()
-                }
+                MatrixServer::is_url_valid(&value)
             })
             .set_change_callback(move |_, option| {
                 let server = server.clone();
@@ -352,16 +361,8 @@ impl MatrixServer {
                     .expect("Server got deleted while server config is alive");
 
                 let mut server = server_ref.borrow_mut();
-
-                if option.value().is_empty() {
-                    server.settings.proxy = None
-                } else {
-                    let proxy = Url::parse(option.value().as_ref()).expect(
-                        "Can't parse proxy URL, did the check callback fail?",
-                    );
-
-                    server.settings.proxy = Some(proxy)
-                }
+                server.settings.proxy =
+                    MatrixServer::parse_url_unchecked(&option.value());
             });
 
         server_section
