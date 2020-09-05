@@ -198,7 +198,7 @@ impl Connection {
 }
 
 #[derive(Clone)]
-pub(crate) struct MatrixServer {
+pub struct MatrixServer {
     server_name: Rc<String>,
     inner: Rc<RefCell<InnerServer>>,
 }
@@ -210,7 +210,7 @@ impl std::fmt::Debug for MatrixServer {
     }
 }
 
-pub(crate) struct InnerServer {
+pub struct InnerServer {
     server_name: Rc<String>,
     pub room_buffers: HashMap<RoomId, RoomBuffer>,
     settings: ServerSettings,

@@ -66,10 +66,11 @@ use weechat::{
     Weechat,
 };
 
+#[derive(Clone)]
 pub struct RoomBuffer {
     own_user_id: Rc<UserId>,
     room_id: Rc<RoomId>,
-    typing_in_flight: Mutex<()>,
+    typing_in_flight: Rc<Mutex<()>>,
     inner: MatrixRoom,
     buffer_handle: BufferHandle,
 }
@@ -160,7 +161,7 @@ impl RoomBuffer {
         RoomBuffer {
             room_id: Rc::new(room_id),
             own_user_id: Rc::new(own_user_id.to_owned()),
-            typing_in_flight: Mutex::new(()),
+            typing_in_flight: Rc::new(Mutex::new(())),
             inner: room,
             buffer_handle,
         }

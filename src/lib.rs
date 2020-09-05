@@ -19,7 +19,7 @@ use weechat::{
     plugin, Args, Plugin, ReturnCode, Weechat,
 };
 
-use crate::{commands::Commands, config::ConfigHandle, server::MatrixServer};
+use crate::{commands::Commands, config::ConfigHandle, server::MatrixServer, room_buffer::RoomBuffer};
 
 const PLUGIN_NAME: &str = "matrix";
 
@@ -38,6 +38,42 @@ impl Servers {
     fn borrow_mut(&self) -> RefMut<'_, HashMap<String, MatrixServer>> {
         self.0.borrow_mut()
     }
+
+    /// Find a `MatrixServer` that the given buffer belongs to.
+    ///
+    /// Returns None if the buffer doesn't belong to any of our servers of
+    /// rooms.
+    pub fn find_server(&self, buffer: &Buffer) -> Option<MatrixServer> {
+        let servers = self.borrow();
+
+        for server in servers.values() {
+            for room_buffer in server.inner().room_buffers.values() {
+                if buffer == &room_buffer.weechat_buffer() {
+                    return Some(server.clone())
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Find a `RoomBuffer` that the given buffer belongs to.
+    ///
+    /// Returns None if the buffer doesn't belong to any of our servers of
+    /// rooms.
+    pub fn find_room(&self, buffer: &Buffer) -> Option<RoomBuffer> {
+        let servers = self.borrow();
+
+        for server in servers.values() {
+            for room_buffer in server.inner().room_buffers.values() {
+                if buffer == &room_buffer.weechat_buffer() {
+                    return Some(room_buffer.clone());
+                }
+            }
+        }
+
+        None
+    }
 }
 
 impl SignalCallback for Servers {
@@ -49,16 +85,8 @@ impl SignalCallback for Servers {
     ) -> ReturnCode {
         if let Some(data) = data {
             if let SignalData::Buffer(buffer) = data {
-                let servers = self.borrow();
-
-                for server in servers.values() {
-                    for room_buffer in server.inner().room_buffers.values() {
-                        if buffer == room_buffer.weechat_buffer() {
-                            room_buffer.update_typing_notice();
-
-                            return ReturnCode::Ok;
-                        }
-                    }
+                if let Some(room_buffer) = self.find_room(&buffer) {
+                    room_buffer.update_typing_notice();
                 }
             }
         }
