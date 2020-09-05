@@ -4,14 +4,13 @@ use clap::{
 };
 use url::Url;
 
-use crate::PLUGIN_NAME;
-
-use crate::{config::ConfigHandle, MatrixServer, Servers};
 use weechat::{
     buffer::Buffer,
     hooks::{Command, CommandCallback, CommandSettings},
     Args, Weechat,
 };
+
+use crate::{PLUGIN_NAME, config::ConfigHandle, MatrixServer, Servers};
 
 pub struct MatrixCommand {
     servers: Servers,
@@ -250,7 +249,6 @@ impl CommandCallback for MatrixCommand {
 
         let argparse = Argparse::new("matrix")
             .about("Matrix chat protocol command.")
-            // .global_setting(ArgParseSettings::ColorNever)
             .global_setting(ArgParseSettings::DisableHelpFlags)
             .global_setting(ArgParseSettings::DisableVersion)
             .global_setting(ArgParseSettings::VersionlessSubcommands)

@@ -1,9 +1,11 @@
 WEECHAT_HOME ?= $(HOME)/.weechat
 PREFIX ?= $(WEECHAT_HOME)
 
+SOURCES := $(wildcard src/*.rs src/commands/*.rs)
+
 .PHONY: install install-dir lint
 
-target/debug/libmatrix.so: src/lib.rs src/server.rs src/room_buffer.rs src/commands/mod.rs src/config.rs
+target/debug/libmatrix.so: $(SOURCES)
 	cargo build
 
 install: install-dir target/debug/libmatrix.so

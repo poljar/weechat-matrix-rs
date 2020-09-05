@@ -106,10 +106,6 @@ impl BufferInputCallbackAsync for MatrixRoom {
     async fn callback(&mut self, buffer: BufferHandle, input: String) {
         let connection = &self.connection;
 
-        let buffer = buffer
-            .upgrade()
-            .expect("Running input cb but buffer is closed");
-
         if let Some(c) = &*connection.borrow() {
             // TODO check for errors and print them out.
             match c.send_message(&self.room_id, input).await {
@@ -117,6 +113,10 @@ impl BufferInputCallbackAsync for MatrixRoom {
                 Err(_e) => (),
             }
         } else {
+            let buffer = buffer
+                .upgrade()
+                .expect("Running input cb but buffer is closed");
+
             buffer.print("Error not connected");
         }
     }

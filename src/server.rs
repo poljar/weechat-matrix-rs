@@ -55,6 +55,8 @@
 //! that processing events will not block the Weechat mainloop for too long.
 
 use async_std::sync::{channel as async_channel, Receiver, Sender};
+use chrono::{offset::Utc, DateTime};
+use indoc::indoc;
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
@@ -72,6 +74,7 @@ use matrix_sdk::api::r0::session::login::Response as LoginResponse;
 use matrix_sdk::{
     self,
     api::r0::{
+        device::get_devices::Response as DevicesResponse,
         message::send_message_event::Response as RoomSendResponse,
         typing::create_typing_event::{Response as TypingResponse, Typing},
     },
@@ -167,6 +170,20 @@ impl Connection {
             Err(e) => panic!("Tokio error while sending a message {:?}", e),
         }
     }
+
+    pub async fn devices(&self) -> MatrixResult<DevicesResponse> {
+        let client = self.client.clone();
+        let handle = self
+            .runtime
+            .spawn(async move { client.devices().await })
+            .await;
+
+        match handle {
+            Ok(response) => response,
+            Err(e) => panic!("Tokio error while sending a message {:?}", e),
+        }
+    }
+
     pub async fn send_typing_notice(
         &self,
         room_id: &RoomId,
@@ -255,6 +272,80 @@ impl MatrixServer {
 
     pub fn inner(&self) -> Ref<'_, InnerServer> {
         self.inner.borrow()
+    }
+
+    pub fn connection(&self) -> Rc<RefCell<Option<Connection>>> {
+        self.inner().connection.clone()
+    }
+
+    pub async fn devices(&self) {
+        let connection = self.connection();
+
+        if let Some(c) = &*connection.borrow() {
+            let response = match c.devices().await {
+                Ok(r) => r,
+                Err(e) => {
+                    self.print_error(&format!(
+                        "Error fetching devices {:?}",
+                        e
+                    ));
+                    return;
+                }
+            };
+
+            if response.devices.is_empty() {
+                self.print_error("No devices were found for this server");
+                return;
+            }
+
+            self.print_network(&format!(
+                indoc!(
+                    "
+                    Devices for server {}{}{}:
+                      Device ID      Device name                   Last seen
+                "
+                ),
+                Weechat::color("chat_server"),
+                self.name(),
+                Weechat::color("reset")
+            ));
+
+            let lines: Vec<String> = response
+                .devices
+                .iter()
+                .map(|d| {
+                    let device_color = Weechat::info_get(
+                        "nick_color_name",
+                        d.device_id.as_str(),
+                    )
+                    .expect("Can't get device color");
+
+                    let last_seen_date =
+                        d.last_seen_ts.map_or("?".to_owned(), |d| {
+                            let date: DateTime<Utc> = d.into();
+                            date.format("%Y/%m/%d %H:%M").to_string()
+                        });
+
+                    let last_seen = format!(
+                        "{} @ {}",
+                        d.last_seen_ip.as_deref().unwrap_or("-"),
+                        last_seen_date
+                    );
+
+                    format!(
+                        "  {}{:<15}{}{:<30}{:<}",
+                        Weechat::color(&device_color),
+                        d.device_id.as_str(),
+                        Weechat::color("reset"),
+                        d.display_name.as_deref().unwrap_or(""),
+                        last_seen,
+                    )
+                })
+                .collect();
+
+            let line = lines.join("\n");
+            self.print_network(&line);
+        };
     }
 
     /// Parse an URL returning a None if the string is empty.
@@ -868,7 +959,12 @@ impl InnerServer {
         buffer_handle
     }
 
-    pub fn server_buffer<'a>(
+    /// Borrow the server buffer handle.
+    pub fn server_buffer(&self) -> Ref<Option<BufferHandle>> {
+        self.server_buffer.borrow()
+    }
+
+    fn get_or_create_buffer<'a>(
         &self,
         server_buffer: &'a mut RefMut<Option<BufferHandle>>,
     ) -> &'a BufferHandle {
@@ -888,13 +984,16 @@ impl InnerServer {
     /// Print a neutral message to the server buffer.
     pub fn print(&self, message: &str) {
         let mut server_buffer = self.server_buffer.borrow_mut();
-        let buffer = self.server_buffer(&mut server_buffer).upgrade().unwrap();
+        let buffer = self
+            .get_or_create_buffer(&mut server_buffer)
+            .upgrade()
+            .unwrap();
         buffer.print(message);
     }
 
     /// Print a message with a given prefix to the server buffer.
     pub fn print_with_prefix(&self, prefix: &str, message: &str) {
-        self.print(&format!("{}\t{}", prefix, message));
+        self.print(&format!("{}{}", prefix, message));
     }
 
     /// Print an network message to the server buffer.

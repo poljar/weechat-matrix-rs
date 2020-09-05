@@ -19,7 +19,10 @@ use weechat::{
     plugin, Args, Plugin, ReturnCode, Weechat,
 };
 
-use crate::{commands::Commands, config::ConfigHandle, server::MatrixServer, room_buffer::RoomBuffer};
+use crate::{
+    commands::Commands, config::ConfigHandle, room_buffer::RoomBuffer,
+    server::MatrixServer,
+};
 
 const PLUGIN_NAME: &str = "matrix";
 
@@ -47,9 +50,15 @@ impl Servers {
         let servers = self.borrow();
 
         for server in servers.values() {
+            if let Some(b) = &*server.inner().server_buffer() {
+                if b.upgrade().map_or(false, |b| &b == buffer) {
+                    return Some(server.clone());
+                }
+            }
+
             for room_buffer in server.inner().room_buffers.values() {
                 if buffer == &room_buffer.weechat_buffer() {
-                    return Some(server.clone())
+                    return Some(server.clone());
                 }
             }
         }
