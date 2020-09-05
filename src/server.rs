@@ -72,11 +72,11 @@ use matrix_sdk::{
     self,
     api::r0::{
         message::send_message_event::Response as RoomSendResponse,
-        typing::create_typing_event::Response as TypingResponse,
+        typing::create_typing_event::{Typing, Response as TypingResponse},
     },
     events::{
         room::message::{MessageEventContent, TextMessageEventContent},
-        AnySyncRoomEvent, AnySyncStateEvent,
+        AnyMessageEventContent, AnySyncRoomEvent, AnySyncStateEvent,
     },
     identifiers::{RoomId, UserId},
     Client, ClientConfig, Result as MatrixResult, Room, SyncSettings,
@@ -154,7 +154,7 @@ impl Connection {
                     });
 
                 client
-                    .room_send(&room_id, content, Some(Uuid::new_v4()))
+                    .room_send(&room_id, AnyMessageEventContent::RoomMessage(content), Some(Uuid::new_v4()))
                     .await
             })
             .await;
@@ -177,15 +177,13 @@ impl Connection {
         let handle = self
             .runtime
             .spawn(async move {
-                let timeout = if typing {
-                    Some(TYPING_NOTICE_TIMEOUT)
+                let typing = if typing {
+                    Typing::Yes(TYPING_NOTICE_TIMEOUT)
                 } else {
-                    None
+                    Typing::No
                 };
 
-                client
-                    .typing_notice(&room_id, &user_id, typing, timeout)
-                    .await
+                client.typing_notice(&room_id, &user_id, typing).await
             })
             .await;
 
