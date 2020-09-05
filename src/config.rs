@@ -16,14 +16,19 @@
 //! the section will do so.
 
 use crate::{MatrixServer, Servers};
-use weechat::config::{
-    Conf, ConfigSection, ConfigSectionSettings, OptionChanged,
-    SectionReadCallback,
+use weechat::{
+    config,
+    config::{
+        Conf, ConfigSection, ConfigSectionSettings, OptionChanged,
+        SectionReadCallback,
+    },
+    Weechat,
 };
-use weechat::{config, Weechat};
 
-use std::cell::{Ref, RefCell, RefMut};
-use std::rc::Rc;
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    rc::Rc,
+};
 
 config!(
     "matrix-rust",

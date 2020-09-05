@@ -1,15 +1,17 @@
-use clap::App as Argparse;
-use clap::AppSettings as ArgParseSettings;
-use clap::{Arg, ArgMatches, SubCommand};
+use clap::{
+    App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
+    SubCommand,
+};
 use url::Url;
 
 use crate::PLUGIN_NAME;
 
-use crate::config::ConfigHandle;
-use crate::{MatrixServer, Servers};
-use weechat::buffer::Buffer;
-use weechat::hooks::{Command, CommandCallback, CommandSettings};
-use weechat::{Args, Weechat};
+use crate::{config::ConfigHandle, MatrixServer, Servers};
+use weechat::{
+    buffer::Buffer,
+    hooks::{Command, CommandCallback, CommandSettings},
+    Args, Weechat,
+};
 
 pub struct MatrixCommand {
     servers: Servers,

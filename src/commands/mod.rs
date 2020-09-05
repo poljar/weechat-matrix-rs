@@ -1,5 +1,4 @@
-use crate::config::ConfigHandle;
-use crate::Servers;
+use crate::{config::ConfigHandle, Servers};
 use weechat::hooks::Command;
 
 mod matrix;

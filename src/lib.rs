@@ -7,9 +7,11 @@ mod render;
 mod room_buffer;
 mod server;
 
-use std::cell::{Ref, RefCell, RefMut};
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
+    rc::Rc,
+};
 
 use weechat::{
     buffer::{Buffer, BufferHandle},
@@ -17,9 +19,7 @@ use weechat::{
     plugin, Args, Plugin, ReturnCode, Weechat,
 };
 
-use crate::commands::Commands;
-use crate::config::ConfigHandle;
-use crate::server::MatrixServer;
+use crate::{commands::Commands, config::ConfigHandle, server::MatrixServer};
 
 const PLUGIN_NAME: &str = "matrix";
 

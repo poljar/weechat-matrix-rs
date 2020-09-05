@@ -54,13 +54,14 @@
 //! receiver fetches events individually from a mpsc channel. This makes sure
 //! that processing events will not block the Weechat mainloop for too long.
 
-use async_std::sync::channel as async_channel;
-use async_std::sync::{Receiver, Sender};
-use std::cell::{Ref, RefCell, RefMut};
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::rc::{Rc, Weak};
-use std::time::Duration;
+use async_std::sync::{channel as async_channel, Receiver, Sender};
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
+    path::PathBuf,
+    rc::{Rc, Weak},
+    time::Duration,
+};
 use tokio::runtime::Runtime;
 use tracing::error;
 use url::Url;
@@ -72,7 +73,7 @@ use matrix_sdk::{
     self,
     api::r0::{
         message::send_message_event::Response as RoomSendResponse,
-        typing::create_typing_event::{Typing, Response as TypingResponse},
+        typing::create_typing_event::{Response as TypingResponse, Typing},
     },
     events::{
         room::message::{MessageEventContent, TextMessageEventContent},
@@ -82,15 +83,13 @@ use matrix_sdk::{
     Client, ClientConfig, Result as MatrixResult, Room, SyncSettings,
 };
 
-use weechat::buffer::{BufferBuilder, BufferHandle};
-use weechat::config::{
-    BooleanOptionSettings, ConfigSection, StringOptionSettings,
+use weechat::{
+    buffer::{BufferBuilder, BufferHandle},
+    config::{BooleanOptionSettings, ConfigSection, StringOptionSettings},
+    JoinHandle, Weechat,
 };
-use weechat::JoinHandle;
-use weechat::Weechat;
 
-use crate::room_buffer::RoomBuffer;
-use crate::{config::Config, ConfigHandle};
+use crate::{config::Config, room_buffer::RoomBuffer, ConfigHandle};
 
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 pub const TYPING_NOTICE_TIMEOUT: Duration = Duration::from_secs(4);
@@ -154,7 +153,11 @@ impl Connection {
                     });
 
                 client
-                    .room_send(&room_id, AnyMessageEventContent::RoomMessage(content), Some(Uuid::new_v4()))
+                    .room_send(
+                        &room_id,
+                        AnyMessageEventContent::RoomMessage(content),
+                        Some(Uuid::new_v4()),
+                    )
                     .await
             })
             .await;
@@ -314,11 +317,16 @@ impl MatrixServer {
                     );
 
                     let mut server = server_ref.borrow_mut();
-                    let homeserver = Url::parse(option.value().as_ref()).expect(
-                "Can't parse homeserver URL, did the check callback fail?",
-                    );
 
-                    server.settings.homeserver = Some(homeserver)
+                    if option.value().is_empty() {
+                        let homeserver = Url::parse(option.value().as_ref()).expect(
+                    "Can't parse homeserver URL, did the check callback fail?",
+                        );
+
+                        server.settings.homeserver = Some(homeserver)
+                    } else {
+                        server.settings.homeserver = None;
+                    }
                 });
 
         server_section

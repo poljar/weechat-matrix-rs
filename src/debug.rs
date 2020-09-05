@@ -1,5 +1,4 @@
-use std::cell::RefMut;
-use std::io;
+use std::{cell::RefMut, io};
 
 use weechat::{
     buffer::{BufferBuilder, BufferHandle},

@@ -10,10 +10,8 @@ use matrix_sdk::{
                 TextMessageEventContent, VideoMessageEventContent,
             },
         },
-        {
-            AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
-            SyncStateEvent,
-        },
+        AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
+        SyncStateEvent,
     },
     PossiblyRedactedExt,
 };

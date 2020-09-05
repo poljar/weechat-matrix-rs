@@ -22,39 +22,49 @@
 //! we're sending ourselves before we receive them in a sync response, or if we
 //! decrypt a previously undecryptable event.
 
-use matrix_sdk::events::room::member::{
-    MemberEventContent,
-    MembershipChange::{
-        Banned, InvitationRejected, InvitationRevoked, Invited, Joined, Kicked,
-        KickedAndBanned, Left, ProfileChanged,
+use matrix_sdk::{
+    events::{
+        room::{
+            member::{
+                MemberEventContent,
+                MembershipChange::{
+                    Banned, InvitationRejected, InvitationRevoked, Invited,
+                    Joined, Kicked, KickedAndBanned, Left, ProfileChanged,
+                },
+                MembershipState,
+            },
+            name::NameEventContent,
+        },
+        AnyPossiblyRedactedSyncMessageEvent, AnySyncMessageEvent,
+        AnySyncRoomEvent, AnySyncStateEvent, SyncStateEvent,
     },
-    MembershipState,
+    identifiers::{RoomId, UserId},
+    PossiblyRedactedExt, Room,
 };
-use matrix_sdk::events::room::name::NameEventContent;
-use matrix_sdk::events::{
-    AnyPossiblyRedactedSyncMessageEvent, AnySyncMessageEvent, AnySyncRoomEvent,
-    AnySyncStateEvent, SyncStateEvent,
-};
-use matrix_sdk::identifiers::{RoomId, UserId};
-use matrix_sdk::{PossiblyRedactedExt, Room};
 use url::Url;
 
 use async_trait::async_trait;
 use tracing::{debug, error, trace};
 
-use crate::render::{render_membership, render_message};
-use crate::server::{Connection, TYPING_NOTICE_TIMEOUT};
-use std::cell::{Ref, RefCell, RefMut};
-use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::rc::Rc;
-use std::sync::Mutex;
-use std::time::Instant;
-use weechat::buffer::{
-    Buffer, BufferBuilderAsync, BufferHandle, BufferInputCallbackAsync,
-    NickSettings,
+use crate::{
+    render::{render_membership, render_message},
+    server::{Connection, TYPING_NOTICE_TIMEOUT},
 };
-use weechat::Weechat;
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
+    convert::TryFrom,
+    rc::Rc,
+    sync::Mutex,
+    time::Instant,
+};
+use weechat::{
+    buffer::{
+        Buffer, BufferBuilderAsync, BufferHandle, BufferInputCallbackAsync,
+        NickSettings,
+    },
+    Weechat,
+};
 
 pub struct RoomBuffer {
     own_user_id: Rc<UserId>,
