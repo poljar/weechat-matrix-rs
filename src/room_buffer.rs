@@ -96,11 +96,9 @@ pub struct MatrixRoom {
     homeserver: Rc<Url>,
     room_id: Rc<RoomId>,
     connection: Rc<RefCell<Option<Connection>>>,
-    prev_batch: Rc<RefCell<Option<String>>>,
     typing_notice_time: Rc<RefCell<Option<Instant>>>,
     room: Rc<RefCell<Room>>,
     members: HashMap<UserId, WeechatRoomMember>,
-    printed_before_ack_queue: Rc<RefCell<Vec<String>>>,
 }
 
 #[async_trait(?Send)]
@@ -149,11 +147,9 @@ impl RoomBuffer {
             homeserver: Rc::new(homeserver.clone()),
             room_id: Rc::new(room_id.clone()),
             connection: connection.clone(),
-            prev_batch: Rc::new(RefCell::new(None)),
             typing_notice_time: Rc::new(RefCell::new(None)),
             room: Rc::new(RefCell::new(Room::new(&room_id, &own_user_id))),
             members: HashMap::new(),
-            printed_before_ack_queue: Rc::new(RefCell::new(Vec::new())),
         };
 
         let buffer_handle = BufferBuilderAsync::new(&room_id.to_string())
