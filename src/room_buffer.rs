@@ -50,7 +50,7 @@ use tracing::{debug, error, trace};
 
 use crate::{
     connection::{Connection, TYPING_NOTICE_TIMEOUT},
-    render::{render_membership, render_message},
+    render::{render_message, MembershipContext, Render},
 };
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -709,7 +709,8 @@ impl RoomBuffer {
             // Display the event message
             let message = match (&sender, &target) {
                 (Some(sender), Some(target)) => {
-                    render_membership(event, sender, target)
+                    let context = MembershipContext { sender, target };
+                    event.render(&context).message
                 }
 
                 _ => {
