@@ -98,10 +98,14 @@ impl Connection {
     ///
     /// * `content` - The content of the message that will be sent to the
     /// server.
+    ///
+    /// * `transaction_id` - Attach an unique id to this message, later on the
+    /// event will contain the same id in the unsigned part of the event.
     pub async fn send_message(
         &self,
         room_id: &RoomId,
         content: AnyMessageEventContent,
+        transaction_id: Option<Uuid>,
     ) -> MatrixResult<RoomSendResponse> {
         let room_id = room_id.to_owned();
         let client = self.client.clone();
@@ -110,7 +114,11 @@ impl Connection {
             .runtime
             .spawn(async move {
                 client
-                    .room_send(&room_id, content, Some(Uuid::new_v4()))
+                    .room_send(
+                        &room_id,
+                        content,
+                        Some(transaction_id.unwrap_or_else(Uuid::new_v4)),
+                    )
                     .await
             })
             .await;

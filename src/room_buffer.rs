@@ -119,7 +119,7 @@ impl BufferInputCallbackAsync for MatrixRoom {
 
             let content = AnyMessageEventContent::RoomMessage(content);
 
-            match c.send_message(&self.room_id, content).await {
+            match c.send_message(&self.room_id, content, None).await {
                 Ok(_r) => (),
                 Err(_e) => (),
             }
