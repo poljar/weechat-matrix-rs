@@ -88,7 +88,7 @@ pub enum RoomError {
 }
 
 #[derive(Clone)]
-pub struct MatrixRoom {
+struct MatrixRoom {
     homeserver: Rc<Url>,
     room_id: Rc<RoomId>,
 
@@ -118,7 +118,11 @@ impl BufferInputCallbackAsync for MatrixRoom {
 }
 
 impl MatrixRoom {
-    pub async fn send_message(&self, buffer: BufferHandle, content: AnyMessageEventContent) {
+    pub async fn send_message(
+        &self,
+        buffer: BufferHandle,
+        content: AnyMessageEventContent,
+    ) {
         if let Some(c) = &*self.connection.borrow() {
             // TODO check for errors and print them out.
             match c.send_message(&self.room_id, content, None).await {
@@ -242,6 +246,29 @@ impl RoomBuffer {
                 self.handle_room_message(&message)
             }
         }
+    }
+
+    /// Send the given content to the server.
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - The content that should be sent to the server.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let content = MessageEventContent::Text(TextMessageEventContent {
+    ///     body: "Hello world".to_owned(),
+    ///     formatted: None,
+    ///     relates_to: None,
+    /// });
+    /// let content = AnyMessageEventContent::RoomMessage(content);
+    ///
+    /// buffer.send_message(content).await
+    /// ```
+    pub async fn send_message(&self, content: AnyMessageEventContent) {
+        let buffer = self.buffer_handle.clone();
+        self.inner.send_message(buffer, content).await
     }
 
     pub fn room_mut(&mut self) -> RefMut<'_, Room> {

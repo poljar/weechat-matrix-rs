@@ -582,11 +582,7 @@ impl InnerServer {
 
         let room_id = room.room_id.clone();
 
-        let buffer = RoomBuffer::restore(
-            room,
-            &self.connection,
-            homeserver,
-        );
+        let buffer = RoomBuffer::restore(room, &self.connection, homeserver);
 
         self.room_buffers.insert(room_id, buffer);
     }
