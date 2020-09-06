@@ -106,19 +106,22 @@ pub struct MatrixRoom {
 #[async_trait(?Send)]
 impl BufferInputCallbackAsync for MatrixRoom {
     async fn callback(&mut self, buffer: BufferHandle, input: String) {
-        let connection = &self.connection;
+        // TODO parse the input here and produce a formatted body.
+        let content = MessageEventContent::Text(TextMessageEventContent {
+            body: input,
+            formatted: None,
+            relates_to: None,
+        });
+        let content = AnyMessageEventContent::RoomMessage(content);
 
-        // FIXME move this logic into the `MatrixRoom`
-        if let Some(c) = &*connection.borrow() {
+        self.send_message(buffer, content).await;
+    }
+}
+
+impl MatrixRoom {
+    pub async fn send_message(&self, buffer: BufferHandle, content: AnyMessageEventContent) {
+        if let Some(c) = &*self.connection.borrow() {
             // TODO check for errors and print them out.
-            let content = MessageEventContent::Text(TextMessageEventContent {
-                body: input,
-                formatted: None,
-                relates_to: None,
-            });
-
-            let content = AnyMessageEventContent::RoomMessage(content);
-
             match c.send_message(&self.room_id, content, None).await {
                 Ok(_r) => (),
                 Err(_e) => (),
@@ -126,7 +129,7 @@ impl BufferInputCallbackAsync for MatrixRoom {
         } else {
             let buffer = buffer
                 .upgrade()
-                .expect("Running input cb but buffer is closed");
+                .expect("Trying to send a message while the buffer is closed");
 
             buffer.print("Error not connected");
         }
