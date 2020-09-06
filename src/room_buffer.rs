@@ -70,7 +70,6 @@ use weechat::{
 
 #[derive(Clone)]
 pub struct RoomBuffer {
-    typing_in_flight: Rc<Mutex<()>>,
     inner: MatrixRoom,
     buffer_handle: BufferHandle,
 }
@@ -90,11 +89,14 @@ pub enum RoomError {
 
 #[derive(Clone)]
 pub struct MatrixRoom {
-    server_name: Rc<String>,
     homeserver: Rc<Url>,
     room_id: Rc<RoomId>,
+
     connection: Rc<RefCell<Option<Connection>>>,
+
     typing_notice_time: Rc<RefCell<Option<Instant>>>,
+    typing_in_flight: Rc<Mutex<()>>,
+
     room: Rc<RefCell<Room>>,
     members: HashMap<UserId, WeechatRoomMember>,
 }
@@ -134,18 +136,17 @@ impl MatrixRoom {
 
 impl RoomBuffer {
     pub fn new(
-        server_name: &str,
         connection: &Rc<RefCell<Option<Connection>>>,
         homeserver: &Url,
         room_id: RoomId,
         own_user_id: &UserId,
     ) -> Self {
         let room = MatrixRoom {
-            server_name: Rc::new(server_name.to_owned()),
             homeserver: Rc::new(homeserver.clone()),
             room_id: Rc::new(room_id.clone()),
             connection: connection.clone(),
             typing_notice_time: Rc::new(RefCell::new(None)),
+            typing_in_flight: Rc::new(Mutex::new(())),
             room: Rc::new(RefCell::new(Room::new(&room_id, &own_user_id))),
             members: HashMap::new(),
         };
@@ -167,7 +168,6 @@ impl RoomBuffer {
         buffer.enable_nicklist();
 
         RoomBuffer {
-            typing_in_flight: Rc::new(Mutex::new(())),
             inner: room,
             buffer_handle,
         }
@@ -175,12 +175,10 @@ impl RoomBuffer {
 
     pub fn restore(
         room: Room,
-        server_name: &str,
         connection: &Rc<RefCell<Option<Connection>>>,
         homeserver: &Url,
     ) -> Self {
         let mut room_buffer = RoomBuffer::new(
-            server_name,
             connection,
             homeserver,
             room.room_id.clone(),
@@ -390,7 +388,7 @@ impl RoomBuffer {
     ///
     /// If the input is empty the typing notice is disabled.
     pub fn update_typing_notice(&self) {
-        let typing_in_flight = self.typing_in_flight.clone();
+        let typing_in_flight = self.inner.typing_in_flight.clone();
         let buffer = self.weechat_buffer();
         let input = buffer.input();
 

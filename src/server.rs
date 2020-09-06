@@ -550,7 +550,6 @@ impl InnerServer {
                 .as_ref()
                 .expect("Receiving events while not being logged in");
             let buffer = RoomBuffer::new(
-                &self.server_name,
                 &self.connection,
                 homeserver,
                 room_id.clone(),
@@ -585,7 +584,6 @@ impl InnerServer {
 
         let buffer = RoomBuffer::restore(
             room,
-            &self.server_name,
             &self.connection,
             homeserver,
         );
