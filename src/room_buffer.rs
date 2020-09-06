@@ -98,6 +98,7 @@ pub struct MatrixRoom {
     typing_in_flight: Rc<Mutex<()>>,
 
     room: Rc<RefCell<Room>>,
+    // FIXME this needs to be behind an Rc so the clone does the right thing.
     members: HashMap<UserId, WeechatRoomMember>,
 }
 
