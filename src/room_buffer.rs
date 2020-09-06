@@ -33,10 +33,12 @@ use matrix_sdk::{
                 },
                 MembershipState,
             },
+            message::{MessageEventContent, TextMessageEventContent},
             name::NameEventContent,
         },
-        AnyPossiblyRedactedSyncMessageEvent, AnySyncMessageEvent,
-        AnySyncRoomEvent, AnySyncStateEvent, SyncStateEvent,
+        AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
+        AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
+        SyncStateEvent,
     },
     identifiers::{RoomId, UserId},
     PossiblyRedactedExt, Room,
@@ -109,7 +111,15 @@ impl BufferInputCallbackAsync for MatrixRoom {
         // FIXME move this logic into the `MatrixRoom`
         if let Some(c) = &*connection.borrow() {
             // TODO check for errors and print them out.
-            match c.send_message(&self.room_id, input).await {
+            let content = MessageEventContent::Text(TextMessageEventContent {
+                body: input,
+                formatted: None,
+                relates_to: None,
+            });
+
+            let content = AnyMessageEventContent::RoomMessage(content);
+
+            match c.send_message(&self.room_id, content).await {
                 Ok(_r) => (),
                 Err(_e) => (),
             }

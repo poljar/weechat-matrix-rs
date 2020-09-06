@@ -96,32 +96,21 @@ impl Connection {
     ///
     /// * `room_id` - The id of the room which the message should be sent to.
     ///
-    /// * `message` - The message that should be sent to the room.
+    /// * `content` - The content of the message that will be sent to the
+    /// server.
     pub async fn send_message(
         &self,
         room_id: &RoomId,
-        message: String,
+        content: AnyMessageEventContent,
     ) -> MatrixResult<RoomSendResponse> {
-        // FIXME accept AnyMessageEventContent here.
         let room_id = room_id.to_owned();
         let client = self.client.clone();
 
         let handle = self
             .runtime
             .spawn(async move {
-                let content =
-                    MessageEventContent::Text(TextMessageEventContent {
-                        body: message,
-                        formatted: None,
-                        relates_to: None,
-                    });
-
                 client
-                    .room_send(
-                        &room_id,
-                        AnyMessageEventContent::RoomMessage(content),
-                        Some(Uuid::new_v4()),
-                    )
+                    .room_send(&room_id, content, Some(Uuid::new_v4()))
                     .await
             })
             .await;
