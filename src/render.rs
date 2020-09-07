@@ -97,7 +97,7 @@ impl<'a> Render for &'a SyncStateEvent<MemberEventContent> {
                             color_reset = Weechat::color("reset"))
                 }
 
-                std::option::Option::None => {
+                Option::None => {
                     member.user_id.as_ref().to_string()
                 }
             }
@@ -162,7 +162,7 @@ impl<'a> Render for &'a SyncStateEvent<MemberEventContent> {
                                 color_action = color_action,
                                 color_reset = color_reset
                                 ),
-                            std::option::Option::None => format!(
+                            Option::None => format!(
                                 "{prefix} {target} {color_action}removed their display name{color_reset}",
                                 prefix = Weechat::prefix(prefix),
                                 target = target_name,
@@ -181,7 +181,7 @@ impl<'a> Render for &'a SyncStateEvent<MemberEventContent> {
                                 color_action = color_action,
                                 color_reset = color_reset
                                 ),
-                            std::option::Option::None => format!(
+                            Option::None => format!(
                                 "{prefix} {target} {color_action}changed their avatar and removed display name{color_reset}",
                                 prefix = Weechat::prefix(prefix),
                                 target = target_name,
