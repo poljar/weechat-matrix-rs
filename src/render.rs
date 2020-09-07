@@ -1,3 +1,5 @@
+use url::Url;
+
 use matrix_sdk::{
     events::{
         room::{
@@ -26,11 +28,11 @@ pub struct RenderedEvent {
     /// The tags of the event,
     pub tags: Vec<String>,
     // TODO we need to allow multiple message/tags pairs here.
-    // This will be useful if a message has a part that we should be able to hide
-    // using a filter on the tags.
+    // This will be useful if a message has a part that we should be able to
+    // hide using a filter on the tags.
     //
-    // One such example would be a code snippet, where we want to show that someone
-    // posted a code snippet but we might want to filter out the body.
+    // One such example would be a code snippet, where we want to show that
+    // someone posted a code snippet but we might want to filter out the body.
     /// The event rendered as a string.
     pub message: String,
 }
@@ -228,6 +230,31 @@ impl<'a> Render for &'a SyncStateEvent<MemberEventContent> {
     }
 }
 
+impl Render for dyn HasUrlOrFile {
+    type RenderContext = Url;
+    const TAGS: &'static [&'static str] = &["matrix_media"];
+
+    fn render(&self, _homeserver: &Self::RenderContext) -> RenderedEvent {
+        let message = format!(
+            "{color_delimiter}<{color_reset}{}{color_delimiter}>\
+                [{color_reset}{}{color_delimiter}]{color_reset}",
+            self.body(),
+            // FIXME this isn't right, the MXID -> URL transformation depends on
+            // your homeserver URL.
+            self.resolve_url(),
+            color_delimiter = Weechat::color("color_delimiter"),
+            color_reset = Weechat::color("reset")
+        );
+
+        RenderedEvent {
+            message,
+            tags: Self::TAGS.iter().map(|t| t.to_string()).collect(),
+            // FIXME do the conversion here.
+            message_timestamp: 0,
+        }
+    }
+}
+
 /// Rendering function for room messages.
 // FIXME: Pass room member
 // TODO: We should not return raw strings here but something like [Block]
@@ -361,8 +388,9 @@ pub fn render_message(
     }
 }
 
-/// Trait for message event types that contain an optional formatted body. `resolve_body` will
-/// return the formatted body if present, else fallback to the regular body.
+/// Trait for message event types that contain an optional formatted body.
+/// `resolve_body` will return the formatted body if present, else fallback to
+/// the regular body.
 trait HasFormattedBody {
     fn body(&self) -> &str;
     fn formatted_body(&self) -> Option<&str>;
@@ -372,8 +400,9 @@ trait HasFormattedBody {
     }
 }
 
-// Repeating this for each event type would get boring fast so lets use a simple macro to implement
-// the trait for a struct that has a `body` and `formatted_body` field
+// Repeating this for each event type would get boring fast so lets use a simple
+// macro to implement the trait for a struct that has a `body` and
+// `formatted_body` field
 macro_rules! has_formatted_body {
     ($content: ident) => {
         impl HasFormattedBody for $content {
@@ -390,23 +419,29 @@ macro_rules! has_formatted_body {
     };
 }
 
-/// This trait is implemented for message types that can contain either an URL or an encrypted
-/// file. One of these _must_ be present.
+/// This trait is implemented for message types that can contain either an URL
+/// or an encrypted file. One of these _must_ be present.
 trait HasUrlOrFile {
     fn url(&self) -> Option<&str>;
     fn file(&self) -> Option<&str>;
+    fn body(&self) -> &str;
     #[inline]
     fn resolve_url(&self) -> &str {
-        // the file is either encrypted or not encrypted so either `url` or `file` must
-        // exist and unwrapping will never panic
+        // the file is either encrypted or not encrypted so either `url` or
+        // `file` must exist and unwrapping will never panic
         self.url().or_else(|| self.file()).unwrap()
     }
 }
 
-// Same as above: a simple macro to implement the trait for structs with `url` and `file` fields.
+// Same as above: a simple macro to implement the trait for structs with `url`
+// and `file` fields.
 macro_rules! has_url_or_file {
     ($content: ident) => {
         impl HasUrlOrFile for $content {
+            fn body(&self) -> &str {
+                &self.body
+            }
+
             #[inline]
             fn url(&self) -> Option<&str> {
                 self.url.as_deref()
