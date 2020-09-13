@@ -488,7 +488,7 @@ has_url_or_file!(VideoMessageEventContent);
 
 /// Rendering implementation for membership events (joins, leaves, bans, profile
 /// changes, etc).
-pub fn render_membership<'a>(
+pub fn render_membership(
     event: &SyncStateEvent<MemberEventContent>,
     sender: &WeechatRoomMember,
     target: &WeechatRoomMember,
