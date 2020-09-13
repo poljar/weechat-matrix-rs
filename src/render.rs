@@ -4,6 +4,7 @@ use url::Url;
 use matrix_sdk::{
     events::{
         room::{
+            encrypted::EncryptedEventContent,
             member::{MemberEventContent, MembershipChange},
             message::{
                 AudioMessageEventContent, EmoteMessageEventContent,
@@ -96,202 +97,6 @@ pub trait Render {
     }
 
     fn render(&self, context: &Self::RenderContext) -> RenderedContent;
-}
-
-/// Rendering implementation for membership events (joins, leaves, bans, profile
-/// changes, etc).
-pub fn render_membership<'a>(
-    event: &SyncStateEvent<MemberEventContent>,
-    sender: &WeechatRoomMember,
-    target: &WeechatRoomMember,
-) -> String {
-    const TAGS: &'static [&'static str] = &["matrix_membership"];
-    use MembershipChange::*;
-    let change_op = event.membership_change();
-
-    let operation = match change_op {
-        None => "did nothing",
-        Error => "caused an error", // must never happen
-        Joined => "has joined the room",
-        Left => "has left the room",
-        Banned => "was banned by",
-        Unbanned => "was unbanned by",
-        Kicked => "was kicked from the room by",
-        Invited => "was invited to the room by",
-        KickedAndBanned => "was kicked and banned by",
-        InvitationRejected => "rejected the invitation",
-        InvitationRevoked => "had the invitation revoked by",
-        ProfileChanged { .. } => "_",
-        NotImplemented => "performed an unimplemented operation",
-        _ => "caused an unhandled membership change",
-    };
-
-    fn formatted_name(member: &WeechatRoomMember) -> String {
-        match &member.display_name {
-            Some(display_name) => {
-                format!(
-                    "{name} {color_delim}({color_reset}{user_id}{color_delim}){color_reset}",
-                    name = display_name,
-                    user_id = &member.user_id,
-                    color_delim = Weechat::color("chat_delimiters"),
-                    color_reset = Weechat::color("reset"))
-            }
-
-            Option::None => {
-                member.user_id.as_ref().to_string()
-            }
-        }
-    }
-
-    let (prefix, color_action) = match change_op {
-        Joined => ("join", "green"),
-        Banned | ProfileChanged { .. } | Invited => ("network", "magenta"),
-        _ => ("quit", "red"),
-    };
-
-    let color_action = Weechat::color(color_action);
-    let color_reset = Weechat::color("reset");
-
-    let operation = format!(
-        "{color_action}{op}{color_reset}",
-        color_action = color_action,
-        op = operation,
-        color_reset = color_reset
-    );
-
-    let target_name = format!(
-        "{color_user}{target_name}{color_reset}",
-        target_name = formatted_name(target),
-        color_user = Weechat::color("reset"), // TODO
-        color_reset = Weechat::color("reset")
-    );
-
-    let sender_name = format!(
-        "{color_user}{sender_name}{color_reset}",
-        sender_name = formatted_name(sender),
-        color_user = Weechat::color("reset"), // TODO
-        color_reset = Weechat::color("reset")
-    );
-
-    let message = match change_op {
-        ProfileChanged {
-            displayname_changed,
-            avatar_url_changed,
-        } => {
-            let new_display_name = &event.content.displayname;
-
-            // TODO: Should we display the new avatar URL?
-            // let new_avatar = self.content.avatar_url.as_ref();
-
-            match (displayname_changed, avatar_url_changed) {
-                (false, true) =>
-                    format!(
-                        "{prefix} {target} {color_action}changed their avatar{color_reset}",
-                        prefix = Weechat::prefix(prefix),
-                        target = target_name,
-                        color_action = color_action,
-                        color_reset = color_reset
-                        ),
-                (true, false) => {
-                    match new_display_name {
-                        Some(name) => format!(
-                            "{prefix} {target} {color_action}changed their display name to{color_reset} {new}",
-                            prefix = Weechat::prefix(prefix),
-                            target = target_name,
-                            new = name,
-                            color_action = color_action,
-                            color_reset = color_reset
-                            ),
-                        Option::None => format!(
-                            "{prefix} {target} {color_action}removed their display name{color_reset}",
-                            prefix = Weechat::prefix(prefix),
-                            target = target_name,
-                            color_action = color_action,
-                            color_reset = color_reset
-                            ),
-                    }
-                }
-                (true, true) =>
-                    match new_display_name {
-                        Some(name) => format!(
-                            "{prefix} {target} {color_action}changed their avatar \
-                            and changed their display name to{color_reset} {new}",
-                            prefix = Weechat::prefix(prefix),
-                            target = target_name,
-                            new = name,
-                            color_action = color_action,
-                            color_reset = color_reset
-                            ),
-                        Option::None => format!(
-                            "{prefix} {target} {color_action}changed their \
-                            avatar and removed display name{color_reset}",
-                            prefix = Weechat::prefix(prefix),
-                            target = target_name,
-                            color_action = color_action,
-                            color_reset = color_reset
-                            ),
-                    }
-                (false, false) =>
-                    "Cannot happen: got profile changed but nothing really changed".to_string()
-            }
-        }
-        None | Error | Joined | Left | InvitationRejected | NotImplemented => {
-            format!(
-                "{prefix} {target} {op}",
-                prefix = Weechat::prefix(prefix),
-                target = target_name,
-                op = operation
-            )
-        }
-        Banned | Unbanned | Kicked | Invited | InvitationRevoked
-        | KickedAndBanned => format!(
-            "{prefix} {target} {op} {sender}",
-            prefix = Weechat::prefix(prefix),
-            target = target_name,
-            op = operation,
-            sender = sender_name
-        ),
-
-        // This means an unsupported membership change happened so we just
-        // print a generic message to indicate this.
-        _ => format!(
-            "{prefix} {sender} {op}",
-            prefix = Weechat::prefix(prefix),
-            sender = sender_name,
-            op = operation,
-        ),
-    };
-
-    // TODO we should return the tags as well.
-    message
-}
-
-impl Render for dyn HasUrlOrFile {
-    type RenderContext = Url;
-    const TAGS: &'static [&'static str] = &["matrix_media"];
-
-    fn render(&self, _homeserver: &Self::RenderContext) -> RenderedContent {
-        let message = format!(
-            "{color_delimiter}<{color_reset}{}{color_delimiter}>\
-                [{color_reset}{}{color_delimiter}]{color_reset}",
-            self.body(),
-            // FIXME this isn't right, the MXID -> URL transformation depends on
-            // your homeserver URL.
-            self.resolve_url(),
-            color_delimiter = Weechat::color("color_delimiter"),
-            color_reset = Weechat::color("reset")
-        );
-
-        let line = RenderedLine {
-            message,
-            tags: self.tags(),
-        };
-
-
-        RenderedContent {
-            lines: vec![line],
-        }
-    }
 }
 
 impl Render for TextMessageEventContent {
@@ -388,9 +193,7 @@ impl Render for NoticeMessageEventContent {
             tags: self.tags(),
         };
 
-        RenderedContent {
-            lines: vec![line],
-        }
+        RenderedContent { lines: vec![line] }
     }
 }
 
@@ -419,9 +222,56 @@ impl Render for ServerNoticeMessageEventContent {
             tags: self.tags(),
         };
 
-        RenderedContent {
-            lines: vec![line],
-        }
+        RenderedContent { lines: vec![line] }
+    }
+}
+
+impl Render for dyn HasUrlOrFile {
+    type RenderContext = Url;
+    const TAGS: &'static [&'static str] = &["matrix_media"];
+
+    fn render(&self, _homeserver: &Self::RenderContext) -> RenderedContent {
+        let message = format!(
+            "{color_delimiter}<{color_reset}{}{color_delimiter}>\
+                [{color_reset}{}{color_delimiter}]{color_reset}",
+            self.body(),
+            // FIXME this isn't right, the MXID -> URL transformation depends on
+            // your homeserver URL.
+            self.resolve_url(),
+            color_delimiter = Weechat::color("color_delimiter"),
+            color_reset = Weechat::color("reset")
+        );
+
+        let line = RenderedLine {
+            message,
+            tags: self.tags(),
+        };
+
+        RenderedContent { lines: vec![line] }
+    }
+}
+
+impl Render for EncryptedEventContent {
+    const TAGS: &'static [&'static str] = &["matrix_encrypted"];
+    type RenderContext = ();
+
+    fn render(&self, _: &Self::RenderContext) -> RenderedContent {
+        let message = format!(
+            "{}<{}Unable to decrypt message{}>{}",
+            Weechat::color("chat_delimiters"),
+            Weechat::color("logger.color.backlog_line"),
+            Weechat::color("chat_delimiters"),
+            Weechat::color("reset"),
+        );
+
+        let line = RenderedLine {
+            message,
+            // TODO add tags that allow us decrypt the event at a later point in
+            // time, sender key, algorithm, session id.
+            tags: self.tags(),
+        };
+
+        RenderedContent { lines: vec![line] }
     }
 }
 
@@ -634,3 +484,171 @@ has_url_or_file!(AudioMessageEventContent);
 has_url_or_file!(FileMessageEventContent);
 has_url_or_file!(ImageMessageEventContent);
 has_url_or_file!(VideoMessageEventContent);
+
+/// Rendering implementation for membership events (joins, leaves, bans, profile
+/// changes, etc).
+pub fn render_membership<'a>(
+    event: &SyncStateEvent<MemberEventContent>,
+    sender: &WeechatRoomMember,
+    target: &WeechatRoomMember,
+) -> String {
+    const TAGS: &'static [&'static str] = &["matrix_membership"];
+    use MembershipChange::*;
+    let change_op = event.membership_change();
+
+    let operation = match change_op {
+        None => "did nothing",
+        Error => "caused an error", // must never happen
+        Joined => "has joined the room",
+        Left => "has left the room",
+        Banned => "was banned by",
+        Unbanned => "was unbanned by",
+        Kicked => "was kicked from the room by",
+        Invited => "was invited to the room by",
+        KickedAndBanned => "was kicked and banned by",
+        InvitationRejected => "rejected the invitation",
+        InvitationRevoked => "had the invitation revoked by",
+        ProfileChanged { .. } => "_",
+        NotImplemented => "performed an unimplemented operation",
+        _ => "caused an unhandled membership change",
+    };
+
+    fn formatted_name(member: &WeechatRoomMember) -> String {
+        match &member.display_name {
+            Some(display_name) => {
+                format!(
+                    "{name} {color_delim}({color_reset}{user_id}{color_delim}){color_reset}",
+                    name = display_name,
+                    user_id = &member.user_id,
+                    color_delim = Weechat::color("chat_delimiters"),
+                    color_reset = Weechat::color("reset"))
+            }
+
+            Option::None => {
+                member.user_id.as_ref().to_string()
+            }
+        }
+    }
+
+    let (prefix, color_action) = match change_op {
+        Joined => ("join", "green"),
+        Banned | ProfileChanged { .. } | Invited => ("network", "magenta"),
+        _ => ("quit", "red"),
+    };
+
+    let color_action = Weechat::color(color_action);
+    let color_reset = Weechat::color("reset");
+
+    let operation = format!(
+        "{color_action}{op}{color_reset}",
+        color_action = color_action,
+        op = operation,
+        color_reset = color_reset
+    );
+
+    let target_name = format!(
+        "{color_user}{target_name}{color_reset}",
+        target_name = formatted_name(target),
+        color_user = Weechat::color("reset"), // TODO
+        color_reset = Weechat::color("reset")
+    );
+
+    let sender_name = format!(
+        "{color_user}{sender_name}{color_reset}",
+        sender_name = formatted_name(sender),
+        color_user = Weechat::color("reset"), // TODO
+        color_reset = Weechat::color("reset")
+    );
+
+    let message = match change_op {
+        ProfileChanged {
+            displayname_changed,
+            avatar_url_changed,
+        } => {
+            let new_display_name = &event.content.displayname;
+
+            // TODO: Should we display the new avatar URL?
+            // let new_avatar = self.content.avatar_url.as_ref();
+
+            match (displayname_changed, avatar_url_changed) {
+                (false, true) =>
+                    format!(
+                        "{prefix} {target} {color_action}changed their avatar{color_reset}",
+                        prefix = Weechat::prefix(prefix),
+                        target = target_name,
+                        color_action = color_action,
+                        color_reset = color_reset
+                        ),
+                (true, false) => {
+                    match new_display_name {
+                        Some(name) => format!(
+                            "{prefix} {target} {color_action}changed their display name to{color_reset} {new}",
+                            prefix = Weechat::prefix(prefix),
+                            target = target_name,
+                            new = name,
+                            color_action = color_action,
+                            color_reset = color_reset
+                            ),
+                        Option::None => format!(
+                            "{prefix} {target} {color_action}removed their display name{color_reset}",
+                            prefix = Weechat::prefix(prefix),
+                            target = target_name,
+                            color_action = color_action,
+                            color_reset = color_reset
+                            ),
+                    }
+                }
+                (true, true) =>
+                    match new_display_name {
+                        Some(name) => format!(
+                            "{prefix} {target} {color_action}changed their avatar \
+                            and changed their display name to{color_reset} {new}",
+                            prefix = Weechat::prefix(prefix),
+                            target = target_name,
+                            new = name,
+                            color_action = color_action,
+                            color_reset = color_reset
+                            ),
+                        Option::None => format!(
+                            "{prefix} {target} {color_action}changed their \
+                            avatar and removed display name{color_reset}",
+                            prefix = Weechat::prefix(prefix),
+                            target = target_name,
+                            color_action = color_action,
+                            color_reset = color_reset
+                            ),
+                    }
+                (false, false) =>
+                    "Cannot happen: got profile changed but nothing really changed".to_string()
+            }
+        }
+        None | Error | Joined | Left | InvitationRejected | NotImplemented => {
+            format!(
+                "{prefix} {target} {op}",
+                prefix = Weechat::prefix(prefix),
+                target = target_name,
+                op = operation
+            )
+        }
+        Banned | Unbanned | Kicked | Invited | InvitationRevoked
+        | KickedAndBanned => format!(
+            "{prefix} {target} {op} {sender}",
+            prefix = Weechat::prefix(prefix),
+            target = target_name,
+            op = operation,
+            sender = sender_name
+        ),
+
+        // This means an unsupported membership change happened so we just
+        // print a generic message to indicate this.
+        _ => format!(
+            "{prefix} {sender} {op}",
+            prefix = Weechat::prefix(prefix),
+            sender = sender_name,
+            op = operation,
+        ),
+    };
+
+    // TODO we should return the tags as well.
+    message
+}
