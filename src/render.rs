@@ -25,6 +25,7 @@ use weechat::Weechat;
 use crate::room_buffer::WeechatRoomMember;
 
 /// The rendered version of an event.
+#[allow(dead_code)]
 pub struct RenderedEvent {
     /// The UNIX timestamp of the event.
     pub message_timestamp: u64,
@@ -492,7 +493,7 @@ pub fn render_membership<'a>(
     sender: &WeechatRoomMember,
     target: &WeechatRoomMember,
 ) -> String {
-    const TAGS: &'static [&'static str] = &["matrix_membership"];
+    const _TAGS: &[&str] = &["matrix_membership"];
     use MembershipChange::*;
     let change_op = event.membership_change();
 
@@ -560,7 +561,8 @@ pub fn render_membership<'a>(
         color_reset = Weechat::color("reset")
     );
 
-    let message = match change_op {
+    // TODO we should return the tags as well.
+    match change_op {
         ProfileChanged {
             displayname_changed,
             avatar_url_changed,
@@ -647,8 +649,5 @@ pub fn render_membership<'a>(
             sender = sender_name,
             op = operation,
         ),
-    };
-
-    // TODO we should return the tags as well.
-    message
+    }
 }
