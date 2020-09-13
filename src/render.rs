@@ -1,3 +1,4 @@
+use std::time::SystemTime;
 use url::Url;
 
 use matrix_sdk::{
@@ -7,7 +8,8 @@ use matrix_sdk::{
             message::{
                 AudioMessageEventContent, EmoteMessageEventContent,
                 FileMessageEventContent, ImageMessageEventContent,
-                MessageEventContent, NoticeMessageEventContent,
+                LocationMessageEventContent, MessageEventContent,
+                NoticeMessageEventContent, ServerNoticeMessageEventContent,
                 TextMessageEventContent, VideoMessageEventContent,
             },
         },
@@ -25,29 +27,20 @@ use crate::room_buffer::WeechatRoomMember;
 pub struct RenderedEvent {
     /// The UNIX timestamp of the event.
     pub message_timestamp: u64,
-    /// The tags of the event,
+    pub prefix: String,
+    pub content: RenderedContent,
+}
+
+pub struct RenderedLine {
+    /// The tags of the line.
     pub tags: Vec<String>,
-    // TODO we need to allow multiple message/tags pairs here.
-    // This will be useful if a message has a part that we should be able to
-    // hide using a filter on the tags.
-    //
-    // One such example would be a code snippet, where we want to show that
-    // someone posted a code snippet but we might want to filter out the body.
-    /// The event rendered as a string.
+    /// The message of the line.
     pub message: String,
 }
 
 pub struct RenderedContent {
-    /// The tags of the event,
-    pub tags: Vec<String>,
-    // TODO we need to allow multiple message/tags pairs here.
-    // This will be useful if a message has a part that we should be able to
-    // hide using a filter on the tags.
-    //
-    // One such example would be a code snippet, where we want to show that
-    // someone posted a code snippet but we might want to filter out the body.
-    /// The event rendered as a string.
-    pub message: String,
+    /// The collection of lines that the event has.
+    pub lines: Vec<RenderedLine>,
 }
 
 /// Trait allowing events to be rendered for Weechat.
@@ -67,34 +60,51 @@ pub trait Render {
         Self::TAGS.iter().map(|t| t.to_string()).collect()
     }
 
-    /// Render the event.
-    fn render_with_prefix(&self, sender: &WeechatRoomMember, context: &Self::RenderContext) -> RenderedEvent {
+    fn prefix(&self, sender: &WeechatRoomMember) -> String {
         // TODO the sender should have a color attribute and we should use it
         // here.
-        let colorname_user = Weechat::info_get("nick_color_name", sender.user_id.as_str()).unwrap_or_else(|| String::from("default"));
-        let prefix = format!("{}{}{}", Weechat::color(&colorname_user), sender.nick, Weechat::color("reset"));
+        let colorname_user =
+            Weechat::info_get("nick_color_name", sender.user_id.as_str())
+                .unwrap_or_else(|| String::from("default"));
+        format!(
+            "{}{}{}",
+            Weechat::color(&colorname_user),
+            sender.nick,
+            Weechat::color("reset")
+        )
+    }
 
+    /// Render the event.
+    fn render_with_prefix(
+        &self,
+        timestamp: &SystemTime,
+        sender: &WeechatRoomMember,
+        context: &Self::RenderContext,
+    ) -> RenderedEvent {
+        let prefix = self.prefix(sender);
         let content = self.render(context);
+        let timestamp: u64 = timestamp
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
 
         RenderedEvent {
-            tags: self.tags(),
-            message: content.message,
-            message_timestamp: 0,
+            prefix,
+            message_timestamp: timestamp,
+            content,
         }
     }
-    fn render(&self, context: &Self::RenderContext) -> RenderedContent;
-}
 
-pub struct MembershipContext<'a> {
-    /// The room member object of the event sender.
-    pub sender: &'a WeechatRoomMember,
-    /// The room member object of the target of the membership change.
-    pub target: &'a WeechatRoomMember,
+    fn render(&self, context: &Self::RenderContext) -> RenderedContent;
 }
 
 /// Rendering implementation for membership events (joins, leaves, bans, profile
 /// changes, etc).
-pub fn render_membership<'a>(event: &SyncStateEvent<MemberEventContent>, context: &MembershipContext<'a>) -> RenderedEvent {
+pub fn render_membership<'a>(
+    event: &SyncStateEvent<MemberEventContent>,
+    sender: &WeechatRoomMember,
+    target: &WeechatRoomMember,
+) -> String {
     const TAGS: &'static [&'static str] = &["matrix_membership"];
     use MembershipChange::*;
     let change_op = event.membership_change();
@@ -119,11 +129,12 @@ pub fn render_membership<'a>(event: &SyncStateEvent<MemberEventContent>, context
     fn formatted_name(member: &WeechatRoomMember) -> String {
         match &member.display_name {
             Some(display_name) => {
-                format!("{name} {color_delim}({color_reset}{user_id}{color_delim}){color_reset}",
-                        name = display_name,
-                        user_id = &member.user_id,
-                        color_delim = Weechat::color("chat_delimiters"),
-                        color_reset = Weechat::color("reset"))
+                format!(
+                    "{name} {color_delim}({color_reset}{user_id}{color_delim}){color_reset}",
+                    name = display_name,
+                    user_id = &member.user_id,
+                    color_delim = Weechat::color("chat_delimiters"),
+                    color_reset = Weechat::color("reset"))
             }
 
             Option::None => {
@@ -150,14 +161,14 @@ pub fn render_membership<'a>(event: &SyncStateEvent<MemberEventContent>, context
 
     let target_name = format!(
         "{color_user}{target_name}{color_reset}",
-        target_name = formatted_name(context.target),
+        target_name = formatted_name(target),
         color_user = Weechat::color("reset"), // TODO
         color_reset = Weechat::color("reset")
     );
 
     let sender_name = format!(
         "{color_user}{sender_name}{color_reset}",
-        sender_name = formatted_name(context.sender),
+        sender_name = formatted_name(sender),
         color_user = Weechat::color("reset"), // TODO
         color_reset = Weechat::color("reset")
     );
@@ -203,7 +214,8 @@ pub fn render_membership<'a>(event: &SyncStateEvent<MemberEventContent>, context
                 (true, true) =>
                     match new_display_name {
                         Some(name) => format!(
-                            "{prefix} {target} {color_action}changed their avatar and changed their display name to{color_reset} {new}",
+                            "{prefix} {target} {color_action}changed their avatar \
+                            and changed their display name to{color_reset} {new}",
                             prefix = Weechat::prefix(prefix),
                             target = target_name,
                             new = name,
@@ -211,7 +223,8 @@ pub fn render_membership<'a>(event: &SyncStateEvent<MemberEventContent>, context
                             color_reset = color_reset
                             ),
                         Option::None => format!(
-                            "{prefix} {target} {color_action}changed their avatar and removed display name{color_reset}",
+                            "{prefix} {target} {color_action}changed their \
+                            avatar and removed display name{color_reset}",
                             prefix = Weechat::prefix(prefix),
                             target = target_name,
                             color_action = color_action,
@@ -222,13 +235,14 @@ pub fn render_membership<'a>(event: &SyncStateEvent<MemberEventContent>, context
                     "Cannot happen: got profile changed but nothing really changed".to_string()
             }
         }
-        None | Error | Joined | Left | InvitationRejected
-        | NotImplemented => format!(
-            "{prefix} {target} {op}",
-            prefix = Weechat::prefix(prefix),
-            target = target_name,
-            op = operation
-        ),
+        None | Error | Joined | Left | InvitationRejected | NotImplemented => {
+            format!(
+                "{prefix} {target} {op}",
+                prefix = Weechat::prefix(prefix),
+                target = target_name,
+                op = operation
+            )
+        }
         Banned | Unbanned | Kicked | Invited | InvitationRevoked
         | KickedAndBanned => format!(
             "{prefix} {target} {op} {sender}",
@@ -248,12 +262,8 @@ pub fn render_membership<'a>(event: &SyncStateEvent<MemberEventContent>, context
         ),
     };
 
-    RenderedEvent {
-        message,
-        tags: TAGS.iter().map(|t| t.to_string()).collect(),
-        // FIXME do the conversion here.
-        message_timestamp: 0,
-    }
+    // TODO we should return the tags as well.
+    message
 }
 
 impl Render for dyn HasUrlOrFile {
@@ -272,9 +282,14 @@ impl Render for dyn HasUrlOrFile {
             color_reset = Weechat::color("reset")
         );
 
-        RenderedContent {
+        let line = RenderedLine {
             message,
             tags: self.tags(),
+        };
+
+
+        RenderedContent {
+            lines: vec![line],
         }
     }
 }
@@ -284,10 +299,16 @@ impl Render for TextMessageEventContent {
     type RenderContext = ();
 
     fn render(&self, _: &Self::RenderContext) -> RenderedContent {
-        RenderedContent {
-            message: self.body.clone(),
-            tags: self.tags(),
-        }
+        let lines = self
+            .body
+            .lines()
+            .map(|l| RenderedLine {
+                message: l.to_owned(),
+                tags: self.tags(),
+            })
+            .collect();
+        // TODO parse and render using the formattted body.
+        RenderedContent { lines }
     }
 }
 
@@ -295,27 +316,113 @@ impl Render for EmoteMessageEventContent {
     const TAGS: &'static [&'static str] = &["matrix_media"];
     type RenderContext = WeechatRoomMember;
 
-    fn render_with_prefix(&self, _sender: &WeechatRoomMember, context: &Self::RenderContext) -> RenderedEvent {
-        let content = self.render(context);
-        let _prefix = Weechat::prefix("action");
-
-        // TODO the rendered event should have a prefix field
-        RenderedEvent {
-            message: content.message,
-            tags: content.tags,
-            message_timestamp: 0,
-        }
+    fn prefix(&self, _: &WeechatRoomMember) -> String {
+        Weechat::prefix("action").to_owned()
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
+        // TODO parse and render using the formattted body.
+        // TODO handle multiple lines in the body.
         let message = format!("{} {}", sender.nick, self.body);
 
-        RenderedContent {
+        let line = RenderedLine {
             message,
             tags: self.tags(),
-        }
+        };
+
+        RenderedContent { lines: vec![line] }
+    }
+}
+
+impl Render for LocationMessageEventContent {
+    const TAGS: &'static [&'static str] = &["matrix_location"];
+    type RenderContext = WeechatRoomMember;
+
+    fn prefix(&self, _: &WeechatRoomMember) -> String {
+        Weechat::prefix("action").to_owned()
     }
 
+    fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
+        let message = format!(
+            "{} has shared a location: {color_delimiter}<{color_reset}{}{color_delimiter}>\
+            [{color_reset}{}{color_delimiter}]{color_reset}",
+            &sender.nick,
+            self.body,
+            self.geo_uri,
+            color_delimiter = Weechat::color("color_delimiter"),
+            color_reset = Weechat::color("reset")
+        );
+
+        let line = RenderedLine {
+            message,
+            tags: self.tags(),
+        };
+
+        RenderedContent { lines: vec![line] }
+    }
+}
+
+impl Render for NoticeMessageEventContent {
+    const TAGS: &'static [&'static str] = &["matrix_notice"];
+    type RenderContext = WeechatRoomMember;
+
+    fn prefix(&self, _: &WeechatRoomMember) -> String {
+        Weechat::prefix("action").to_owned()
+    }
+
+    fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
+        // TODO parse and render using the formattted body.
+        let message = format!(
+            "{prefix}{color_notice}Notice\
+            {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
+            sender.nick,
+            self.body,
+            prefix = Weechat::prefix("network"),
+            color_notice = Weechat::color("irc.color.notice"),
+            color_delim = Weechat::color("chat_delimiters"),
+            color_reset = Weechat::color("reset"),
+        );
+
+        let line = RenderedLine {
+            message,
+            tags: self.tags(),
+        };
+
+        RenderedContent {
+            lines: vec![line],
+        }
+    }
+}
+
+impl Render for ServerNoticeMessageEventContent {
+    const TAGS: &'static [&'static str] = &["matrix_server_notice"];
+    type RenderContext = WeechatRoomMember;
+
+    fn prefix(&self, _: &WeechatRoomMember) -> String {
+        Weechat::prefix("action").to_owned()
+    }
+
+    fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
+        let message = format!(
+            "{prefix}{color_notice}Notice\
+            {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
+            sender.nick,
+            self.body,
+            prefix = Weechat::prefix("network"),
+            color_notice = Weechat::color("irc.color.notice"),
+            color_delim = Weechat::color("chat_delimiters"),
+            color_reset = Weechat::color("reset"),
+        );
+
+        let line = RenderedLine {
+            message,
+            tags: self.tags(),
+        };
+
+        RenderedContent {
+            lines: vec![line],
+        }
+    }
 }
 
 /// Rendering function for room messages.
