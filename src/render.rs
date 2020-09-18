@@ -50,9 +50,9 @@ pub trait Render {
     /// The event specific tags that should be attached to the rendered event.
     const TAGS: &'static [&'static str];
 
-    /// Some events might need additional context to be rendered, for example if
-    /// we want to display the sender, we don't want to display the mxid,
-    /// instead we want to display the disambiguated display name.
+    /// Some events might need additional context to be rendered. For example,
+    /// instead of displaying the MXID for the sender, we might want to display
+    /// the disambiguated display name, which isn't available in the event.
     ///
     /// This allows the render implementation to be passed some additional data
     /// when rendering.
