@@ -97,6 +97,40 @@ pub trait Render {
         }
     }
 
+    fn render_with_prefix_for_echo(
+        &self,
+        sender: &WeechatRoomMember,
+        context: &Self::RenderContext,
+    ) -> RenderedEvent {
+        let content = self.render_for_echo(context);
+        let prefix = self.prefix(sender);
+
+        RenderedEvent {
+            prefix,
+            message_timestamp: 0,
+            content,
+        }
+    }
+
+    fn render_for_echo(
+        &self,
+        context: &Self::RenderContext,
+    ) -> RenderedContent {
+        let mut content = self.render(context);
+
+        for line in &mut content.lines {
+            let message = Weechat::remove_color(&line.message);
+            line.message = format!(
+                "{}{}{}",
+                Weechat::color_pair("darkgray", "default"),
+                message,
+                Weechat::color("reset")
+            );
+        }
+
+        content
+    }
+
     fn render(&self, context: &Self::RenderContext) -> RenderedContent;
 }
 

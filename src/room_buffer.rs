@@ -41,6 +41,7 @@ use matrix_sdk::{
         SyncStateEvent,
     },
     identifiers::{RoomId, UserId},
+    uuid::Uuid,
     PossiblyRedactedExt, Room,
 };
 use url::Url;
@@ -50,9 +51,10 @@ use tracing::{debug, error, trace};
 
 use crate::{
     connection::{Connection, TYPING_NOTICE_TIMEOUT},
-    render::{render_membership, render_message},
+    render::{render_membership, render_message, Render},
 };
 use std::{
+    borrow::Cow,
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
     convert::TryFrom,
@@ -63,7 +65,7 @@ use std::{
 use weechat::{
     buffer::{
         Buffer, BufferBuilderAsync, BufferHandle, BufferInputCallbackAsync,
-        NickSettings,
+        BufferLine, NickSettings,
     },
     Weechat,
 };
@@ -117,22 +119,25 @@ struct MatrixRoom {
     typing_notice_time: Rc<RefCell<Option<Instant>>>,
     typing_in_flight: Rc<Mutex<()>>,
 
+    local_echo_queue: Rc<RefCell<HashMap<Uuid, MessageEventContent>>>,
+
     room: Rc<RefCell<Room>>,
     members: Rc<RefCell<HashMap<UserId, WeechatRoomMember>>>,
 }
 
 #[async_trait(?Send)]
 impl BufferInputCallbackAsync for MatrixRoom {
-    async fn callback(&mut self, buffer: BufferHandle, input: String) {
+    async fn callback(&mut self, buffer_handle: BufferHandle, input: String) {
         // TODO parse the input here and produce a formatted body.
-        let content = MessageEventContent::Text(TextMessageEventContent {
-            body: input,
-            formatted: None,
-            relates_to: None,
-        });
-        let content = AnyMessageEventContent::RoomMessage(content);
+        let content = AnyMessageEventContent::RoomMessage(
+            MessageEventContent::Text(TextMessageEventContent {
+                body: input,
+                formatted: None,
+                relates_to: None,
+            }),
+        );
 
-        self.send_message(buffer, content).await;
+        self.send_message(buffer_handle, content).await;
     }
 }
 
@@ -142,10 +147,15 @@ impl MatrixRoom {
         buffer: BufferHandle,
         content: AnyMessageEventContent,
     ) {
+        let uuid = Uuid::new_v4();
+
         if let Some(c) = &*self.connection.borrow() {
+            self.queue_up_local_echo(buffer.clone(), uuid, &content);
             // TODO check for errors and print them out.
-            match c.send_message(&self.room_id, content, None).await {
-                Ok(_r) => (),
+            match c.send_message(&self.room_id, content, Some(uuid)).await {
+                // TODO the event id is in the response, this needs to end up in
+                // a tag.
+                Ok(_r) => self.replace_local_echo(buffer, uuid),
                 Err(_e) => (),
             }
         } else {
@@ -154,6 +164,70 @@ impl MatrixRoom {
                 .expect("Trying to send a message while the buffer is closed");
 
             buffer.print("Error not connected");
+        }
+    }
+
+    pub fn queue_up_local_echo(
+        &self,
+        buffer_handle: BufferHandle,
+        uuid: Uuid,
+        content: &AnyMessageEventContent,
+    ) {
+        if true {
+            if let AnyMessageEventContent::RoomMessage(
+                MessageEventContent::Text(c),
+            ) = content
+            {
+                let members = self.members.borrow();
+                let sender = members
+                    .get(&self.own_user_id)
+                    .expect(&format!("No own member {}", self.own_user_id));
+
+                let local_echo = c.render_with_prefix_for_echo(sender, &());
+                let uuid_tag = format!("matrix_echo_{}", uuid.to_string());
+
+                if let Ok(b) = buffer_handle.upgrade() {
+                    for line in local_echo.content.lines {
+                        let message = format!(
+                            "{}\t{}",
+                            &local_echo.prefix, &line.message
+                        );
+                        b.print_date_tags(0, &[&uuid_tag], &message)
+                    }
+                }
+
+                let mut echo_queue = self.local_echo_queue.borrow_mut();
+                echo_queue.insert(uuid, MessageEventContent::Text(c.clone()));
+            }
+        }
+    }
+
+    pub fn replace_local_echo(&self, buffer_handle: BufferHandle, uuid: Uuid) {
+        let uuid_tag = Cow::from(format!("matrix_echo_{}", uuid.to_string()));
+
+        let line_contains_uuid = |l: &BufferLine| l.tags().contains(&uuid_tag);
+
+        if let Some(content) = self.local_echo_queue.borrow_mut().remove(&uuid)
+        {
+            let content = match content {
+                MessageEventContent::Text(c) => c.render(&()),
+                _ => return,
+            };
+
+            if let Ok(buffer) = buffer_handle.upgrade() {
+                let mut lines = buffer.lines();
+                let mut first_line = lines.rfind(line_contains_uuid);
+                let mut line_num = 0;
+
+                while let Some(line) = &first_line {
+                    let rendered_line = &content.lines[line_num];
+
+                    line.set_message(&rendered_line.message);
+
+                    line_num += 1;
+                    first_line = lines.next_back().filter(line_contains_uuid);
+                }
+            }
         }
     }
 }
@@ -174,7 +248,7 @@ impl RoomBuffer {
             room: Rc::new(RefCell::new(Room::new(&room_id, &own_user_id))),
             own_user_id: Rc::new(own_user_id.to_owned()),
             members: Rc::new(RefCell::new(HashMap::new())),
-            local_echo_queue: Rc::new(RefCell::new(HashMap::new()))
+            local_echo_queue: Rc::new(RefCell::new(HashMap::new())),
         };
 
         let buffer_handle = BufferBuilderAsync::new(&room_id.to_string())
@@ -763,6 +837,16 @@ impl RoomBuffer {
         &self,
         event: &AnyPossiblyRedactedSyncMessageEvent,
     ) {
+        if let AnyPossiblyRedactedSyncMessageEvent::Regular(e) = event {
+            if let Some(id) = &e.unsigned().transaction_id {
+                if let Ok(id) = Uuid::parse_str(id) {
+                    self.inner
+                        .replace_local_echo(self.buffer_handle.clone(), id);
+                    return;
+                }
+            }
+        }
+
         let timestamp: u64 = event
             .origin_server_ts()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
