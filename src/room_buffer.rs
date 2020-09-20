@@ -179,9 +179,10 @@ impl MatrixRoom {
             ) = content
             {
                 let members = self.members.borrow();
-                let sender = members
-                    .get(&self.own_user_id)
-                    .unwrap_or_else(|| panic!("No own member {}", self.own_user_id));
+                let sender =
+                    members.get(&self.own_user_id).unwrap_or_else(|| {
+                        panic!("No own member {}", self.own_user_id)
+                    });
 
                 let local_echo = c.render_with_prefix_for_echo(sender, &());
                 let uuid_tag = format!("matrix_echo_{}", uuid.to_string());
