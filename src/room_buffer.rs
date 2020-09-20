@@ -181,7 +181,7 @@ impl MatrixRoom {
                 let members = self.members.borrow();
                 let sender = members
                     .get(&self.own_user_id)
-                    .expect(&format!("No own member {}", self.own_user_id));
+                    .unwrap_or_else(|| panic!("No own member {}", self.own_user_id));
 
                 let local_echo = c.render_with_prefix_for_echo(sender, &());
                 let uuid_tag = format!("matrix_echo_{}", uuid.to_string());
@@ -382,7 +382,7 @@ impl RoomBuffer {
         &self,
         user_id: &UserId,
     ) -> Option<WeechatRoomMember> {
-        self.inner.members.borrow().get(user_id).map(|m| m.clone())
+        self.inner.members.borrow().get(user_id).cloned()
     }
 
     /// Add a new Weechat room member.
@@ -497,7 +497,7 @@ impl RoomBuffer {
     fn calculate_user_name(&self, user_id: &UserId) -> String {
         self.room()
             .get_member(user_id)
-            .expect(&format!("No such member {}", user_id))
+            .unwrap_or_else(|| panic!("No such member {}", user_id))
             .disambiguated_name()
     }
 
@@ -717,14 +717,14 @@ impl RoomBuffer {
                     );
                     self.add_member(member.clone());
 
-                    sender = self.get_member(&sender_id).map(|s| s.clone());
+                    sender = self.get_member(&sender_id);
                     target = Some(member);
                 }
 
                 Left | Banned | Kicked | KickedAndBanned
                 | InvitationRejected | InvitationRevoked => {
-                    sender = self.get_member(&sender_id).map(|s| s.clone());
-                    target = self.get_member(&target_id).map(|s| s.clone());
+                    sender = self.get_member(&sender_id);
+                    target = self.get_member(&target_id);
 
                     match self.remove_member(&target_id) {
                         Ok(removed_member) => {
@@ -750,8 +750,8 @@ impl RoomBuffer {
                     displayname_changed,
                     avatar_url_changed,
                 } => {
-                    sender = self.get_member(&sender_id).map(|s| s.clone());
-                    target = self.get_member(&target_id).map(|t| t.clone());
+                    sender = self.get_member(&sender_id);
+                    target = self.get_member(&target_id);
 
                     if displayname_changed {
                         match self.rename_member(&target_id, new_nick.clone()) {
@@ -786,8 +786,8 @@ impl RoomBuffer {
                     }
                 }
                 _ => {
-                    sender = self.get_member(&sender_id).map(|m| m.clone());
-                    target = self.get_member(&target_id).map(|m| m.clone());
+                    sender = self.get_member(&sender_id);
+                    target = self.get_member(&target_id);
                 }
             };
 
