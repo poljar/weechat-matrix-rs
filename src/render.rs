@@ -63,15 +63,10 @@ pub trait Render {
     }
 
     fn prefix(&self, sender: &WeechatRoomMember) -> String {
-        // TODO the sender should have a color attribute and we should use it
-        // here.
-        let colorname_user =
-            Weechat::info_get("nick_color_name", sender.user_id.as_str())
-                .unwrap_or_else(|| String::from("default"));
         format!(
             "{}{}{}",
-            Weechat::color(&colorname_user),
-            sender.nick,
+            Weechat::color(&sender.color),
+            sender.nick.borrow(),
             Weechat::color("reset")
         )
     }
@@ -420,13 +415,6 @@ pub fn render_message(
                             color_delim = Weechat::color("chat_delimiters"),
                             color_reset = color_reset
                         ),
-                        e => format!(
-                            "{color_user}{}{color_reset}\tUnknown message type: {:#?}",
-                            displayname,
-                            e,
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
                     }
                 }
                 _ => {
@@ -545,7 +533,6 @@ pub fn render_membership(
         InvitationRevoked => "had the invitation revoked by",
         ProfileChanged { .. } => "_",
         NotImplemented => "performed an unimplemented operation",
-        _ => "caused an unhandled membership change",
     };
 
     fn formatted_name(member: &WeechatRoomMember) -> String {
@@ -673,15 +660,6 @@ pub fn render_membership(
             target = target_name,
             op = operation,
             sender = sender_name
-        ),
-
-        // This means an unsupported membership change happened so we just
-        // print a generic message to indicate this.
-        _ => format!(
-            "{prefix} {sender} {op}",
-            prefix = Weechat::prefix(prefix),
-            sender = sender_name,
-            op = operation,
         ),
     }
 }

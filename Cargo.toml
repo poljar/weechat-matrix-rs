@@ -13,8 +13,8 @@ crate-type = ["cdylib"]
 url = "2.1.1"
 tokio = { version = "0.2.22", features = [ "rt-threaded", "sync" ] }
 tracing = "0.1.19"
-tracing-subscriber = "0.2.11"
-async-std = { version = "1.6.3", features = [ "unstable" ] }
+tracing-subscriber = "0.2.12"
+async-std = { version = "1.6.4", features = [ "unstable" ] }
 clap = "2.33.3"
 async-trait = "0.1.40"
 uuid = { version = "0.8.1", features = ["v4"] }

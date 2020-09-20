@@ -497,7 +497,7 @@ impl RoomBuffer {
     fn calculate_user_name(&self, user_id: &UserId) -> String {
         self.room()
             .get_member(user_id)
-            .unwrap_or_else(|| panic!("No such member {}", user_id))
+            .expect(&format!("No such member {}", user_id))
             .disambiguated_name()
     }
 
