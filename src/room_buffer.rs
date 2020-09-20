@@ -74,13 +74,32 @@ pub struct RoomBuffer {
     buffer_handle: BufferHandle,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WeechatRoomMember {
-    pub user_id: UserId,
-    pub nick: String,
-    pub display_name: Option<String>,
-    pub prefix: String,
-    pub color: String,
+    pub user_id: Rc<UserId>,
+    pub nick: Rc<RefCell<String>>,
+    pub display_name: Rc<RefCell<Option<String>>>,
+    pub prefix: Rc<RefCell<Option<String>>>,
+    pub color: Rc<String>,
+}
+
+impl WeechatRoomMember {
+    pub fn new(
+        user_id: &UserId,
+        nick: String,
+        display_name: Option<String>,
+    ) -> Self {
+        let color = Weechat::info_get("nick_color_name", user_id.as_str())
+            .expect("Couldn't get the nick color name");
+
+        WeechatRoomMember {
+            user_id: Rc::new(user_id.clone()),
+            nick: Rc::new(RefCell::new(nick)),
+            display_name: Rc::new(RefCell::new(display_name)),
+            prefix: Rc::new(RefCell::new(None)),
+            color: Rc::new(color),
+        }
+    }
 }
 
 pub enum RoomError {
@@ -91,6 +110,7 @@ pub enum RoomError {
 struct MatrixRoom {
     homeserver: Rc<Url>,
     room_id: Rc<RoomId>,
+    own_user_id: Rc<UserId>,
 
     connection: Rc<RefCell<Option<Connection>>>,
 
@@ -98,8 +118,7 @@ struct MatrixRoom {
     typing_in_flight: Rc<Mutex<()>>,
 
     room: Rc<RefCell<Room>>,
-    // FIXME this needs to be behind an Rc so the clone does the right thing.
-    members: HashMap<UserId, WeechatRoomMember>,
+    members: Rc<RefCell<HashMap<UserId, WeechatRoomMember>>>,
 }
 
 #[async_trait(?Send)]
@@ -153,7 +172,9 @@ impl RoomBuffer {
             typing_notice_time: Rc::new(RefCell::new(None)),
             typing_in_flight: Rc::new(Mutex::new(())),
             room: Rc::new(RefCell::new(Room::new(&room_id, &own_user_id))),
-            members: HashMap::new(),
+            own_user_id: Rc::new(own_user_id.to_owned()),
+            members: Rc::new(RefCell::new(HashMap::new())),
+            local_echo_queue: Rc::new(RefCell::new(HashMap::new()))
         };
 
         let buffer_handle = BufferBuilderAsync::new(&room_id.to_string())
@@ -208,14 +229,11 @@ impl RoomBuffer {
 
             weechat_members.insert(
                 member.user_id.clone(),
-                WeechatRoomMember {
-                    user_id: member.user_id.clone(),
-                    nick: member.disambiguated_name(),
+                WeechatRoomMember::new(
+                    &member.user_id,
+                    member.disambiguated_name(),
                     display_name,
-                    // TODO: proper prefix and colour
-                    prefix: "".to_string(),
-                    color: "#FFFFFF".to_string(),
-                },
+                ),
             );
         }
 
@@ -223,14 +241,15 @@ impl RoomBuffer {
 
         for member in weechat_members.values() {
             trace!("Restoring member {}", member.user_id);
-            let settings = NickSettings::new(&member.nick);
+            let nick = member.nick.borrow();
+            let settings = NickSettings::new(&nick);
             buffer
                 .add_nick(settings)
                 .expect("Can't add nick to nicklist");
         }
 
         room_buffer.inner.room = Rc::new(RefCell::new(room));
-        room_buffer.inner.members = weechat_members;
+        room_buffer.inner.members.replace(weechat_members);
         room_buffer.update_buffer_name();
         room_buffer.restore_messages();
 
@@ -280,27 +299,32 @@ impl RoomBuffer {
     }
 
     /// Retrieve a reference to a Weechat room member by user ID.
-    pub fn get_member(&self, user_id: &UserId) -> Option<&WeechatRoomMember> {
-        self.inner.members.get(user_id)
+    pub fn get_member(&self, user_id: &UserId) -> Option<WeechatRoomMember> {
+        self.inner.members.borrow().get(user_id).cloned()
     }
 
     /// Retrieve a mutable reference to a Weechat room member by user ID.
     pub fn get_member_mut(
-        &mut self,
+        &self,
         user_id: &UserId,
-    ) -> Option<&mut WeechatRoomMember> {
-        self.inner.members.get_mut(user_id)
+    ) -> Option<WeechatRoomMember> {
+        self.inner.members.borrow().get(user_id).map(|m| m.clone())
     }
 
     /// Add a new Weechat room member.
     pub fn add_member(&mut self, member: WeechatRoomMember) {
         let buffer = self.weechat_buffer();
-        let nick_settings = NickSettings::new(&member.nick);
+        let nick = member.nick.borrow();
+        let nick_settings = NickSettings::new(&nick);
 
         // FIXME: If we expect this, it fails at least once. Why?
         let _ = buffer.add_nick(nick_settings);
+        drop(nick);
 
-        self.inner.members.insert(member.user_id.clone(), member);
+        self.inner
+            .members
+            .borrow_mut()
+            .insert((&*member.user_id).clone(), member);
     }
 
     /// Remove a Weechat room member by user ID.
@@ -314,8 +338,8 @@ impl RoomBuffer {
 
         match self.get_member(user_id) {
             Some(member) => {
-                buffer.remove_nick(&member.nick);
-                Ok(self.inner.members.remove(user_id).unwrap())
+                buffer.remove_nick(&member.nick.borrow());
+                Ok(self.inner.members.borrow_mut().remove(user_id).unwrap())
             }
 
             None => {
@@ -343,25 +367,23 @@ impl RoomBuffer {
                 let member = self.get_member(user_id).unwrap();
                 trace!(
                     "Renaming member from {} to {}",
-                    &member.nick,
+                    &member.nick.borrow(),
                     &new_nick
                 );
 
                 let buffer = self.weechat_buffer();
 
-                buffer.remove_nick(&member.nick);
+                buffer.remove_nick(&member.nick.borrow());
                 let nick_settings = NickSettings::new(&new_nick);
                 buffer
                     .add_nick(nick_settings)
                     .expect("Can't add nick to nicklist");
             }
 
-            let old_nick;
-            {
+            let old_nick = {
                 let member = self.get_member_mut(user_id).unwrap();
-                old_nick = member.nick.clone();
-                member.nick = new_nick;
-            }
+                member.nick.replace(new_nick)
+            };
 
             Ok(old_nick)
         } else {
@@ -576,14 +598,11 @@ impl RoomBuffer {
                         .display_name
                         .clone();
 
-                    self.add_member(WeechatRoomMember {
-                        user_id: target_id,
-                        nick: new_nick,
+                    self.add_member(WeechatRoomMember::new(
+                        &target_id,
+                        new_nick,
                         display_name,
-                        // TODO: proper prefix and colour
-                        prefix: "".to_string(),
-                        color: "#FFFFFF".to_string(),
-                    });
+                    ));
                 }
                 Leave | Ban => {
                     let _ = self.remove_member(&target_id);
@@ -617,25 +636,21 @@ impl RoomBuffer {
                         .display_name
                         .clone();
 
-                    let member = WeechatRoomMember {
-                        user_id: target_id.clone(),
-                        nick: new_nick,
+                    let member = WeechatRoomMember::new(
+                        &target_id,
+                        new_nick,
                         display_name,
-                        // TODO: proper prefix and colour
-                        prefix: "".to_string(),
-                        color: "#FFFFFF".to_string(),
-                    };
-
+                    );
                     self.add_member(member.clone());
 
-                    sender = self.get_member(&sender_id).cloned();
+                    sender = self.get_member(&sender_id).map(|s| s.clone());
                     target = Some(member);
                 }
 
                 Left | Banned | Kicked | KickedAndBanned
                 | InvitationRejected | InvitationRevoked => {
-                    sender = self.get_member(&sender_id).cloned();
-                    target = self.get_member(&target_id).cloned();
+                    sender = self.get_member(&sender_id).map(|s| s.clone());
+                    target = self.get_member(&target_id).map(|s| s.clone());
 
                     match self.remove_member(&target_id) {
                         Ok(removed_member) => {
@@ -643,7 +658,7 @@ impl RoomBuffer {
                                 "{}: User {} leaving, removing nick {}",
                                 self.calculate_buffer_name(),
                                 target_id,
-                                removed_member.nick
+                                removed_member.nick.borrow(),
                             );
                         }
 
@@ -661,8 +676,8 @@ impl RoomBuffer {
                     displayname_changed,
                     avatar_url_changed,
                 } => {
-                    sender = self.get_member(&sender_id).cloned();
-                    target = self.get_member(&target_id).cloned();
+                    sender = self.get_member(&sender_id).map(|s| s.clone());
+                    target = self.get_member(&target_id).map(|t| t.clone());
 
                     if displayname_changed {
                         match self.rename_member(&target_id, new_nick.clone()) {
@@ -681,8 +696,10 @@ impl RoomBuffer {
                             ),
                         }
 
-                        self.get_member_mut(&target_id).unwrap().display_name =
-                            event.content.displayname.clone();
+                        self.get_member_mut(&target_id)
+                            .unwrap()
+                            .display_name
+                            .replace(event.content.displayname.clone());
                     }
 
                     if avatar_url_changed {
@@ -695,8 +712,8 @@ impl RoomBuffer {
                     }
                 }
                 _ => {
-                    sender = self.get_member(&sender_id).cloned();
-                    target = self.get_member(&target_id).cloned();
+                    sender = self.get_member(&sender_id).map(|m| m.clone());
+                    target = self.get_member(&target_id).map(|m| m.clone());
                 }
             };
 

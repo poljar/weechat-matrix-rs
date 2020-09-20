@@ -129,7 +129,7 @@ impl Render for EmoteMessageEventContent {
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
         // TODO parse and render using the formattted body.
         // TODO handle multiple lines in the body.
-        let message = format!("{} {}", sender.nick, self.body);
+        let message = format!("{} {}", sender.nick.borrow(), self.body);
 
         let line = RenderedLine {
             message,
@@ -152,7 +152,7 @@ impl Render for LocationMessageEventContent {
         let message = format!(
             "{} has shared a location: {color_delimiter}<{color_reset}{}{color_delimiter}>\
             [{color_reset}{}{color_delimiter}]{color_reset}",
-            &sender.nick,
+            sender.nick.borrow(),
             self.body,
             self.geo_uri,
             color_delimiter = Weechat::color("color_delimiter"),
@@ -181,7 +181,7 @@ impl Render for NoticeMessageEventContent {
         let message = format!(
             "{prefix}{color_notice}Notice\
             {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
-            sender.nick,
+            sender.nick.borrow(),
             self.body,
             prefix = Weechat::prefix("network"),
             color_notice = Weechat::color("irc.color.notice"),
@@ -210,7 +210,7 @@ impl Render for ServerNoticeMessageEventContent {
         let message = format!(
             "{prefix}{color_notice}Notice\
             {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
-            sender.nick,
+            sender.nick.borrow(),
             self.body,
             prefix = Weechat::prefix("network"),
             color_notice = Weechat::color("irc.color.notice"),
@@ -515,7 +515,7 @@ pub fn render_membership(
     };
 
     fn formatted_name(member: &WeechatRoomMember) -> String {
-        match &member.display_name {
+        match &*member.display_name.borrow() {
             Some(display_name) => {
                 format!(
                     "{name} {color_delim}({color_reset}{user_id}{color_delim}){color_reset}",
