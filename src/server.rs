@@ -694,22 +694,22 @@ impl InnerServer {
         self.connection.borrow().is_some()
     }
 
-    pub(crate) fn receive_joined_state_event(
+    pub fn receive_joined_state_event(
         &mut self,
         room_id: &RoomId,
         event: AnySyncStateEvent,
     ) {
         let room = self.get_or_create_room(room_id);
-        room.handle_state_event(event)
+        room.handle_sync_state_event(event)
     }
 
-    pub(crate) fn receive_joined_timeline_event(
+    pub fn receive_joined_timeline_event(
         &mut self,
         room_id: &RoomId,
         event: AnySyncRoomEvent,
     ) {
         let room = self.get_or_create_room(room_id);
-        room.handle_room_event(event)
+        room.handle_sync_room_event(event)
     }
 
     pub fn receive_login(&mut self, response: LoginResponse) {

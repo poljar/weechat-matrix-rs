@@ -340,12 +340,17 @@ impl RoomBuffer {
     }
 
     pub fn restore_messages(&self) {
+        use AnyPossiblyRedactedSyncMessageEvent::*;
+
         let room = self.room();
         let buffer = self.weechat_buffer();
 
         if buffer.num_lines() == 0 {
-            for message in room.messages.iter() {
-                self.handle_restored_room_event(&message)
+            for event in room.messages.iter() {
+                match event {
+                    Regular(e) => self.handle_room_message(e),
+                    Redacted(e) => todo!(),
+                }
             }
         }
     }
@@ -857,7 +862,7 @@ impl RoomBuffer {
             }
         }
 
-        let rendered = self.render_regular_message(event);
+        let rendered = self.render_message_event(event);
         self.print_rendered_event(rendered);
     }
 
@@ -872,7 +877,7 @@ impl RoomBuffer {
         }
     }
 
-    fn render_regular_event(
+    fn render_message_event(
         &self,
         event: &AnySyncMessageEvent,
     ) -> RenderedEvent {
@@ -925,19 +930,7 @@ impl RoomBuffer {
         }
     }
 
-    pub fn render_message_event(
-        &self,
-        event: &AnyPossiblyRedactedSyncMessageEvent,
-    ) -> RenderedEvent {
-        use AnyPossiblyRedactedSyncMessageEvent::*;
-
-        match event {
-            Regular(event) => self.render_regular_event(event),
-            Redacted(_) => todo!("Render redacted events"),
-        }
-    }
-
-    pub fn handle_room_event(&mut self, event: AnySyncRoomEvent) {
+    pub fn handle_sync_room_event(&mut self, event: AnySyncRoomEvent) {
         match &event {
             AnySyncRoomEvent::Message(message) => {
                 self.handle_room_message(message)
@@ -954,25 +947,13 @@ impl RoomBuffer {
         }
     }
 
-    pub fn handle_state_event(&mut self, event: AnySyncStateEvent) {
+    pub fn handle_sync_state_event(&mut self, event: AnySyncStateEvent) {
         match &event {
             AnySyncStateEvent::RoomMember(e) => {
                 self.handle_membership_event(e, true)
             }
             AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
             _ => (),
-        }
-    }
-
-    pub fn handle_restored_room_event(
-        &self,
-        event: &AnyPossiblyRedactedSyncMessageEvent,
-    ) {
-        use AnyPossiblyRedactedSyncMessageEvent::*;
-
-        match event {
-            Regular(e) => self.handle_room_message(e),
-            Redacted(e) => todo!(),
         }
     }
 }
