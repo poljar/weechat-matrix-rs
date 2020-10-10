@@ -412,7 +412,8 @@ impl RoomBuffer {
 
     /// Remove a Weechat room member by user ID.
     ///
-    /// Returns either the removed Weechat room member, or an error if the member does not exist.
+    /// Returns either the removed Weechat room member, or an error if the
+    /// member does not exist.
     pub fn remove_member(
         &mut self,
         user_id: &UserId,
@@ -439,7 +440,8 @@ impl RoomBuffer {
 
     /// Change nick of member.
     ///
-    /// Returns either the old nick of the member, or an error if the member does not exist.
+    /// Returns either the old nick of the member, or an error if the member
+    /// does not exist.
     pub fn rename_member(
         &mut self,
         user_id: &UserId,
@@ -499,10 +501,11 @@ impl RoomBuffer {
         self.weechat_buffer().set_name(&name)
     }
 
-    /// Helper method to calculate the display name of a room member from their UserId.
+    /// Helper method to calculate the display name of a room member from their
+    /// UserId.
     ///
-    /// If no member with that ID is in the room, the string representation of the ID will be
-    /// returned.
+    /// If no member with that ID is in the room, the string representation of
+    /// the ID will be returned.
     fn calculate_user_name(&self, user_id: &UserId) -> String {
         self.room()
             .get_member(user_id)
@@ -537,8 +540,8 @@ impl RoomBuffer {
         let send = async move |typing: bool| {
             let typing_time = typing_notice_time;
 
-            // We're in the process of sending out a typing notice, so don't make
-            // the same request twice.
+            // We're in the process of sending out a typing notice, so don't
+            // make the same request twice.
             let guard = match typing_in_flight.try_lock() {
                 Ok(guard) => guard,
                 Err(_) => {
@@ -593,8 +596,8 @@ impl RoomBuffer {
 
     /// Process disambiguations received from the SDK.
     ///
-    /// Disambiguations are a hashmap of user ID -> bool indicating that this user is either newly
-    /// ambiguous (true) or no longer ambiguous (false).
+    /// Disambiguations are a hashmap of user ID -> bool indicating that this
+    /// user is either newly ambiguous (true) or no longer ambiguous (false).
     #[allow(dead_code)]
     fn process_disambiguations(
         &mut self,
@@ -647,6 +650,7 @@ impl RoomBuffer {
     ) {
         let sender_id = event.sender.clone();
         let target_id;
+
         if let Ok(t) = UserId::try_from(event.state_key.clone()) {
             target_id = t;
         } else {
@@ -664,9 +668,10 @@ impl RoomBuffer {
 
             // FIXME: Handle gaps (e.g. long disconnects) properly.
             //
-            // For joins and invites, first we need to check whether a member with some MXID
-            // exists. If he does, we have to update *that* member with the new state. Only if they
-            // do not exist yet do we create a new one.
+            // For joins and invites, first we need to check whether a member
+            // with some MXID exists. If he does, we have to update *that*
+            // member with the new state. Only if they do not exist yet do we
+            // create a new one.
             //
             // For leaves and bans we just need to remove the member.
             match event.content.membership {
@@ -694,8 +699,8 @@ impl RoomBuffer {
             // emitter.
             // self.process_disambiguations(&disambiguations);
 
-            // Names of rooms without display names can get affected by the member list so we need to
-            // update them.
+            // Names of rooms without display names can get affected by the
+            // member list so we need to update them.
             self.update_buffer_name();
         } else {
             let change_op = event.membership_change();
