@@ -55,12 +55,14 @@
 //! that processing events will not block the Weechat mainloop for too long.
 
 use chrono::{offset::Utc, DateTime};
+use futures::executor::block_on;
 use indoc::indoc;
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
     path::PathBuf,
     rc::{Rc, Weak},
+    sync::Arc,
 };
 use url::Url;
 
@@ -69,6 +71,7 @@ use matrix_sdk::{
     api::r0::session::login::Response as LoginResponse,
     events::{AnySyncRoomEvent, AnySyncStateEvent},
     identifiers::{RoomId, UserId},
+    locks::RwLock,
     Client, ClientConfig, Room,
 };
 
@@ -549,8 +552,17 @@ impl InnerServer {
                 .login_state
                 .as_ref()
                 .expect("Receiving events while not being logged in");
+            let room = block_on(
+                self.client
+                    .as_ref()
+                    .expect("Receiving events without a client")
+                    .get_joined_room(room_id),
+            );
+            let room =
+                room.expect("Receiving events for a room while no room found");
             let buffer = RoomBuffer::new(
                 &self.connection,
+                room,
                 homeserver,
                 room_id.clone(),
                 &login_state.user_id,
@@ -573,16 +585,15 @@ impl InnerServer {
         self.config.borrow()
     }
 
-    pub fn restore_room(&mut self, room: Room) {
+    pub fn restore_room(&mut self, room: Arc<RwLock<Room>>) {
         let homeserver = self
             .settings
             .homeserver
             .as_ref()
             .expect("Creating room buffer while no homeserver");
 
-        let room_id = room.room_id.clone();
-
         let buffer = RoomBuffer::restore(room, &self.connection, homeserver);
+        let room_id = buffer.room_id().to_owned();
 
         self.room_buffers.insert(room_id, buffer);
     }

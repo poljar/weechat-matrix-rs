@@ -34,19 +34,20 @@ use matrix_sdk::{
                 MembershipState,
             },
             message::{MessageEventContent, TextMessageEventContent},
-            name::NameEventContent,
         },
         AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
         AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
         SyncStateEvent,
     },
     identifiers::{RoomId, UserId},
+    locks::{RwLock, RwLockReadGuard},
     uuid::Uuid,
     PossiblyRedactedExt, Room,
 };
 use url::Url;
 
 use async_trait::async_trait;
+use futures::executor::block_on;
 use tracing::{debug, error, trace};
 
 use crate::{
@@ -55,11 +56,11 @@ use crate::{
 };
 use std::{
     borrow::Cow,
-    cell::{Ref, RefCell, RefMut},
+    cell::RefCell,
     collections::HashMap,
     convert::TryFrom,
     rc::Rc,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::Instant,
 };
 use weechat::{
@@ -113,6 +114,7 @@ struct MatrixRoom {
     homeserver: Rc<Url>,
     room_id: Rc<RoomId>,
     own_user_id: Rc<UserId>,
+    room: Arc<RwLock<Room>>,
 
     connection: Rc<RefCell<Option<Connection>>>,
 
@@ -121,7 +123,6 @@ struct MatrixRoom {
 
     local_echo_queue: Rc<RefCell<HashMap<Uuid, MessageEventContent>>>,
 
-    room: Rc<RefCell<Room>>,
     members: Rc<RefCell<HashMap<UserId, WeechatRoomMember>>>,
 }
 
@@ -236,6 +237,7 @@ impl MatrixRoom {
 impl RoomBuffer {
     pub fn new(
         connection: &Rc<RefCell<Option<Connection>>>,
+        room: Arc<RwLock<Room>>,
         homeserver: &Url,
         room_id: RoomId,
         own_user_id: &UserId,
@@ -246,7 +248,7 @@ impl RoomBuffer {
             connection: connection.clone(),
             typing_notice_time: Rc::new(RefCell::new(None)),
             typing_in_flight: Rc::new(Mutex::new(())),
-            room: Rc::new(RefCell::new(Room::new(&room_id, &own_user_id))),
+            room,
             own_user_id: Rc::new(own_user_id.to_owned()),
             members: Rc::new(RefCell::new(HashMap::new())),
             local_echo_queue: Rc::new(RefCell::new(HashMap::new())),
@@ -275,28 +277,34 @@ impl RoomBuffer {
     }
 
     pub fn restore(
-        room: Room,
+        room: Arc<RwLock<Room>>,
         connection: &Rc<RefCell<Option<Connection>>>,
         homeserver: &Url,
     ) -> Self {
-        let mut room_buffer = RoomBuffer::new(
+        let room_clone = room.clone();
+        let room_lock = block_on(room.read());
+        let room_id = room_lock.room_id.to_owned();
+        let own_user_id = &room_lock.own_user_id;
+
+        let room_buffer = RoomBuffer::new(
             connection,
+            room_clone,
             homeserver,
-            room.room_id.clone(),
-            &room.own_user_id,
+            room_id,
+            own_user_id,
         );
 
-        debug!("Restoring room {}", room.room_id);
+        debug!("Restoring room {}", room_lock.room_id);
 
-        let matrix_members = room
+        let matrix_members = room_lock
             .joined_members
             .values()
-            .chain(room.invited_members.values());
+            .chain(room_lock.invited_members.values());
 
         let mut weechat_members = HashMap::new();
 
         for member in matrix_members {
-            let display_name = room
+            let display_name = room_lock
                 .get_member(&member.user_id)
                 .unwrap()
                 .display_name
@@ -323,7 +331,6 @@ impl RoomBuffer {
                 .expect("Can't add nick to nicklist");
         }
 
-        room_buffer.inner.room = Rc::new(RefCell::new(room));
         room_buffer.inner.members.replace(weechat_members);
         room_buffer.update_buffer_name();
         room_buffer.restore_messages();
@@ -365,12 +372,12 @@ impl RoomBuffer {
         self.inner.send_message(buffer, content).await
     }
 
-    pub fn room_mut(&mut self) -> RefMut<'_, Room> {
-        self.inner.room.borrow_mut()
+    pub fn room(&self) -> RwLockReadGuard<'_, Room> {
+        block_on(self.inner.room.read())
     }
 
-    pub fn room(&self) -> Ref<'_, Room> {
-        self.inner.room.borrow()
+    pub fn room_id(&self) -> &RoomId {
+        &self.inner.room_id
     }
 
     /// Retrieve a reference to a Weechat room member by user ID.
@@ -587,6 +594,7 @@ impl RoomBuffer {
     ///
     /// Disambiguations are a hashmap of user ID -> bool indicating that this user is either newly
     /// ambiguous (true) or no longer ambiguous (false).
+    #[allow(dead_code)]
     fn process_disambiguations(
         &mut self,
         disambiguations: &HashMap<UserId, bool>,
@@ -648,10 +656,6 @@ impl RoomBuffer {
             return;
         }
 
-        // Handle the event in the SDK room model
-        let (_, disambiguations) =
-            self.room_mut().handle_membership(event, state_event);
-
         let new_nick = self.calculate_user_name(&target_id);
 
         if state_event {
@@ -685,7 +689,9 @@ impl RoomBuffer {
                 _ => (),
             }
 
-            self.process_disambiguations(&disambiguations);
+            // TODO enable this again once we receive the event via an event
+            // emitter.
+            // self.process_disambiguations(&disambiguations);
 
             // Names of rooms without display names can get affected by the member list so we need to
             // update them.
@@ -792,7 +798,9 @@ impl RoomBuffer {
                 }
             };
 
-            self.process_disambiguations(&disambiguations);
+            // TODO enable this again once we receive the event via an event
+            // emitter.
+            // self.process_disambiguations(&disambiguations);
 
             // Names of rooms without display names can get affected by the member list so we need to
             // update them.
@@ -860,11 +868,7 @@ impl RoomBuffer {
         buffer.print_date_tags(timestamp as i64, &[], &message);
     }
 
-    pub fn handle_room_name(
-        &mut self,
-        event: &SyncStateEvent<NameEventContent>,
-    ) {
-        self.room_mut().handle_room_name(event);
+    pub fn handle_room_name(&self) {
         self.update_buffer_name();
     }
 
@@ -885,14 +889,11 @@ impl RoomBuffer {
                 AnySyncStateEvent::RoomMember(e) => {
                     self.handle_membership_event(e, false)
                 }
-                AnySyncStateEvent::RoomName(n) => self.handle_room_name(n),
+                AnySyncStateEvent::RoomName(_) => self.handle_room_name(),
                 _ => (),
             },
 
-            event => {
-                let mut room = self.room_mut();
-                room.receive_timeline_event(event);
-            }
+            _ => (),
         }
     }
 
@@ -901,11 +902,8 @@ impl RoomBuffer {
             AnySyncStateEvent::RoomMember(e) => {
                 self.handle_membership_event(e, true)
             }
-            AnySyncStateEvent::RoomName(n) => self.handle_room_name(n),
-            _ => {
-                let mut room = self.room_mut();
-                room.receive_state_event(&event);
-            }
+            AnySyncStateEvent::RoomName(_) => self.handle_room_name(),
+            _ => (),
         }
     }
 }

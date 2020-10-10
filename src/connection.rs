@@ -1,4 +1,4 @@
-use std::{cell::RefCell, path::PathBuf, rc::Weak, time::Duration};
+use std::{cell::RefCell, path::PathBuf, rc::Weak, sync::Arc, time::Duration};
 
 use async_std::sync::{channel as async_channel, Receiver, Sender};
 use tokio::runtime::Runtime;
@@ -18,7 +18,8 @@ pub use matrix_sdk::{
         AnyMessageEventContent, AnySyncRoomEvent, AnySyncStateEvent,
     },
     identifiers::{RoomId, UserId},
-    Client, ClientConfig, Result as MatrixResult, Room, SyncSettings,
+    locks::RwLock,
+    Client, ClientConfig, LoopCtrl, Result as MatrixResult, Room, SyncSettings,
 };
 
 use weechat::{JoinHandle, Weechat};
@@ -32,7 +33,7 @@ pub enum ClientMessage {
     LoginMessage(LoginResponse),
     SyncState(RoomId, AnySyncStateEvent),
     SyncEvent(RoomId, AnySyncRoomEvent),
-    RestoredRoom(Room),
+    RestoredRoom(Arc<RwLock<Room>>),
 }
 
 /// Struc representing an active connection to the homeserver.
@@ -327,8 +328,6 @@ impl Connection {
             if !first_login {
                 let joined_rooms = client.joined_rooms();
                 for room in joined_rooms.read().await.values() {
-                    let room = room.read().await;
-                    let room: &Room = &*room;
                     channel
                         .send(Ok(ClientMessage::RestoredRoom(room.clone())))
                         .await
@@ -348,7 +347,7 @@ impl Connection {
         let sync_channel = &channel;
 
         client
-            .sync_forever(sync_settings, async move |response| {
+            .sync_with_callback(sync_settings, async move |response| {
                 let channel = sync_channel;
 
                 for (room_id, room) in response.rooms.join {
@@ -383,6 +382,8 @@ impl Connection {
                         }
                     }
                 }
+
+                LoopCtrl::Continue
             })
             .await;
     }
