@@ -42,7 +42,7 @@ use matrix_sdk::{
     identifiers::{RoomId, UserId},
     locks::{RwLock, RwLockReadGuard},
     uuid::Uuid,
-    PossiblyRedactedExt, Room,
+    Room,
 };
 use url::Url;
 
@@ -52,7 +52,7 @@ use tracing::{debug, error, trace};
 
 use crate::{
     connection::{Connection, TYPING_NOTICE_TIMEOUT},
-    render::{render_membership, render_message, Render},
+    render::{render_membership, Render, RenderedEvent},
 };
 use std::{
     borrow::Cow,
@@ -857,16 +857,84 @@ impl RoomBuffer {
             }
         }
 
-        let timestamp: u64 = event
-            .origin_server_ts()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let rendered = self.render_message(event);
+        self.print_rendered_event(rendered);
+    }
 
-        let message =
-            render_message(event, self.calculate_user_name(event.sender()));
+    fn print_rendered_event(&self, rendered: RenderedEvent) {
         let buffer = self.weechat_buffer();
-        buffer.print_date_tags(timestamp as i64, &[], &message);
+
+        for line in rendered.content.lines {
+            let message = format!("{}\t{}", &rendered.prefix, &line.message);
+            let tags: Vec<&str> =
+                line.tags.iter().map(|t| t.as_str()).collect();
+            buffer.print_date_tags(0, &tags, &message)
+        }
+    }
+
+    fn render_regular_message(
+        &self,
+        message: &AnySyncMessageEvent,
+    ) -> RenderedEvent {
+        use AnyMessageEventContent::*;
+        use MessageEventContent::*;
+
+        let members = self.inner.members.borrow();
+
+        // TODO remove this expect.
+        let sender = members
+            .get(message.sender())
+            .expect("Rendering a message but the sender isn't in the nicklist");
+
+        let send_time = message.origin_server_ts();
+
+        match message.content() {
+            RoomEncrypted(m) => m.render_with_prefix(send_time, sender, &()),
+            RoomMessage(m) => match m {
+                Text(m) => m.render_with_prefix(send_time, sender, &()),
+                Emote(m) => m.render_with_prefix(send_time, sender, sender),
+                Notice(m) => m.render_with_prefix(send_time, sender, sender),
+                ServerNotice(m) => {
+                    m.render_with_prefix(send_time, sender, sender)
+                }
+                Location(m) => m.render_with_prefix(send_time, sender, sender),
+                Audio(m) => m.render_with_prefix(
+                    send_time,
+                    sender,
+                    &self.inner.homeserver,
+                ),
+                Video(m) => m.render_with_prefix(
+                    send_time,
+                    sender,
+                    &self.inner.homeserver,
+                ),
+                File(m) => m.render_with_prefix(
+                    send_time,
+                    sender,
+                    &self.inner.homeserver,
+                ),
+                Image(m) => m.render_with_prefix(
+                    send_time,
+                    sender,
+                    &self.inner.homeserver,
+                ),
+            },
+            _ => todo!(
+                "Handle rendering of message types other than RoomMessage"
+            ),
+        }
+    }
+
+    pub fn render_message(
+        &self,
+        message: &AnyPossiblyRedactedSyncMessageEvent,
+    ) -> RenderedEvent {
+        use AnyPossiblyRedactedSyncMessageEvent::*;
+
+        match message {
+            Regular(message) => self.render_regular_message(message),
+            Redacted(_) => todo!("Render redacted events"),
+        }
     }
 
     pub fn handle_room_name(&self) {

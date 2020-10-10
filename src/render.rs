@@ -1,23 +1,19 @@
 use std::time::SystemTime;
 use url::Url;
 
-use matrix_sdk::{
-    events::{
-        room::{
-            encrypted::EncryptedEventContent,
-            member::{MemberEventContent, MembershipChange},
-            message::{
-                AudioMessageEventContent, EmoteMessageEventContent,
-                FileMessageEventContent, ImageMessageEventContent,
-                LocationMessageEventContent, MessageEventContent,
-                NoticeMessageEventContent, ServerNoticeMessageEventContent,
-                TextMessageEventContent, VideoMessageEventContent,
-            },
+use matrix_sdk::events::{
+    room::{
+        encrypted::EncryptedEventContent,
+        member::{MemberEventContent, MembershipChange},
+        message::{
+            AudioMessageEventContent, EmoteMessageEventContent,
+            FileMessageEventContent, ImageMessageEventContent,
+            LocationMessageEventContent, NoticeMessageEventContent,
+            ServerNoticeMessageEventContent, TextMessageEventContent,
+            VideoMessageEventContent,
         },
-        AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
-        SyncStateEvent,
     },
-    PossiblyRedactedExt,
+    SyncStateEvent,
 };
 
 use weechat::Weechat;
@@ -130,7 +126,7 @@ pub trait Render {
 }
 
 impl Render for TextMessageEventContent {
-    const TAGS: &'static [&'static str] = &["matrix_media"];
+    const TAGS: &'static [&'static str] = &["matrix_text"];
     type RenderContext = ();
 
     fn render(&self, _: &Self::RenderContext) -> RenderedContent {
@@ -148,7 +144,7 @@ impl Render for TextMessageEventContent {
 }
 
 impl Render for EmoteMessageEventContent {
-    const TAGS: &'static [&'static str] = &["matrix_media"];
+    const TAGS: &'static [&'static str] = &["matrix_emote"];
     type RenderContext = WeechatRoomMember;
 
     fn prefix(&self, _: &WeechatRoomMember) -> String {
@@ -237,7 +233,7 @@ impl Render for ServerNoticeMessageEventContent {
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
         let message = format!(
-            "{prefix}{color_notice}Notice\
+            "{prefix}{color_notice}Server notice\
             {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
             sender.nick.borrow(),
             self.body,
@@ -256,7 +252,7 @@ impl Render for ServerNoticeMessageEventContent {
     }
 }
 
-impl Render for dyn HasUrlOrFile {
+impl<C: HasUrlOrFile> Render for C {
     type RenderContext = Url;
     const TAGS: &'static [&'static str] = &["matrix_media"];
 
@@ -305,132 +301,6 @@ impl Render for EncryptedEventContent {
     }
 }
 
-/// Rendering function for room messages.
-// FIXME: Pass room member
-// TODO: We should not return raw strings here but something like [Block]
-// where Block is (String, [Tags]). Each Block represents one or several lines
-// which have the same tags.
-pub fn render_message(
-    message: &AnyPossiblyRedactedSyncMessageEvent,
-    displayname: String,
-) -> String {
-    use AnyPossiblyRedactedSyncMessageEvent::*;
-    use MessageEventContent::*;
-
-    // TODO: Need to render power level indicators as well.
-
-    // In case it's not clear, self.sender is the MXID. We're basing the nick color on it so
-    // that it doesn't change with display name changes.
-    let colorname_user =
-        Weechat::info_get("nick_color_name", message.sender().as_ref())
-            .unwrap_or_else(|| String::from("default"));
-    let color_user = Weechat::color(&colorname_user);
-
-    let color_reset = Weechat::color("reset");
-
-    match message {
-        Regular(message) => {
-            match message.content() {
-                AnyMessageEventContent::RoomEncrypted(_) => format!(
-                    "{color_user}{}{color_reset}\t{}",
-                    displayname,
-                    "Unable to decrypt message",
-                    color_user = color_user,
-                    color_reset = color_reset
-                ),
-
-                AnyMessageEventContent::RoomMessage(content) => {
-                    match content {
-                        // TODO: formatting for inline markdown and so on
-                        Text(t) => format!(
-                            "{color_user}{}{color_reset}\t{}",
-                            displayname,
-                            t.resolve_body(),
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        Emote(e) => format!(
-                            "{prefix}\t{color_user}{}{color_reset} {}",
-                            displayname,
-                            e.resolve_body(),
-                            prefix = Weechat::prefix("action"),
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        Audio(a) => format!(
-                            "{color_user}{}{color_reset}\t{}: {}",
-                            displayname,
-                            a.body,
-                            a.resolve_url(),
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        File(f) => format!(
-                            "{color_user}{}{color_reset}\t{}: {}",
-                            displayname,
-                            f.body,
-                            f.resolve_url(),
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        Image(i) => format!(
-                            "{color_user}{}{color_reset}\t{}: {}",
-                            displayname,
-                            i.body,
-                            i.resolve_url(),
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        Location(l) => format!(
-                            "{color_user}{}{color_reset}\t{}: {}",
-                            displayname,
-                            l.body,
-                            l.geo_uri,
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        Notice(n) => format!(
-                            "{prefix}{color_notice}Notice{color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
-                            displayname,
-                            n.resolve_body(),
-                            prefix = Weechat::prefix("network"),
-                            color_notice = Weechat::color("irc.color.notice"),
-                            color_delim = Weechat::color("chat_delimiters"),
-                            color_reset = color_reset
-                        ),
-                        Video(v) => format!(
-                            "{color_user}{}{color_reset}\t{}: {}",
-                            displayname,
-                            v.body,
-                            v.resolve_url(),
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        ServerNotice(n) => format!(
-                            "{prefix}{color_notice}Server notice{color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
-                            displayname,
-                            n.body,
-                            prefix = Weechat::prefix("network"),
-                            color_notice = Weechat::color("irc.color.notice"),
-                            color_delim = Weechat::color("chat_delimiters"),
-                            color_reset = color_reset
-                        ),
-                    }
-                }
-                _ => {
-                    // TODO: Handle rendering of message types other than RoomMessage
-                    todo!("Handle rendering of message types other than RoomMessage");
-                }
-            }
-        }
-
-        AnyPossiblyRedactedSyncMessageEvent::Redacted(_message) => {
-            // TODO: Handle rendering redacted events
-            todo!("Handle rendering redacted events");
-        }
-    }
-}
-
 /// Trait for message event types that contain an optional formatted body.
 /// `resolve_body` will return the formatted body if present, else fallback to
 /// the regular body.
@@ -464,7 +334,7 @@ macro_rules! has_formatted_body {
 
 /// This trait is implemented for message types that can contain either an URL
 /// or an encrypted file. One of these _must_ be present.
-trait HasUrlOrFile {
+pub trait HasUrlOrFile {
     fn url(&self) -> Option<&str>;
     fn file(&self) -> Option<&str>;
     fn body(&self) -> &str;
