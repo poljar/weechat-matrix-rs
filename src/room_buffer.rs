@@ -186,22 +186,28 @@ impl MatrixRoom {
                         panic!("No own member {}", self.own_user_id)
                     });
 
-                let local_echo = c.render_with_prefix_for_echo(sender, &());
-                let uuid_tag = format!("matrix_echo_{}", uuid.to_string());
-
                 if let Ok(b) = buffer_handle.upgrade() {
-                    for line in local_echo.content.lines {
-                        let message = format!(
-                            "{}\t{}",
-                            &local_echo.prefix, &line.message
-                        );
-                        b.print_date_tags(0, &[&uuid_tag], &message)
-                    }
+                    let local_echo =
+                        c.render_with_prefix_for_echo(sender, uuid, &());
+                    self.print_rendered_event(&b, local_echo)
                 }
 
                 let mut echo_queue = self.local_echo_queue.borrow_mut();
                 echo_queue.insert(uuid, MessageEventContent::Text(c.clone()));
             }
+        }
+    }
+
+    pub fn print_rendered_event(
+        &self,
+        buffer: &Buffer,
+        rendered: RenderedEvent,
+    ) {
+        for line in rendered.content.lines {
+            let message = format!("{}\t{}", &rendered.prefix, &line.message);
+            let tags: Vec<&str> =
+                line.tags.iter().map(|t| t.as_str()).collect();
+            buffer.print_date_tags(0, &tags, &message)
         }
     }
 
@@ -681,6 +687,7 @@ impl RoomBuffer {
             // For leaves and bans we just need to remove the member.
             match event.content.membership {
                 Invite | Join => {
+                    // TODO remove this unwrap.
                     let display_name = self
                         .room()
                         .get_member(&target_id)
@@ -868,13 +875,7 @@ impl RoomBuffer {
 
     fn print_rendered_event(&self, rendered: RenderedEvent) {
         let buffer = self.weechat_buffer();
-
-        for line in rendered.content.lines {
-            let message = format!("{}\t{}", &rendered.prefix, &line.message);
-            let tags: Vec<&str> =
-                line.tags.iter().map(|t| t.as_str()).collect();
-            buffer.print_date_tags(0, &tags, &message)
-        }
+        self.inner.print_rendered_event(&buffer, rendered);
     }
 
     fn render_message_event(

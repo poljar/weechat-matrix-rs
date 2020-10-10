@@ -1,19 +1,22 @@
 use std::time::SystemTime;
 use url::Url;
 
-use matrix_sdk::events::{
-    room::{
-        encrypted::EncryptedEventContent,
-        member::{MemberEventContent, MembershipChange},
-        message::{
-            AudioMessageEventContent, EmoteMessageEventContent,
-            FileMessageEventContent, ImageMessageEventContent,
-            LocationMessageEventContent, NoticeMessageEventContent,
-            ServerNoticeMessageEventContent, TextMessageEventContent,
-            VideoMessageEventContent,
+use matrix_sdk::{
+    events::{
+        room::{
+            encrypted::EncryptedEventContent,
+            member::{MemberEventContent, MembershipChange},
+            message::{
+                AudioMessageEventContent, EmoteMessageEventContent,
+                FileMessageEventContent, ImageMessageEventContent,
+                LocationMessageEventContent, NoticeMessageEventContent,
+                ServerNoticeMessageEventContent, TextMessageEventContent,
+                VideoMessageEventContent,
+            },
         },
+        SyncStateEvent,
     },
-    SyncStateEvent,
+    uuid::Uuid,
 };
 
 use weechat::Weechat;
@@ -91,9 +94,10 @@ pub trait Render {
     fn render_with_prefix_for_echo(
         &self,
         sender: &WeechatRoomMember,
+        uuid: Uuid,
         context: &Self::RenderContext,
     ) -> RenderedEvent {
-        let content = self.render_for_echo(context);
+        let content = self.render_for_echo(uuid, context);
         let prefix = self.prefix(sender);
 
         RenderedEvent {
@@ -105,9 +109,11 @@ pub trait Render {
 
     fn render_for_echo(
         &self,
+        uuid: Uuid,
         context: &Self::RenderContext,
     ) -> RenderedContent {
         let mut content = self.render(context);
+        let uuid_tag = format!("matrix_echo_{}", uuid.to_string());
 
         for line in &mut content.lines {
             let message = Weechat::remove_color(&line.message);
@@ -117,6 +123,7 @@ pub trait Render {
                 message,
                 Weechat::color("reset")
             );
+            line.tags.push(uuid_tag.clone())
         }
 
         content
