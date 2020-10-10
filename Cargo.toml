@@ -23,9 +23,8 @@ indoc = "1.0.2"
 chrono = "0.4.19"
 
 [dependencies.weechat]
-git = "https://github.com/poljar/rust-weechat"
+version = "0.4.0"
 features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
-path = "/home/poljar/werk/priv/nio-rust/matrix_sdk"
-features = ["messages"]
+git = "https://github.com/matrix-org/matrix-rust-sdk/"

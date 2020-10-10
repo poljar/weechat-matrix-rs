@@ -44,7 +44,7 @@ impl DevicesCommand {
             let devices = || async move {
                 s.devices().await;
             };
-            Weechat::spawn(devices());
+            Weechat::spawn(devices()).detach();
         } else {
             Weechat::print("Must be executed on Matrix buffer")
         }

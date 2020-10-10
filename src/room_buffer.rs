@@ -574,18 +574,18 @@ impl RoomBuffer {
         if input.len() < 4 && typing_time.is_some() {
             // If we have an active typing notice and our input is short, e.g.
             // we removed the input set the typing notice to false.
-            Weechat::spawn(send(false));
+            Weechat::spawn(send(false)).detach();
         } else if input.len() >= 4 {
             if let Some(typing_time) = &*typing_time {
                 // If we have some valid input, check if the typing notice
                 // expired and send one out if it indeed expired.
                 if typing_time.elapsed() > TYPING_NOTICE_TIMEOUT {
-                    Weechat::spawn(send(true));
+                    Weechat::spawn(send(true)).detach();
                 }
             } else {
                 // If we have some valid input and no active typing notice, send
                 // one out.
-                Weechat::spawn(send(true));
+                Weechat::spawn(send(true)).detach();
             }
         }
     }

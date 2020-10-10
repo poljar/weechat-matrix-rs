@@ -22,7 +22,7 @@ pub use matrix_sdk::{
     Client, ClientConfig, LoopCtrl, Result as MatrixResult, Room, SyncSettings,
 };
 
-use weechat::{JoinHandle, Weechat};
+use weechat::{Task, Weechat};
 
 use crate::server::{InnerServer, MatrixServer};
 
@@ -46,16 +46,11 @@ pub enum ClientMessage {
 /// While this struct is alive a sync loop will be going on. To cancel the sync
 /// loop drop the object.
 pub struct Connection {
-    receiver_task: JoinHandle<(), ()>,
+    #[used]
+    receiver_task: Task<()>,
     client: Client,
     #[used]
     runtime: Runtime,
-}
-
-impl Drop for Connection {
-    fn drop(&mut self) {
-        self.receiver_task.cancel();
-    }
 }
 
 impl Connection {

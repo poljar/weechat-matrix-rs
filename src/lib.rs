@@ -216,7 +216,7 @@ impl Plugin for Matrix {
         Weechat::spawn(async move {
             let mut servers = servers.borrow_mut();
             Matrix::autoconnect(&mut servers);
-        });
+        }).detach();
 
         Ok(plugin)
     }
