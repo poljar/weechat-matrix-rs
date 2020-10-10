@@ -345,7 +345,7 @@ impl RoomBuffer {
 
         if buffer.num_lines() == 0 {
             for message in room.messages.iter() {
-                self.handle_room_message(&message)
+                self.handle_restored_room_event(&message)
             }
         }
     }
@@ -848,21 +848,16 @@ impl RoomBuffer {
         }
     }
 
-    pub fn handle_room_message(
-        &self,
-        event: &AnyPossiblyRedactedSyncMessageEvent,
-    ) {
-        if let AnyPossiblyRedactedSyncMessageEvent::Regular(e) = event {
-            if let Some(id) = &e.unsigned().transaction_id {
-                if let Ok(id) = Uuid::parse_str(id) {
-                    self.inner
-                        .replace_local_echo(self.buffer_handle.clone(), id);
-                    return;
-                }
+    pub fn handle_room_message(&self, event: &AnySyncMessageEvent) {
+        if let Some(id) = &event.unsigned().transaction_id {
+            if let Ok(id) = Uuid::parse_str(id) {
+                self.inner
+                    .replace_local_echo(self.buffer_handle.clone(), id);
+                return;
             }
         }
 
-        let rendered = self.render_message(event);
+        let rendered = self.render_regular_message(event);
         self.print_rendered_event(rendered);
     }
 
@@ -877,9 +872,9 @@ impl RoomBuffer {
         }
     }
 
-    fn render_regular_message(
+    fn render_regular_event(
         &self,
-        message: &AnySyncMessageEvent,
+        event: &AnySyncMessageEvent,
     ) -> RenderedEvent {
         use AnyMessageEventContent::*;
         use MessageEventContent::*;
@@ -888,37 +883,37 @@ impl RoomBuffer {
 
         // TODO remove this expect.
         let sender = members
-            .get(message.sender())
+            .get(event.sender())
             .expect("Rendering a message but the sender isn't in the nicklist");
 
-        let send_time = message.origin_server_ts();
+        let send_time = event.origin_server_ts();
 
-        match message.content() {
-            RoomEncrypted(m) => m.render_with_prefix(send_time, sender, &()),
-            RoomMessage(m) => match m {
-                Text(m) => m.render_with_prefix(send_time, sender, &()),
-                Emote(m) => m.render_with_prefix(send_time, sender, sender),
-                Notice(m) => m.render_with_prefix(send_time, sender, sender),
-                ServerNotice(m) => {
-                    m.render_with_prefix(send_time, sender, sender)
+        match event.content() {
+            RoomEncrypted(c) => c.render_with_prefix(send_time, sender, &()),
+            RoomMessage(c) => match c {
+                Text(c) => c.render_with_prefix(send_time, sender, &()),
+                Emote(c) => c.render_with_prefix(send_time, sender, sender),
+                Notice(c) => c.render_with_prefix(send_time, sender, sender),
+                ServerNotice(c) => {
+                    c.render_with_prefix(send_time, sender, sender)
                 }
-                Location(m) => m.render_with_prefix(send_time, sender, sender),
-                Audio(m) => m.render_with_prefix(
+                Location(c) => c.render_with_prefix(send_time, sender, sender),
+                Audio(c) => c.render_with_prefix(
                     send_time,
                     sender,
                     &self.inner.homeserver,
                 ),
-                Video(m) => m.render_with_prefix(
+                Video(c) => c.render_with_prefix(
                     send_time,
                     sender,
                     &self.inner.homeserver,
                 ),
-                File(m) => m.render_with_prefix(
+                File(c) => c.render_with_prefix(
                     send_time,
                     sender,
                     &self.inner.homeserver,
                 ),
-                Image(m) => m.render_with_prefix(
+                Image(c) => c.render_with_prefix(
                     send_time,
                     sender,
                     &self.inner.homeserver,
@@ -930,40 +925,28 @@ impl RoomBuffer {
         }
     }
 
-    pub fn render_message(
+    pub fn render_message_event(
         &self,
-        message: &AnyPossiblyRedactedSyncMessageEvent,
+        event: &AnyPossiblyRedactedSyncMessageEvent,
     ) -> RenderedEvent {
         use AnyPossiblyRedactedSyncMessageEvent::*;
 
-        match message {
-            Regular(message) => self.render_regular_message(message),
+        match event {
+            Regular(event) => self.render_regular_event(event),
             Redacted(_) => todo!("Render redacted events"),
         }
     }
 
-    pub fn handle_room_name(&self) {
-        self.update_buffer_name();
-    }
-
     pub fn handle_room_event(&mut self, event: AnySyncRoomEvent) {
         match &event {
-            AnySyncRoomEvent::Message(message) => match message {
-                AnySyncMessageEvent::RoomMessage(_)
-                | AnySyncMessageEvent::RoomEncrypted(_) => self
-                    .handle_room_message(
-                        &AnyPossiblyRedactedSyncMessageEvent::Regular(
-                            message.to_owned(),
-                        ),
-                    ),
-                _ => (),
-            },
-
-            AnySyncRoomEvent::State(event) => match &event {
+            AnySyncRoomEvent::Message(message) => {
+                self.handle_room_message(message)
+            }
+            AnySyncRoomEvent::State(event) => match event {
                 AnySyncStateEvent::RoomMember(e) => {
                     self.handle_membership_event(e, false)
                 }
-                AnySyncStateEvent::RoomName(_) => self.handle_room_name(),
+                AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
                 _ => (),
             },
 
@@ -976,8 +959,20 @@ impl RoomBuffer {
             AnySyncStateEvent::RoomMember(e) => {
                 self.handle_membership_event(e, true)
             }
-            AnySyncStateEvent::RoomName(_) => self.handle_room_name(),
+            AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
             _ => (),
+        }
+    }
+
+    pub fn handle_restored_room_event(
+        &self,
+        event: &AnyPossiblyRedactedSyncMessageEvent,
+    ) {
+        use AnyPossiblyRedactedSyncMessageEvent::*;
+
+        match event {
+            Regular(e) => self.handle_room_message(e),
+            Redacted(e) => todo!(),
         }
     }
 }
