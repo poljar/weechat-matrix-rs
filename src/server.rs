@@ -113,6 +113,7 @@ pub struct LoginInfo {
 
 #[derive(Clone)]
 pub struct MatrixServer {
+    #[allow(clippy::rc_buffer)]
     server_name: Rc<String>,
     inner: Rc<RefCell<InnerServer>>,
 }
@@ -125,6 +126,7 @@ impl std::fmt::Debug for MatrixServer {
 }
 
 pub struct InnerServer {
+    #[allow(clippy::rc_buffer)]
     server_name: Rc<String>,
     pub room_buffers: HashMap<RoomId, RoomBuffer>,
     settings: ServerSettings,

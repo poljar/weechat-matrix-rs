@@ -83,6 +83,7 @@ pub struct WeechatRoomMember {
     pub nick: Rc<RefCell<String>>,
     pub display_name: Rc<RefCell<Option<String>>>,
     pub prefix: Rc<RefCell<Option<String>>>,
+    #[allow(clippy::rc_buffer)]
     pub color: Rc<String>,
 }
 
