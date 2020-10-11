@@ -36,8 +36,8 @@ use matrix_sdk::{
             message::{MessageEventContent, TextMessageEventContent},
         },
         AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
-        AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
-        SyncStateEvent,
+        AnyRedactedSyncMessageEvent, AnySyncMessageEvent, AnySyncRoomEvent,
+        AnySyncStateEvent, SyncStateEvent,
     },
     identifiers::{RoomId, UserId},
     locks::{RwLock, RwLockReadGuard},
@@ -355,7 +355,7 @@ impl RoomBuffer {
             for event in room.messages.iter() {
                 match event {
                     Regular(e) => self.handle_room_message(e),
-                    Redacted(_) => todo!("Render redacted messages"),
+                    Redacted(e) => self.handle_redacted_events(e),
                 }
             }
         }
@@ -434,7 +434,7 @@ impl RoomBuffer {
     ) -> Result<WeechatRoomMember, RoomError> {
         let buffer = self.weechat_buffer();
 
-        if let Some(member) =  self.inner.members.borrow_mut().remove(user_id) {
+        if let Some(member) = self.inner.members.borrow_mut().remove(user_id) {
             buffer.remove_nick(&member.nick.borrow());
             Ok(member)
         } else {
@@ -868,8 +868,9 @@ impl RoomBuffer {
             }
         }
 
-        let rendered = self.render_message_event(event);
-        self.print_rendered_event(rendered);
+        if let Some(rendered) = self.render_message_event(event) {
+            self.print_rendered_event(rendered);
+        }
     }
 
     fn print_rendered_event(&self, rendered: RenderedEvent) {
@@ -877,10 +878,36 @@ impl RoomBuffer {
         self.inner.print_rendered_event(&buffer, rendered);
     }
 
+    fn handle_redacted_events(&self, event: &AnyRedactedSyncMessageEvent) {
+        use AnyRedactedSyncMessageEvent::*;
+
+        match event {
+            RoomMessage(e) => {
+                // TODO remove those expects and unwraps.
+                let redacter =
+                    &e.unsigned.redacted_because.as_ref().unwrap().sender;
+                let redacter = self.get_member(redacter).expect(
+                    "Rendering a message but the sender isn't in the nicklist",
+                );
+                let sender = self.get_member(&e.sender).expect(
+                    "Rendering a message but the sender isn't in the nicklist",
+                );
+                let rendered = e.render_with_prefix(
+                    &e.origin_server_ts,
+                    &sender,
+                    &redacter,
+                );
+
+                self.print_rendered_event(rendered);
+            }
+            _ => (),
+        }
+    }
+
     fn render_message_event(
         &self,
         event: &AnySyncMessageEvent,
-    ) -> RenderedEvent {
+    ) -> Option<RenderedEvent> {
         use AnyMessageEventContent::*;
         use MessageEventContent::*;
 
@@ -893,7 +920,7 @@ impl RoomBuffer {
 
         let send_time = event.origin_server_ts();
 
-        match event.content() {
+        let rendered = match event.content() {
             RoomEncrypted(c) => c.render_with_prefix(send_time, sender, &()),
             RoomMessage(c) => match c {
                 Text(c) => c.render_with_prefix(send_time, sender, &()),
@@ -924,10 +951,10 @@ impl RoomBuffer {
                     &self.inner.homeserver,
                 ),
             },
-            _ => todo!(
-                "Handle rendering of message types other than RoomMessage"
-            ),
-        }
+            _ => return None,
+        };
+
+        Some(rendered)
     }
 
     pub fn handle_sync_room_event(&mut self, event: AnySyncRoomEvent) {
@@ -935,6 +962,13 @@ impl RoomBuffer {
             AnySyncRoomEvent::Message(message) => {
                 self.handle_room_message(message)
             }
+
+            AnySyncRoomEvent::RedactedMessage(e) => {
+                self.handle_redacted_events(e)
+            }
+            // We don't print out redacted state event for now.
+            AnySyncRoomEvent::RedactedState(_) => (),
+
             AnySyncRoomEvent::State(event) => match event {
                 AnySyncStateEvent::RoomMember(e) => {
                     self.handle_membership_event(e, false)
@@ -942,8 +976,6 @@ impl RoomBuffer {
                 AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
                 _ => (),
             },
-
-            _ => (),
         }
     }
 

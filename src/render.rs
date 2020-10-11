@@ -10,11 +10,11 @@ use matrix_sdk::{
                 AudioMessageEventContent, EmoteMessageEventContent,
                 FileMessageEventContent, ImageMessageEventContent,
                 LocationMessageEventContent, NoticeMessageEventContent,
-                ServerNoticeMessageEventContent, TextMessageEventContent,
-                VideoMessageEventContent,
+                RedactedMessageEventContent, ServerNoticeMessageEventContent,
+                TextMessageEventContent, VideoMessageEventContent,
             },
         },
-        SyncStateEvent,
+        RedactedSyncMessageEvent, SyncStateEvent,
     },
     uuid::Uuid,
 };
@@ -301,6 +301,30 @@ impl Render for EncryptedEventContent {
             message,
             // TODO add tags that allow us decrypt the event at a later point in
             // time, sender key, algorithm, session id.
+            tags: self.tags(),
+        };
+
+        RenderedContent { lines: vec![line] }
+    }
+}
+
+impl Render for RedactedSyncMessageEvent<RedactedMessageEventContent> {
+    type RenderContext = WeechatRoomMember;
+    const TAGS: &'static [&'static str] = &[&"matrix_redacted"];
+
+    fn render(&self, redacter: &Self::RenderContext) -> RenderedContent {
+        // TODO add the redaction reason.
+        let message = format!(
+            "{}<{}Message redacted by: {}{}>{}",
+            Weechat::color("chat_delimiters"),
+            Weechat::color("logger.color.backlog_line"),
+            redacter.nick.borrow(),
+            Weechat::color("chat_delimiters"),
+            Weechat::color("reset"),
+        );
+
+        let line = RenderedLine {
+            message,
             tags: self.tags(),
         };
 
