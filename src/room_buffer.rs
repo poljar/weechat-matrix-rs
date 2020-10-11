@@ -434,21 +434,17 @@ impl RoomBuffer {
     ) -> Result<WeechatRoomMember, RoomError> {
         let buffer = self.weechat_buffer();
 
-        match self.get_member(user_id) {
-            Some(member) => {
-                buffer.remove_nick(&member.nick.borrow());
-                Ok(self.inner.members.borrow_mut().remove(user_id).unwrap())
-            }
+        if let Some(member) =  self.inner.members.borrow_mut().remove(user_id) {
+            buffer.remove_nick(&member.nick.borrow());
+            Ok(member)
+        } else {
+            error!(
+                "{}: Tried removing a non-existent Weechat room member: {}",
+                self.calculate_buffer_name(),
+                user_id
+            );
 
-            None => {
-                error!(
-                    "{}: Tried removing a non-existent Weechat room member: {}",
-                    self.calculate_buffer_name(),
-                    user_id
-                );
-
-                Err(RoomError::NonExistentMember(user_id.clone()))
-            }
+            Err(RoomError::NonExistentMember(user_id.clone()))
         }
     }
 
@@ -461,28 +457,22 @@ impl RoomBuffer {
         user_id: &UserId,
         new_nick: String,
     ) -> Result<String, RoomError> {
-        if self.get_member(user_id).is_some() {
-            {
-                let member = self.get_member(user_id).unwrap();
-                trace!(
-                    "Renaming member from {} to {}",
-                    &member.nick.borrow(),
-                    &new_nick
-                );
+        if let Some(member) = self.get_member(user_id) {
+            trace!(
+                "Renaming member from {} to {}",
+                &member.nick.borrow(),
+                &new_nick
+            );
 
-                let buffer = self.weechat_buffer();
+            let buffer = self.weechat_buffer();
+            buffer.remove_nick(&member.nick.borrow());
 
-                buffer.remove_nick(&member.nick.borrow());
-                let nick_settings = NickSettings::new(&new_nick);
-                buffer
-                    .add_nick(nick_settings)
-                    .expect("Can't add nick to nicklist");
-            }
+            let nick_settings = NickSettings::new(&new_nick);
+            buffer
+                .add_nick(nick_settings)
+                .expect("Can't add nick to nicklist");
 
-            let old_nick = {
-                let member = self.get_member_mut(user_id).unwrap();
-                member.nick.replace(new_nick)
-            };
+            let old_nick = member.nick.replace(new_nick);
 
             Ok(old_nick)
         } else {
@@ -520,6 +510,10 @@ impl RoomBuffer {
     ///
     /// If no member with that ID is in the room, the string representation of
     /// the ID will be returned.
+    ///
+    /// # Panics
+    ///
+    /// This panics if no member with the given user id can be found.
     fn calculate_user_name(&self, user_id: &UserId) -> String {
         self.room()
             .get_member(user_id)
@@ -731,6 +725,7 @@ impl RoomBuffer {
                         new_nick
                     );
 
+                    // TODO remove this unwrap
                     let display_name = self
                         .room()
                         .get_member(&target_id)
@@ -798,7 +793,8 @@ impl RoomBuffer {
                             ),
                         }
 
-                        self.get_member_mut(&target_id)
+                        // TODO remove this unwrap
+                        self.get_member(&target_id)
                             .unwrap()
                             .display_name
                             .replace(event.content.displayname.clone());
