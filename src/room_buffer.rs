@@ -881,26 +881,20 @@ impl RoomBuffer {
     fn handle_redacted_events(&self, event: &AnyRedactedSyncMessageEvent) {
         use AnyRedactedSyncMessageEvent::*;
 
-        match event {
-            RoomMessage(e) => {
-                // TODO remove those expects and unwraps.
-                let redacter =
-                    &e.unsigned.redacted_because.as_ref().unwrap().sender;
-                let redacter = self.get_member(redacter).expect(
-                    "Rendering a message but the sender isn't in the nicklist",
-                );
-                let sender = self.get_member(&e.sender).expect(
-                    "Rendering a message but the sender isn't in the nicklist",
-                );
-                let rendered = e.render_with_prefix(
-                    &e.origin_server_ts,
-                    &sender,
-                    &redacter,
-                );
+        if let RoomMessage(e) = event {
+            // TODO remove those expects and unwraps.
+            let redacter =
+                &e.unsigned.redacted_because.as_ref().unwrap().sender;
+            let redacter = self.get_member(redacter).expect(
+                "Rendering a message but the sender isn't in the nicklist",
+            );
+            let sender = self.get_member(&e.sender).expect(
+                "Rendering a message but the sender isn't in the nicklist",
+            );
+            let rendered =
+                e.render_with_prefix(&e.origin_server_ts, &sender, &redacter);
 
-                self.print_rendered_event(rendered);
-            }
-            _ => (),
+            self.print_rendered_event(rendered);
         }
     }
 
