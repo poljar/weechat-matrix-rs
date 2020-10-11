@@ -355,7 +355,7 @@ impl RoomBuffer {
             for event in room.messages.iter() {
                 match event {
                     Regular(e) => self.handle_room_message(e),
-                    Redacted(e) => todo!(),
+                    Redacted(_) => todo!("Render redacted messages"),
                 }
             }
         }
@@ -408,12 +408,15 @@ impl RoomBuffer {
     /// Add a new Weechat room member.
     pub fn add_member(&mut self, member: WeechatRoomMember) {
         let buffer = self.weechat_buffer();
-        let nick = member.nick.borrow();
-        let nick_settings = NickSettings::new(&nick);
 
-        // FIXME: If we expect this, it fails at least once. Why?
-        let _ = buffer.add_nick(nick_settings);
-        drop(nick);
+        {
+            let nick = member.nick.borrow();
+            let nick_settings = NickSettings::new(&nick);
+
+            buffer.add_nick(nick_settings).unwrap_or_else(|_| {
+                panic!("Error adding nick for {:#?}, already added?", member)
+            });
+        }
 
         self.inner
             .members
