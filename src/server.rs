@@ -564,6 +564,7 @@ impl InnerServer {
                 room.expect("Receiving events for a room while no room found");
             let buffer = RoomBuffer::new(
                 &self.connection,
+                self.config.inner.clone(),
                 room,
                 homeserver,
                 room_id.clone(),
@@ -594,7 +595,12 @@ impl InnerServer {
             .as_ref()
             .expect("Creating room buffer while no homeserver");
 
-        let buffer = RoomBuffer::restore(room, &self.connection, homeserver);
+        let buffer = RoomBuffer::restore(
+            room,
+            &self.connection,
+            self.config.inner.clone(),
+            homeserver,
+        );
         let room_id = buffer.room_id().to_owned();
 
         self.room_buffers.insert(room_id, buffer);

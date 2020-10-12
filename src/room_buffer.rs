@@ -51,6 +51,7 @@ use futures::executor::block_on;
 use tracing::{debug, error, trace};
 
 use crate::{
+    config::Config,
     connection::{Connection, TYPING_NOTICE_TIMEOUT},
     render::{render_membership, Render, RenderedEvent},
 };
@@ -117,6 +118,7 @@ struct MatrixRoom {
     own_user_id: Rc<UserId>,
     room: Arc<RwLock<Room>>,
 
+    config: Rc<RefCell<Config>>,
     connection: Rc<RefCell<Option<Connection>>>,
 
     typing_notice_time: Rc<RefCell<Option<Instant>>>,
@@ -157,7 +159,9 @@ impl MatrixRoom {
             match c.send_message(&self.room_id, content, Some(uuid)).await {
                 // TODO the event id is in the response, this needs to end up in
                 // a tag.
-                Ok(_r) => self.replace_local_echo(buffer, uuid),
+                Ok(_r) => {
+                    self.replace_local_echo(buffer, uuid);
+                }
                 Err(_e) => (),
             }
         } else {
@@ -175,7 +179,7 @@ impl MatrixRoom {
         uuid: Uuid,
         content: &AnyMessageEventContent,
     ) {
-        if true {
+        if self.config.borrow().look().local_echo() {
             if let AnyMessageEventContent::RoomMessage(
                 MessageEventContent::Text(c),
             ) = content
@@ -211,7 +215,17 @@ impl MatrixRoom {
         }
     }
 
-    pub fn replace_local_echo(&self, buffer_handle: BufferHandle, uuid: Uuid) {
+    /// Replace the local echo line with a normal line for the event content
+    /// with the given UUID.
+    ///
+    /// If no content with the given UUID was found in the local echo queue
+    /// false is returned, if the event was successfully found and replaced true
+    /// is returned.
+    pub fn replace_local_echo(
+        &self,
+        buffer_handle: BufferHandle,
+        uuid: Uuid,
+    ) -> bool {
         let uuid_tag = Cow::from(format!("matrix_echo_{}", uuid.to_string()));
 
         let line_contains_uuid = |l: &BufferLine| l.tags().contains(&uuid_tag);
@@ -220,7 +234,8 @@ impl MatrixRoom {
         {
             let content = match content {
                 MessageEventContent::Text(c) => c.render(&()),
-                _ => return,
+                // TODO support more message types.
+                _ => return false,
             };
 
             if let Ok(buffer) = buffer_handle.upgrade() {
@@ -237,6 +252,10 @@ impl MatrixRoom {
                     first_line = lines.next_back().filter(line_contains_uuid);
                 }
             }
+
+            true
+        } else {
+            false
         }
     }
 }
@@ -244,6 +263,7 @@ impl MatrixRoom {
 impl RoomBuffer {
     pub fn new(
         connection: &Rc<RefCell<Option<Connection>>>,
+        config: Rc<RefCell<Config>>,
         room: Arc<RwLock<Room>>,
         homeserver: &Url,
         room_id: RoomId,
@@ -255,6 +275,7 @@ impl RoomBuffer {
             connection: connection.clone(),
             typing_notice_time: Rc::new(RefCell::new(None)),
             typing_in_flight: Rc::new(Mutex::new(())),
+            config,
             room,
             own_user_id: Rc::new(own_user_id.to_owned()),
             members: Rc::new(RefCell::new(HashMap::new())),
@@ -286,6 +307,7 @@ impl RoomBuffer {
     pub fn restore(
         room: Arc<RwLock<Room>>,
         connection: &Rc<RefCell<Option<Connection>>>,
+        config: Rc<RefCell<Config>>,
         homeserver: &Url,
     ) -> Self {
         let room_clone = room.clone();
@@ -295,6 +317,7 @@ impl RoomBuffer {
 
         let room_buffer = RoomBuffer::new(
             connection,
+            config,
             room_clone,
             homeserver,
             room_id,
@@ -862,9 +885,12 @@ impl RoomBuffer {
     pub fn handle_room_message(&self, event: &AnySyncMessageEvent) {
         if let Some(id) = &event.unsigned().transaction_id {
             if let Ok(id) = Uuid::parse_str(id) {
-                self.inner
-                    .replace_local_echo(self.buffer_handle.clone(), id);
-                return;
+                if self
+                    .inner
+                    .replace_local_echo(self.buffer_handle.clone(), id)
+                {
+                    return;
+                }
             }
         }
 

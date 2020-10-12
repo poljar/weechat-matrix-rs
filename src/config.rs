@@ -39,6 +39,14 @@ config!(
             // Default value.
             "🔒",
         },
+
+        local_echo: bool {
+            // Description
+            "Should the sending event be printed out before the server \
+             the receipt of the message",
+             // Default value
+             true,
+        }
     },
     Section network {
         debug_buffer: bool {
@@ -53,7 +61,7 @@ config!(
 /// A wrapper for our config struct that can be cloned around.
 #[derive(Clone)]
 pub struct ConfigHandle {
-    inner: Rc<RefCell<Config>>,
+    pub inner: Rc<RefCell<Config>>,
     servers: Servers,
 }
 
