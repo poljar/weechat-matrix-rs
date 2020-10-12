@@ -37,9 +37,9 @@ use matrix_sdk::{
         },
         AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
         AnyRedactedSyncMessageEvent, AnySyncMessageEvent, AnySyncRoomEvent,
-        AnySyncStateEvent, SyncStateEvent,
+        AnySyncStateEvent, SyncMessageEvent, SyncStateEvent,
     },
-    identifiers::{RoomId, UserId},
+    identifiers::{EventId, RoomId, UserId},
     locks::{RwLock, RwLockReadGuard},
     uuid::Uuid,
     Room,
@@ -78,6 +78,28 @@ pub struct RoomBuffer {
     buffer_handle: BufferHandle,
 }
 
+#[derive(Clone)]
+struct MatrixRoom {
+    homeserver: Rc<Url>,
+    room_id: Rc<RoomId>,
+    own_user_id: Rc<UserId>,
+    room: Arc<RwLock<Room>>,
+
+    config: Rc<RefCell<Config>>,
+    connection: Rc<RefCell<Option<Connection>>>,
+
+    typing_notice_time: Rc<RefCell<Option<Instant>>>,
+    typing_in_flight: Rc<Mutex<()>>,
+
+    outgoing_messages: MessageQueue,
+
+    members: Rc<RefCell<HashMap<UserId, WeechatRoomMember>>>,
+}
+
+pub enum RoomError {
+    NonExistentMember(UserId),
+}
+
 #[derive(Clone, Debug)]
 pub struct WeechatRoomMember {
     pub user_id: Rc<UserId>,
@@ -86,6 +108,31 @@ pub struct WeechatRoomMember {
     pub prefix: Rc<RefCell<Option<String>>>,
     #[allow(clippy::rc_buffer)]
     pub color: Rc<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MessageQueue {
+    queue: Rc<RefCell<HashMap<Uuid, (bool, MessageEventContent)>>>,
+}
+
+impl MessageQueue {
+    fn new() -> Self {
+        Self {
+            queue: Rc::new(RefCell::new(HashMap::new())),
+        }
+    }
+
+    fn add(&self, uuid: Uuid, content: MessageEventContent) {
+        self.queue.borrow_mut().insert(uuid, (false, content));
+    }
+
+    fn add_with_echo(&self, uuid: Uuid, content: MessageEventContent) {
+        self.queue.borrow_mut().insert(uuid, (true, content));
+    }
+
+    fn remove(&self, uuid: Uuid) -> Option<(bool, MessageEventContent)> {
+        self.queue.borrow_mut().remove(&uuid)
+    }
 }
 
 impl WeechatRoomMember {
@@ -107,39 +154,15 @@ impl WeechatRoomMember {
     }
 }
 
-pub enum RoomError {
-    NonExistentMember(UserId),
-}
-
-#[derive(Clone)]
-struct MatrixRoom {
-    homeserver: Rc<Url>,
-    room_id: Rc<RoomId>,
-    own_user_id: Rc<UserId>,
-    room: Arc<RwLock<Room>>,
-
-    config: Rc<RefCell<Config>>,
-    connection: Rc<RefCell<Option<Connection>>>,
-
-    typing_notice_time: Rc<RefCell<Option<Instant>>>,
-    typing_in_flight: Rc<Mutex<()>>,
-
-    local_echo_queue: Rc<RefCell<HashMap<Uuid, MessageEventContent>>>,
-
-    members: Rc<RefCell<HashMap<UserId, WeechatRoomMember>>>,
-}
-
 #[async_trait(?Send)]
 impl BufferInputCallbackAsync for MatrixRoom {
     async fn callback(&mut self, buffer_handle: BufferHandle, input: String) {
         // TODO parse the input here and produce a formatted body.
-        let content = AnyMessageEventContent::RoomMessage(
-            MessageEventContent::Text(TextMessageEventContent {
-                body: input,
-                formatted: None,
-                relates_to: None,
-            }),
-        );
+        let content = MessageEventContent::Text(TextMessageEventContent {
+            body: input,
+            formatted: None,
+            relates_to: None,
+        });
 
         self.send_message(buffer_handle, content).await;
     }
@@ -149,20 +172,28 @@ impl MatrixRoom {
     pub async fn send_message(
         &self,
         buffer: BufferHandle,
-        content: AnyMessageEventContent,
+        content: MessageEventContent,
     ) {
         let uuid = Uuid::new_v4();
 
         if let Some(c) = &*self.connection.borrow() {
-            self.queue_up_local_echo(buffer.clone(), uuid, &content);
-            // TODO check for errors and print them out.
-            match c.send_message(&self.room_id, content, Some(uuid)).await {
-                // TODO the event id is in the response, this needs to end up in
-                // a tag.
-                Ok(_r) => {
-                    self.replace_local_echo(buffer, uuid);
+            self.queue_outgoing_message(buffer.clone(), uuid, &content);
+            match c
+                .send_message(
+                    &self.room_id,
+                    AnyMessageEventContent::RoomMessage(content),
+                    Some(uuid),
+                )
+                .await
+            {
+                Ok(r) => {
+                    self.handle_outgoing_message(buffer, uuid, &r.event_id);
                 }
-                Err(_e) => (),
+                Err(_e) => {
+                    // TODO print out an error, remember to modify the local
+                    // echo line if there is one.
+                    self.outgoing_messages.remove(uuid);
+                }
             }
         } else {
             let buffer = buffer
@@ -173,17 +204,16 @@ impl MatrixRoom {
         }
     }
 
-    pub fn queue_up_local_echo(
+    // Add the content of the message to our outgoing messag queue and print out
+    // a local echo line if local echo is enabled.
+    pub fn queue_outgoing_message(
         &self,
         buffer_handle: BufferHandle,
         uuid: Uuid,
-        content: &AnyMessageEventContent,
+        content: &MessageEventContent,
     ) {
         if self.config.borrow().look().local_echo() {
-            if let AnyMessageEventContent::RoomMessage(
-                MessageEventContent::Text(c),
-            ) = content
-            {
+            if let MessageEventContent::Text(c) = content {
                 let members = self.members.borrow();
                 let sender =
                     members.get(&self.own_user_id).unwrap_or_else(|| {
@@ -196,9 +226,12 @@ impl MatrixRoom {
                     self.print_rendered_event(&b, local_echo)
                 }
 
-                let mut echo_queue = self.local_echo_queue.borrow_mut();
-                echo_queue.insert(uuid, MessageEventContent::Text(c.clone()));
+                self.outgoing_messages.add_with_echo(uuid, content.clone());
+            } else {
+                self.outgoing_messages.add(uuid, content.clone());
             }
+        } else {
+            self.outgoing_messages.add(uuid, content.clone());
         }
     }
 
@@ -215,48 +248,104 @@ impl MatrixRoom {
         }
     }
 
-    /// Replace the local echo line with a normal line for the event content
-    /// with the given UUID.
-    ///
-    /// If no content with the given UUID was found in the local echo queue
-    /// false is returned, if the event was successfully found and replaced true
-    /// is returned.
-    pub fn replace_local_echo(
+    /// Replace the local echo of an event with a fully rendered one.
+    fn replace_local_echo(
+        &self,
+        uuid: Uuid,
+        buffer: &Buffer,
+        rendered: RenderedEvent,
+    ) {
+        let uuid_tag = Cow::from(format!("matrix_echo_{}", uuid.to_string()));
+        let line_contains_uuid = |l: &BufferLine| l.tags().contains(&uuid_tag);
+
+        let mut lines = buffer.lines();
+        let mut first_line = lines.rfind(line_contains_uuid);
+        let mut line_num = 0;
+
+        while let Some(line) = &first_line {
+            let rendered_line = &rendered.content.lines[line_num];
+
+            line.set_message(&rendered_line.message);
+
+            line_num += 1;
+            first_line = lines.next_back().filter(line_contains_uuid);
+        }
+    }
+
+    fn handle_outgoing_message(
         &self,
         buffer_handle: BufferHandle,
         uuid: Uuid,
-    ) -> bool {
-        let uuid_tag = Cow::from(format!("matrix_echo_{}", uuid.to_string()));
-
-        let line_contains_uuid = |l: &BufferLine| l.tags().contains(&uuid_tag);
-
-        if let Some(content) = self.local_echo_queue.borrow_mut().remove(&uuid)
-        {
-            let content = match content {
-                MessageEventContent::Text(c) => c.render(&()),
-                // TODO support more message types.
-                _ => return false,
+        event_id: &EventId,
+    ) {
+        if let Some((echo, content)) = self.outgoing_messages.remove(uuid) {
+            let event = SyncMessageEvent {
+                sender: (&*self.own_user_id).clone(),
+                origin_server_ts: std::time::SystemTime::now(),
+                event_id: event_id.clone(),
+                content,
+                unsigned: Default::default(),
             };
 
+            let event = AnySyncMessageEvent::RoomMessage(event);
+
+            let rendered = self
+                .render_message_event(&event)
+                .expect("Sent out an event that we don't know how to render");
+
             if let Ok(buffer) = buffer_handle.upgrade() {
-                let mut lines = buffer.lines();
-                let mut first_line = lines.rfind(line_contains_uuid);
-                let mut line_num = 0;
-
-                while let Some(line) = &first_line {
-                    let rendered_line = &content.lines[line_num];
-
-                    line.set_message(&rendered_line.message);
-
-                    line_num += 1;
-                    first_line = lines.next_back().filter(line_contains_uuid);
+                if echo {
+                    self.replace_local_echo(uuid, &buffer, rendered);
+                } else {
+                    self.print_rendered_event(&buffer, rendered);
                 }
             }
-
-            true
-        } else {
-            false
         }
+    }
+
+    fn render_message_event(
+        &self,
+        event: &AnySyncMessageEvent,
+    ) -> Option<RenderedEvent> {
+        use AnyMessageEventContent::*;
+        use MessageEventContent::*;
+
+        let members = self.members.borrow();
+
+        // TODO remove this expect.
+        let sender = members
+            .get(event.sender())
+            .expect("Rendering a message but the sender isn't in the nicklist");
+
+        let send_time = event.origin_server_ts();
+
+        let rendered = match event.content() {
+            RoomEncrypted(c) => c.render_with_prefix(send_time, sender, &()),
+            RoomMessage(c) => match c {
+                Text(c) => c.render_with_prefix(send_time, sender, &()),
+                Emote(c) => c.render_with_prefix(send_time, sender, sender),
+                Notice(c) => c.render_with_prefix(send_time, sender, sender),
+                ServerNotice(c) => {
+                    c.render_with_prefix(send_time, sender, sender)
+                }
+                Location(c) => c.render_with_prefix(send_time, sender, sender),
+                Audio(c) => {
+                    c.render_with_prefix(send_time, sender, &self.homeserver)
+                }
+                Video(c) => {
+                    c.render_with_prefix(send_time, sender, &self.homeserver)
+                }
+                File(c) => {
+                    c.render_with_prefix(send_time, sender, &self.homeserver)
+                }
+                Image(c) => {
+                    c.render_with_prefix(send_time, sender, &self.homeserver)
+                }
+            },
+            _ => return None,
+        };
+
+        Some(rendered)
     }
 }
 
@@ -279,7 +368,7 @@ impl RoomBuffer {
             room,
             own_user_id: Rc::new(own_user_id.to_owned()),
             members: Rc::new(RefCell::new(HashMap::new())),
-            local_echo_queue: Rc::new(RefCell::new(HashMap::new())),
+            outgoing_messages: MessageQueue::new(),
         };
 
         let buffer_handle = BufferBuilderAsync::new(&room_id.to_string())
@@ -402,7 +491,7 @@ impl RoomBuffer {
     ///
     /// buffer.send_message(content).await
     /// ```
-    pub async fn send_message(&self, content: AnyMessageEventContent) {
+    pub async fn send_message(&self, content: MessageEventContent) {
         let buffer = self.buffer_handle.clone();
         self.inner.send_message(buffer, content).await
     }
@@ -883,14 +972,17 @@ impl RoomBuffer {
     }
 
     pub fn handle_room_message(&self, event: &AnySyncMessageEvent) {
+        // If the event has a transaction id it's an event that we sent out
+        // ourselves, the content will be in the outgoing message queue and it
+        // may have been printed out as a local echo.
         if let Some(id) = &event.unsigned().transaction_id {
             if let Ok(id) = Uuid::parse_str(id) {
-                if self
-                    .inner
-                    .replace_local_echo(self.buffer_handle.clone(), id)
-                {
-                    return;
-                }
+                self.inner.handle_outgoing_message(
+                    self.buffer_handle.clone(),
+                    id,
+                    event.event_id(),
+                );
+                return;
             }
         }
 
