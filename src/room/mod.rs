@@ -413,10 +413,8 @@ impl MatrixRoom {
                     self.outgoing_messages.remove(uuid);
                 }
             }
-        } else {
-            if let Ok(buffer) = self.buffer_handle().upgrade() {
-                buffer.print("Error not connected");
-            }
+        } else if let Ok(buffer) = self.buffer_handle().upgrade() {
+            buffer.print("Error not connected");
         }
     }
 
