@@ -82,8 +82,7 @@ use weechat::{
 };
 
 use crate::{
-    config::Config, connection::Connection, room_buffer::RoomBuffer,
-    ConfigHandle,
+    config::Config, connection::Connection, room::RoomBuffer, ConfigHandle,
 };
 
 #[derive(Debug)]

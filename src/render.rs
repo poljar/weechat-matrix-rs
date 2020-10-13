@@ -21,7 +21,7 @@ use matrix_sdk::{
 
 use weechat::Weechat;
 
-use crate::room_buffer::WeechatRoomMember;
+use crate::room::WeechatRoomMember;
 
 /// The rendered version of an event.
 #[allow(dead_code)]

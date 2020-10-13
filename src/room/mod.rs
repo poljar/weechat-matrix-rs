@@ -22,55 +22,54 @@
 //! we're sending ourselves before we receive them in a sync response, or if we
 //! decrypt a previously undecryptable event.
 
+mod members;
+
+use members::Members;
+pub use members::WeechatRoomMember;
+
+pub const BUFFER_CLOSED_ERROR: &str =
+    "Buffer got closed but Room is still lingering around";
+
+use std::{
+    borrow::Cow,
+    cell::RefCell,
+    collections::HashMap,
+    ops::Deref,
+    rc::Rc,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
+
+use async_trait::async_trait;
+use futures::executor::block_on;
+use tracing::{debug, trace};
+use url::Url;
+
 use matrix_sdk::{
     events::{
-        room::{
-            member::{
-                MemberEventContent,
-                MembershipChange::{
-                    Banned, InvitationRejected, InvitationRevoked, Invited,
-                    Joined, Kicked, KickedAndBanned, Left, ProfileChanged,
-                },
-                MembershipState,
-            },
-            message::{MessageEventContent, TextMessageEventContent},
-        },
+        room::message::{MessageEventContent, TextMessageEventContent},
         AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
         AnyRedactedSyncMessageEvent, AnySyncMessageEvent, AnySyncRoomEvent,
-        AnySyncStateEvent, SyncMessageEvent, SyncStateEvent,
+        AnySyncStateEvent, SyncMessageEvent,
     },
     identifiers::{EventId, RoomId, UserId},
     locks::{RwLock, RwLockReadGuard},
     uuid::Uuid,
     Room,
 };
-use url::Url;
 
-use async_trait::async_trait;
-use futures::executor::block_on;
-use tracing::{debug, error, trace};
+use weechat::{
+    buffer::{
+        Buffer, BufferBuilderAsync, BufferHandle, BufferInputCallbackAsync,
+        BufferLine,
+    },
+    Weechat,
+};
 
 use crate::{
     config::Config,
     connection::{Connection, TYPING_NOTICE_TIMEOUT},
-    render::{render_membership, Render, RenderedEvent},
-};
-use std::{
-    borrow::Cow,
-    ops::Deref,
-    cell::RefCell,
-    collections::HashMap,
-    convert::TryFrom,
-    rc::Rc,
-    sync::{Arc, Mutex},
-    time::Instant,
-};
-use weechat::{
-    buffer::{
-        Buffer, BufferBuilderAsync, BufferHandle, BufferInputCallbackAsync,
-        BufferLine, NickSettings,
-    },
-    Weechat,
+    render::{Render, RenderedEvent},
 };
 
 #[derive(Clone)]
@@ -102,427 +101,7 @@ pub struct MatrixRoom {
 
     outgoing_messages: MessageQueue,
 
-    members: Members
-}
-
-#[derive(Clone)]
-pub struct Members {
-    room: Arc<RwLock<Room>>,
-    inner: Rc<RefCell<HashMap<UserId, WeechatRoomMember>>>,
-    buffer: Rc<RefCell<Option<BufferHandle>>>,
-}
-
-const BUFFER_CLOSED_ERROR: &str = "Buffer got closed but Room is still lingering around";
-
-impl Members {
-    pub fn new(room: Arc<RwLock<Room>>) -> Self {
-        Self {
-            room,
-            inner: Rc::new(RefCell::new(HashMap::new())),
-            buffer: Rc::new(RefCell::new(None)),
-        }
-    }
-
-    pub fn buffer(&self) -> BufferHandle {
-        self.buffer.borrow().as_ref().expect("Members struct wasn't initialized properly").clone()
-    }
-
-    /// Add a new Weechat room member.
-    pub fn add(&self, member: WeechatRoomMember) {
-        {
-            let buffer = self.buffer();
-            let buffer = buffer.upgrade().expect(BUFFER_CLOSED_ERROR);
-            let nick = member.nick.borrow();
-            let nick_settings = NickSettings::new(&nick);
-
-            buffer.add_nick(nick_settings).unwrap_or_else(|_| {
-                panic!("Error adding nick for {:#?}, already added?", member)
-            });
-        }
-
-        self.inner
-            .borrow_mut()
-            .insert((&*member.user_id).clone(), member);
-    }
-
-    /// Remove a Weechat room member by user ID.
-    ///
-    /// Returns either the removed Weechat room member, or an error if the
-    /// member does not exist.
-    pub fn remove(
-        &self,
-        user_id: &UserId,
-    ) -> Result<WeechatRoomMember, RoomError> {
-        let buffer = self.buffer();
-        let buffer = buffer.upgrade().expect(BUFFER_CLOSED_ERROR);
-
-        if let Some(member) = self.inner.borrow_mut().remove(user_id) {
-            buffer.remove_nick(&member.nick.borrow());
-            Ok(member)
-        } else {
-            error!(
-                "{}: Tried removing a non-existent Weechat room member: {}",
-                buffer.name(),
-                user_id
-            );
-
-            Err(RoomError::NonExistentMember(user_id.clone()))
-        }
-    }
-
-    /// Retrieve a reference to a Weechat room member by user ID.
-    pub fn get(&self, user_id: &UserId) -> Option<WeechatRoomMember> {
-        self.inner.borrow().get(user_id).cloned()
-    }
-
-    /// Change nick of member.
-    ///
-    /// Returns either the old nick of the member, or an error if the member
-    /// does not exist.
-    pub fn rename_member(
-        &self,
-        user_id: &UserId,
-        new_nick: String,
-    ) -> Result<String, RoomError> {
-        let buffer = self.buffer();
-        let buffer = buffer.upgrade().expect(BUFFER_CLOSED_ERROR);
-
-        if let Some(member) = self.inner.borrow().get(user_id) {
-            trace!(
-                "Renaming member from {} to {}",
-                &member.nick.borrow(),
-                &new_nick
-            );
-
-            buffer.remove_nick(&member.nick.borrow());
-
-            let nick_settings = NickSettings::new(&new_nick);
-            buffer
-                .add_nick(nick_settings)
-                .expect("Can't add nick to nicklist");
-
-            let old_nick = member.nick.replace(new_nick);
-
-            Ok(old_nick)
-        } else {
-            Err(RoomError::NonExistentMember(user_id.clone()))
-        }
-    }
-
-    pub fn room(&self) -> RwLockReadGuard<'_, Room> {
-        block_on(self.room.read())
-    }
-
-    pub fn calculate_buffer_name(&self) -> String {
-        let room = self.room();
-        let room_name = room.display_name();
-
-        if room_name == "#" {
-            "##".to_owned()
-        } else if room_name.starts_with('#') {
-            room_name
-        } else {
-            // TODO: only do this for non-direct chats
-            format!("#{}", room_name)
-        }
-    }
-
-    pub fn update_buffer_name(&self) {
-        let name = self.calculate_buffer_name();
-        let buffer = self.buffer();
-        let buffer = buffer.upgrade().expect(BUFFER_CLOSED_ERROR);
-        buffer.set_name(&name)
-    }
-
-    /// Helper method to calculate the display name of a room member from their
-    /// UserId.
-    ///
-    /// If no member with that ID is in the room, the string representation of
-    /// the ID will be returned.
-    ///
-    /// # Panics
-    ///
-    /// This panics if no member with the given user id can be found.
-    fn calculate_user_name(&self, user_id: &UserId) -> String {
-        self.room()
-            .get_member(user_id)
-            .unwrap_or_else(|| panic!("No such member {}", user_id))
-            .disambiguated_name()
-    }
-
-    /// Process disambiguations received from the SDK.
-    ///
-    /// Disambiguations are a hashmap of user ID -> bool indicating that this
-    /// user is either newly ambiguous (true) or no longer ambiguous (false).
-    #[allow(dead_code)]
-    fn process_disambiguations(
-        &mut self,
-        disambiguations: &HashMap<UserId, bool>,
-    ) {
-        for (affected_member, is_ambiguous) in disambiguations.iter() {
-            if *is_ambiguous {
-                let new_nick = self
-                    .room()
-                    .get_member(affected_member)
-                    .unwrap()
-                    .unique_name();
-
-                match self.rename_member(affected_member, new_nick.clone()) {
-                    Ok(old_nick) => debug!(
-                        "{}: Disambiguating nick: {} -> {}",
-                        self.calculate_buffer_name(),
-                        old_nick,
-                        &new_nick
-                    ),
-                    Err(RoomError::NonExistentMember(user_id)) => error!(
-                        "{}: Tried disambiguating {} but they are not a member",
-                        self.calculate_buffer_name(),
-                        user_id
-                    ),
-                }
-            } else {
-                let new_nick =
-                    self.room().get_member(affected_member).unwrap().name();
-
-                match self.rename_member(affected_member, new_nick.clone()) {
-                        Ok(old_nick) => debug!(
-                            "{}: No longer disambiguating: {} -> {}",
-                            self.calculate_buffer_name(),
-                            old_nick,
-                            &new_nick),
-                        Err(RoomError::NonExistentMember(user_id)) => error!(
-                            "{}: Tried removing disambiguation for {} but they are not a member",
-                            self.calculate_buffer_name(),
-                            user_id),
-                    }
-            }
-        }
-    }
-
-    pub fn handle_membership_event(
-        &self,
-        event: &SyncStateEvent<MemberEventContent>,
-        state_event: bool,
-    ) {
-        let buffer = self.buffer();
-        let buffer = buffer.upgrade().expect(BUFFER_CLOSED_ERROR);
-
-        let sender_id = event.sender.clone();
-        let target_id;
-
-        if let Ok(t) = UserId::try_from(event.state_key.clone()) {
-            target_id = t;
-        } else {
-            error!(
-                "Invalid state key given by the server: {}",
-                event.state_key
-            );
-            return;
-        }
-
-        let new_nick = self.calculate_user_name(&target_id);
-
-        if state_event {
-            use MembershipState::*;
-
-            // FIXME: Handle gaps (e.g. long disconnects) properly.
-            //
-            // For joins and invites, first we need to check whether a member
-            // with some MXID exists. If he does, we have to update *that*
-            // member with the new state. Only if they do not exist yet do we
-            // create a new one.
-            //
-            // For leaves and bans we just need to remove the member.
-            match event.content.membership {
-                Invite | Join => {
-                    // TODO remove this unwrap.
-                    let display_name = self
-                        .room()
-                        .get_member(&target_id)
-                        .unwrap()
-                        .display_name
-                        .clone();
-
-                    self.add(WeechatRoomMember::new(
-                        &target_id,
-                        new_nick,
-                        display_name,
-                    ));
-                }
-                Leave | Ban => {
-                    let _ = self.remove(&target_id);
-                }
-                _ => (),
-            }
-
-            // TODO enable this again once we receive the event via an event
-            // emitter.
-            // self.process_disambiguations(&disambiguations);
-
-            // Names of rooms without display names can get affected by the
-            // member list so we need to update them.
-            self.update_buffer_name();
-        } else {
-            let change_op = event.membership_change();
-            let sender;
-            let target;
-
-            match change_op {
-                Joined | Invited => {
-                    debug!(
-                        "{}: User {} joining, adding nick {}",
-                        self.calculate_buffer_name(),
-                        target_id,
-                        new_nick
-                    );
-
-                    // TODO remove this unwrap
-                    let display_name = self
-                        .room()
-                        .get_member(&target_id)
-                        .unwrap()
-                        .display_name
-                        .clone();
-
-                    let member = WeechatRoomMember::new(
-                        &target_id,
-                        new_nick,
-                        display_name,
-                    );
-                    self.add(member.clone());
-
-                    sender = self.get(&sender_id);
-                    target = Some(member);
-                }
-
-                Left | Banned | Kicked | KickedAndBanned
-                | InvitationRejected | InvitationRevoked => {
-                    sender = self.get(&sender_id);
-                    target = self.get(&target_id);
-
-                    match self.remove(&target_id) {
-                        Ok(removed_member) => {
-                            debug!(
-                                "{}: User {} leaving, removing nick {}",
-                                self.calculate_buffer_name(),
-                                target_id,
-                                removed_member.nick.borrow(),
-                            );
-                        }
-
-                        Err(RoomError::NonExistentMember(user_id)) => {
-                            error!(
-                                "{}: User {} leaving, but he's not a member",
-                                self.calculate_buffer_name(),
-                                user_id
-                            );
-                        }
-                    }
-                }
-
-                ProfileChanged {
-                    displayname_changed,
-                    avatar_url_changed,
-                } => {
-                    sender = self.get(&sender_id);
-                    target = self.get(&target_id);
-
-                    if displayname_changed {
-                        match self.rename_member(&target_id, new_nick.clone()) {
-                            Ok(old_nick) => debug!(
-                                "{}: Profile changed for {}, renaming {} -> {}",
-                                self.calculate_buffer_name(),
-                                &target_id,
-                                old_nick,
-                                &new_nick
-                            ),
-
-                            Err(RoomError::NonExistentMember(user_id)) => error!(
-                                "{}: Profile changed for {} but they are not a member",
-                                self.calculate_buffer_name(),
-                                user_id
-                            ),
-                        }
-
-                        // TODO remove this unwrap
-                        self.get(&target_id)
-                            .unwrap()
-                            .display_name
-                            .replace(event.content.displayname.clone());
-                    }
-
-                    if avatar_url_changed {
-                        debug!(
-                            "{}: Avatar changed for {}, new avatar {:#?}",
-                            self.calculate_buffer_name(),
-                            &target_id,
-                            event.content.avatar_url
-                        );
-                    }
-                }
-                _ => {
-                    sender = self.get(&sender_id);
-                    target = self.get(&target_id);
-                }
-            };
-
-            // TODO enable this again once we receive the event via an event
-            // emitter.
-            // self.process_disambiguations(&disambiguations);
-
-            // Names of rooms without display names can get affected by the member list so we need to
-            // update them.
-            self.update_buffer_name();
-
-            // Display the event message
-            let message = match (&sender, &target) {
-                (Some(sender), Some(target)) => {
-                    render_membership(event, sender, target)
-                }
-
-                _ => {
-                    if sender.is_none() {
-                        error!(
-                            "Cannot render event since event sender {} is not a room member",
-                            sender_id);
-                    }
-
-                    if target.is_none() {
-                        error!(
-                            "Cannot render event since event target {} is not a room member",
-                            target_id);
-                    }
-
-                    "ERROR: cannot render event since sender or target are not a room member".into()
-                }
-            };
-
-            let timestamp: u64 = event
-                .origin_server_ts
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            buffer.print_date_tags(
-                timestamp as i64,
-                &[],
-                &message,
-            );
-        }
-    }
-}
-
-pub enum RoomError {
-    NonExistentMember(UserId),
-}
-
-#[derive(Clone, Debug)]
-pub struct WeechatRoomMember {
-    pub user_id: Rc<UserId>,
-    pub nick: Rc<RefCell<String>>,
-    pub display_name: Rc<RefCell<Option<String>>>,
-    pub prefix: Rc<RefCell<Option<String>>>,
-    #[allow(clippy::rc_buffer)]
-    pub color: Rc<String>,
+    members: Members,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -547,25 +126,6 @@ impl MessageQueue {
 
     fn remove(&self, uuid: Uuid) -> Option<(bool, MessageEventContent)> {
         self.queue.borrow_mut().remove(&uuid)
-    }
-}
-
-impl WeechatRoomMember {
-    pub fn new(
-        user_id: &UserId,
-        nick: String,
-        display_name: Option<String>,
-    ) -> Self {
-        let color = Weechat::info_get("nick_color_name", user_id.as_str())
-            .expect("Couldn't get the nick color name");
-
-        WeechatRoomMember {
-            user_id: Rc::new(user_id.clone()),
-            nick: Rc::new(RefCell::new(nick)),
-            display_name: Rc::new(RefCell::new(display_name)),
-            prefix: Rc::new(RefCell::new(None)),
-            color: Rc::new(color),
-        }
     }
 }
 
@@ -749,7 +309,9 @@ impl MatrixRoom {
                 ServerNotice(c) => {
                     c.render_with_prefix(send_time, &sender, &sender)
                 }
-                Location(c) => c.render_with_prefix(send_time, &sender, &sender),
+                Location(c) => {
+                    c.render_with_prefix(send_time, &sender, &sender)
+                }
                 Audio(c) => {
                     c.render_with_prefix(send_time, &sender, &self.homeserver)
                 }
@@ -780,7 +342,7 @@ impl RoomBuffer {
         own_user_id: &UserId,
     ) -> Self {
         let members = Members::new(room.clone());
-        let room = MatrixRoom {
+        let mut room = MatrixRoom {
             homeserver: Rc::new(homeserver.clone()),
             room_id: Rc::new(room_id.clone()),
             connection: connection.clone(),
@@ -809,7 +371,12 @@ impl RoomBuffer {
 
         buffer.enable_nicklist();
 
-        room.members.buffer.borrow_mut().replace(buffer_handle.clone());
+        // This is fine since we're only given the room to the buffer input and
+        // the callback can only run once we yield controll back to Weechat.
+        unsafe {
+            *Rc::get_mut_unchecked(&mut room.members.buffer) =
+                Some(buffer_handle.clone());
+        }
 
         RoomBuffer {
             inner: room,
@@ -907,9 +474,7 @@ impl RoomBuffer {
     }
 
     pub fn weechat_buffer(&self) -> Buffer {
-        self.buffer_handle
-            .upgrade()
-            .expect(BUFFER_CLOSED_ERROR)
+        self.buffer_handle.upgrade().expect(BUFFER_CLOSED_ERROR)
     }
 
     pub fn update_buffer_name(&self) {
@@ -997,7 +562,6 @@ impl RoomBuffer {
             }
         }
     }
-
 
     pub fn handle_room_message(&self, event: &AnySyncMessageEvent) {
         // If the event has a transaction id it's an event that we sent out

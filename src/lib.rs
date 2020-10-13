@@ -1,11 +1,12 @@
 #![feature(async_closure)]
+#![feature(get_mut_unchecked)]
 
 mod commands;
 mod config;
 mod connection;
 mod debug;
 mod render;
-mod room_buffer;
+mod room;
 mod server;
 
 use std::{
@@ -21,7 +22,7 @@ use weechat::{
 };
 
 use crate::{
-    commands::Commands, config::ConfigHandle, room_buffer::RoomBuffer,
+    commands::Commands, config::ConfigHandle, room::RoomBuffer,
     server::MatrixServer,
 };
 
