@@ -57,6 +57,7 @@ use crate::{
 };
 use std::{
     borrow::Cow,
+    ops::Deref,
     cell::RefCell,
     collections::HashMap,
     convert::TryFrom,
@@ -78,8 +79,16 @@ pub struct RoomBuffer {
     buffer_handle: BufferHandle,
 }
 
+impl Deref for RoomBuffer {
+    type Target = MatrixRoom;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
 #[derive(Clone)]
-struct MatrixRoom {
+pub struct MatrixRoom {
     homeserver: Rc<Url>,
     room_id: Rc<RoomId>,
     own_user_id: Rc<UserId>,
@@ -303,6 +312,57 @@ impl MatrixRoom {
         }
     }
 
+    pub fn room(&self) -> RwLockReadGuard<'_, Room> {
+        block_on(self.room.read())
+    }
+
+    pub fn room_id(&self) -> &RoomId {
+        &self.room_id
+    }
+
+    /// Retrieve a reference to a Weechat room member by user ID.
+    pub fn get_member(&self, user_id: &UserId) -> Option<WeechatRoomMember> {
+        self.members.borrow().get(user_id).cloned()
+    }
+
+    /// Retrieve a mutable reference to a Weechat room member by user ID.
+    pub fn get_member_mut(
+        &self,
+        user_id: &UserId,
+    ) -> Option<WeechatRoomMember> {
+        self.members.borrow().get(user_id).cloned()
+    }
+
+    /// Helper method to calculate the display name of a room member from their
+    /// UserId.
+    ///
+    /// If no member with that ID is in the room, the string representation of
+    /// the ID will be returned.
+    ///
+    /// # Panics
+    ///
+    /// This panics if no member with the given user id can be found.
+    fn calculate_user_name(&self, user_id: &UserId) -> String {
+        self.room()
+            .get_member(user_id)
+            .unwrap_or_else(|| panic!("No such member {}", user_id))
+            .disambiguated_name()
+    }
+
+    pub fn calculate_buffer_name(&self) -> String {
+        let room = self.room();
+        let room_name = room.display_name();
+
+        if room_name == "#" {
+            "##".to_owned()
+        } else if room_name.starts_with('#') {
+            room_name
+        } else {
+            // TODO: only do this for non-direct chats
+            format!("#{}", room_name)
+        }
+    }
+
     fn render_message_event(
         &self,
         event: &AnySyncMessageEvent,
@@ -496,27 +556,6 @@ impl RoomBuffer {
         self.inner.send_message(buffer, content).await
     }
 
-    pub fn room(&self) -> RwLockReadGuard<'_, Room> {
-        block_on(self.inner.room.read())
-    }
-
-    pub fn room_id(&self) -> &RoomId {
-        &self.inner.room_id
-    }
-
-    /// Retrieve a reference to a Weechat room member by user ID.
-    pub fn get_member(&self, user_id: &UserId) -> Option<WeechatRoomMember> {
-        self.inner.members.borrow().get(user_id).cloned()
-    }
-
-    /// Retrieve a mutable reference to a Weechat room member by user ID.
-    pub fn get_member_mut(
-        &self,
-        user_id: &UserId,
-    ) -> Option<WeechatRoomMember> {
-        self.inner.members.borrow().get(user_id).cloned()
-    }
-
     /// Add a new Weechat room member.
     pub fn add_member(&mut self, member: WeechatRoomMember) {
         let buffer = self.weechat_buffer();
@@ -598,40 +637,11 @@ impl RoomBuffer {
             .expect("Buffer got closed but Room is still lingering around")
     }
 
-    pub fn calculate_buffer_name(&self) -> String {
-        let room = self.room();
-        let room_name = room.display_name();
-
-        if room_name == "#" {
-            "##".to_owned()
-        } else if room_name.starts_with('#') {
-            room_name
-        } else {
-            // TODO: only do this for non-direct chats
-            format!("#{}", room_name)
-        }
-    }
-
     pub fn update_buffer_name(&self) {
         let name = self.calculate_buffer_name();
         self.weechat_buffer().set_name(&name)
     }
 
-    /// Helper method to calculate the display name of a room member from their
-    /// UserId.
-    ///
-    /// If no member with that ID is in the room, the string representation of
-    /// the ID will be returned.
-    ///
-    /// # Panics
-    ///
-    /// This panics if no member with the given user id can be found.
-    fn calculate_user_name(&self, user_id: &UserId) -> String {
-        self.room()
-            .get_member(user_id)
-            .unwrap_or_else(|| panic!("No such member {}", user_id))
-            .disambiguated_name()
-    }
 
     /// Send out a typing notice.
     ///
@@ -977,7 +987,7 @@ impl RoomBuffer {
         // may have been printed out as a local echo.
         if let Some(id) = &event.unsigned().transaction_id {
             if let Ok(id) = Uuid::parse_str(id) {
-                self.inner.handle_outgoing_message(
+                self.handle_outgoing_message(
                     self.buffer_handle.clone(),
                     id,
                     event.event_id(),
@@ -1014,59 +1024,6 @@ impl RoomBuffer {
 
             self.print_rendered_event(rendered);
         }
-    }
-
-    fn render_message_event(
-        &self,
-        event: &AnySyncMessageEvent,
-    ) -> Option<RenderedEvent> {
-        use AnyMessageEventContent::*;
-        use MessageEventContent::*;
-
-        let members = self.inner.members.borrow();
-
-        // TODO remove this expect.
-        let sender = members
-            .get(event.sender())
-            .expect("Rendering a message but the sender isn't in the nicklist");
-
-        let send_time = event.origin_server_ts();
-
-        let rendered = match event.content() {
-            RoomEncrypted(c) => c.render_with_prefix(send_time, sender, &()),
-            RoomMessage(c) => match c {
-                Text(c) => c.render_with_prefix(send_time, sender, &()),
-                Emote(c) => c.render_with_prefix(send_time, sender, sender),
-                Notice(c) => c.render_with_prefix(send_time, sender, sender),
-                ServerNotice(c) => {
-                    c.render_with_prefix(send_time, sender, sender)
-                }
-                Location(c) => c.render_with_prefix(send_time, sender, sender),
-                Audio(c) => c.render_with_prefix(
-                    send_time,
-                    sender,
-                    &self.inner.homeserver,
-                ),
-                Video(c) => c.render_with_prefix(
-                    send_time,
-                    sender,
-                    &self.inner.homeserver,
-                ),
-                File(c) => c.render_with_prefix(
-                    send_time,
-                    sender,
-                    &self.inner.homeserver,
-                ),
-                Image(c) => c.render_with_prefix(
-                    send_time,
-                    sender,
-                    &self.inner.homeserver,
-                ),
-            },
-            _ => return None,
-        };
-
-        Some(rendered)
     }
 
     pub fn handle_sync_room_event(&mut self, event: AnySyncRoomEvent) {
