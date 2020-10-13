@@ -535,7 +535,7 @@ impl RoomHandle {
             room,
             own_user_id: Rc::new(own_user_id.to_owned()),
             members: members.clone(),
-            buffer: members.buffer.clone(),
+            buffer: members.buffer,
             outgoing_messages: MessageQueue::new(),
         };
 

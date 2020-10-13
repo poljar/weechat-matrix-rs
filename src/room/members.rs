@@ -37,6 +37,20 @@ pub struct Members {
     pub(super) buffer: Rc<Option<BufferHandle>>,
 }
 
+enum RoomError {
+    NonExistentMember(UserId),
+}
+
+#[derive(Clone, Debug)]
+pub struct WeechatRoomMember {
+    pub user_id: Rc<UserId>,
+    pub nick: Rc<RefCell<String>>,
+    pub display_name: Rc<RefCell<Option<String>>>,
+    pub prefix: Rc<RefCell<Option<String>>>,
+    #[allow(clippy::rc_buffer)]
+    pub color: Rc<String>,
+}
+
 impl Members {
     pub fn new(room: Arc<RwLock<Room>>) -> Self {
         Self {
@@ -425,20 +439,6 @@ impl Members {
             buffer.print_date_tags(timestamp as i64, &[], &message);
         }
     }
-}
-
-enum RoomError {
-    NonExistentMember(UserId),
-}
-
-#[derive(Clone, Debug)]
-pub struct WeechatRoomMember {
-    pub user_id: Rc<UserId>,
-    pub nick: Rc<RefCell<String>>,
-    pub display_name: Rc<RefCell<Option<String>>>,
-    pub prefix: Rc<RefCell<Option<String>>>,
-    #[allow(clippy::rc_buffer)]
-    pub color: Rc<String>,
 }
 
 impl WeechatRoomMember {
