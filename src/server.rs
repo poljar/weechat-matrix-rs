@@ -587,7 +587,7 @@ impl InnerServer {
         self.config.borrow()
     }
 
-    pub fn restore_room(&mut self, room: Arc<RwLock<Room>>) {
+    pub async fn restore_room(&mut self, room: Arc<RwLock<Room>>) {
         let homeserver = self
             .settings
             .homeserver
@@ -599,7 +599,8 @@ impl InnerServer {
             &self.connection,
             self.config.inner.clone(),
             homeserver,
-        );
+        )
+        .await;
         let room_id = buffer.room_id().to_owned();
 
         self.rooms.insert(room_id, buffer);
@@ -708,13 +709,13 @@ impl InnerServer {
         room.handle_sync_state_event(event)
     }
 
-    pub fn receive_joined_timeline_event(
+    pub async fn receive_joined_timeline_event(
         &mut self,
         room_id: &RoomId,
         event: AnySyncRoomEvent,
     ) {
         let room = self.get_or_create_room(room_id);
-        room.handle_sync_room_event(event)
+        room.handle_sync_room_event(event).await
     }
 
     pub fn receive_login(&mut self, response: LoginResponse) {

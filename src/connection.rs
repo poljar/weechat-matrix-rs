@@ -240,13 +240,13 @@ impl Connection {
                 Ok(message) => match message {
                     ClientMessage::LoginMessage(r) => server.receive_login(r),
                     ClientMessage::SyncEvent(r, e) => {
-                        server.receive_joined_timeline_event(&r, e)
+                        server.receive_joined_timeline_event(&r, e).await
                     }
                     ClientMessage::SyncState(r, e) => {
                         server.receive_joined_state_event(&r, e)
                     }
                     ClientMessage::RestoredRoom(room) => {
-                        server.restore_room(room)
+                        server.restore_room(room).await
                     }
                 },
                 Err(e) => server.print_error(&format!("Ruma error {}", e)),

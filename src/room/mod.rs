@@ -177,7 +177,7 @@ impl MatrixRoom {
                 .await
             {
                 Ok(r) => {
-                    self.handle_outgoing_message(uuid, &r.event_id);
+                    self.handle_outgoing_message(uuid, &r.event_id).await;
                 }
                 Err(_e) => {
                     // TODO print out an error, remember to modify the local
@@ -219,13 +219,16 @@ impl MatrixRoom {
     }
 
     fn print_rendered_event(&self, rendered: RenderedEvent) {
-        let buffer = self.buffer();
+        let buffer = self.buffer_handle();
 
-        for line in rendered.content.lines {
-            let message = format!("{}\t{}", &rendered.prefix, &line.message);
-            let tags: Vec<&str> =
-                line.tags.iter().map(|t| t.as_str()).collect();
-            buffer.print_date_tags(0, &tags, &message)
+        if let Ok(buffer) = buffer.upgrade() {
+            for line in rendered.content.lines {
+                let message =
+                    format!("{}\t{}", &rendered.prefix, &line.message);
+                let tags: Vec<&str> =
+                    line.tags.iter().map(|t| t.as_str()).collect();
+                buffer.print_date_tags(0, &tags, &message)
+            }
         }
     }
 
@@ -253,7 +256,7 @@ impl MatrixRoom {
         }
     }
 
-    fn handle_outgoing_message(&self, uuid: Uuid, event_id: &EventId) {
+    async fn handle_outgoing_message(&self, uuid: Uuid, event_id: &EventId) {
         if let Some((echo, content)) = self.outgoing_messages.remove(uuid) {
             let event = SyncMessageEvent {
                 sender: (&*self.own_user_id).clone(),
@@ -267,6 +270,7 @@ impl MatrixRoom {
 
             let rendered = self
                 .render_message_event(&event)
+                .await
                 .expect("Sent out an event that we don't know how to render");
 
             if let Ok(buffer) = self.buffer_handle().upgrade() {
@@ -291,7 +295,7 @@ impl MatrixRoom {
         &self.room_id
     }
 
-    fn render_message_event(
+    async fn render_message_event(
         &self,
         event: &AnySyncMessageEvent,
     ) -> Option<RenderedEvent> {
@@ -439,18 +443,18 @@ impl MatrixRoom {
         }
     }
 
-    fn handle_room_message(&self, event: &AnySyncMessageEvent) {
+    async fn handle_room_message(&self, event: &AnySyncMessageEvent) {
         // If the event has a transaction id it's an event that we sent out
         // ourselves, the content will be in the outgoing message queue and it
         // may have been printed out as a local echo.
         if let Some(id) = &event.unsigned().transaction_id {
             if let Ok(id) = Uuid::parse_str(id) {
-                self.handle_outgoing_message(id, event.event_id());
+                self.handle_outgoing_message(id, event.event_id()).await;
                 return;
             }
         }
 
-        if let Some(rendered) = self.render_message_event(event) {
+        if let Some(rendered) = self.render_message_event(event).await {
             self.print_rendered_event(rendered);
         }
     }
@@ -475,10 +479,10 @@ impl MatrixRoom {
         }
     }
 
-    pub fn handle_sync_room_event(&self, event: AnySyncRoomEvent) {
+    pub async fn handle_sync_room_event(&self, event: AnySyncRoomEvent) {
         match &event {
             AnySyncRoomEvent::Message(message) => {
-                self.handle_room_message(message)
+                self.handle_room_message(message).await
             }
 
             AnySyncRoomEvent::RedactedMessage(e) => {
@@ -562,7 +566,7 @@ impl RoomHandle {
         }
     }
 
-    pub fn restore(
+    pub async fn restore(
         room: Arc<RwLock<Room>>,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
@@ -607,12 +611,12 @@ impl RoomHandle {
         }
 
         room_buffer.update_buffer_name();
-        room_buffer.restore_messages();
+        room_buffer.restore_messages().await;
 
         room_buffer
     }
 
-    pub fn restore_messages(&self) {
+    pub async fn restore_messages(&self) {
         use AnyPossiblyRedactedSyncMessageEvent::*;
 
         let room = self.room();
@@ -621,7 +625,7 @@ impl RoomHandle {
         if buffer.num_lines() == 0 {
             for event in room.messages.iter() {
                 match event {
-                    Regular(e) => self.handle_room_message(e),
+                    Regular(e) => self.handle_room_message(e).await,
                     Redacted(e) => self.handle_redacted_events(e),
                 }
             }
