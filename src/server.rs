@@ -82,7 +82,7 @@ use weechat::{
 };
 
 use crate::{
-    config::Config, connection::Connection, room::RoomBuffer, ConfigHandle,
+    config::Config, connection::Connection, room::RoomHandle, ConfigHandle,
 };
 
 #[derive(Debug)]
@@ -127,7 +127,7 @@ impl std::fmt::Debug for MatrixServer {
 pub struct InnerServer {
     #[allow(clippy::rc_buffer)]
     server_name: Rc<String>,
-    pub room_buffers: HashMap<RoomId, RoomBuffer>,
+    rooms: HashMap<RoomId, RoomHandle>,
     settings: ServerSettings,
     config: ConfigHandle,
     client: Option<Client>,
@@ -146,7 +146,7 @@ impl MatrixServer {
 
         let server = InnerServer {
             server_name: server_name.clone(),
-            room_buffers: HashMap::new(),
+            rooms: HashMap::new(),
             settings: ServerSettings::new(),
             config: config.clone(),
             client: None,
@@ -542,8 +542,8 @@ impl InnerServer {
     pub(crate) fn get_or_create_room(
         &mut self,
         room_id: &RoomId,
-    ) -> &mut RoomBuffer {
-        if !self.room_buffers.contains_key(room_id) {
+    ) -> &RoomHandle {
+        if !self.rooms.contains_key(room_id) {
             let homeserver = self
                 .settings
                 .homeserver
@@ -561,7 +561,7 @@ impl InnerServer {
             );
             let room =
                 room.expect("Receiving events for a room while no room found");
-            let buffer = RoomBuffer::new(
+            let buffer = RoomHandle::new(
                 &self.connection,
                 self.config.inner.clone(),
                 room,
@@ -569,18 +569,18 @@ impl InnerServer {
                 room_id.clone(),
                 &login_state.user_id,
             );
-            self.room_buffers.insert(room_id.clone(), buffer);
+            self.rooms.insert(room_id.clone(), buffer);
         }
 
-        self.room_buffers.get_mut(room_id).unwrap()
+        self.rooms.get_mut(room_id).unwrap()
     }
 
     pub fn settings(&self) -> &ServerSettings {
         &self.settings
     }
 
-    pub fn room_buffers(&self) -> &HashMap<RoomId, RoomBuffer> {
-        &self.room_buffers
+    pub fn rooms(&self) -> &HashMap<RoomId, RoomHandle> {
+        &self.rooms
     }
 
     pub fn config(&self) -> Ref<Config> {
@@ -594,7 +594,7 @@ impl InnerServer {
             .as_ref()
             .expect("Creating room buffer while no homeserver");
 
-        let buffer = RoomBuffer::restore(
+        let buffer = RoomHandle::restore(
             room,
             &self.connection,
             self.config.inner.clone(),
@@ -602,7 +602,7 @@ impl InnerServer {
         );
         let room_id = buffer.room_id().to_owned();
 
-        self.room_buffers.insert(room_id, buffer);
+        self.rooms.insert(room_id, buffer);
     }
 
     fn create_server_buffer(&self) -> BufferHandle {

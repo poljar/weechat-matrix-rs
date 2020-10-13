@@ -76,10 +76,7 @@ impl Members {
     ///
     /// Returns either the removed Weechat room member, or an error if the
     /// member does not exist.
-    fn remove(
-        &self,
-        user_id: &UserId,
-    ) -> Result<WeechatRoomMember, RoomError> {
+    fn remove(&self, user_id: &UserId) -> Result<WeechatRoomMember, RoomError> {
         let buffer = self.buffer();
 
         if let Some(member) = self.inner.borrow_mut().remove(user_id) {

@@ -73,12 +73,12 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct RoomBuffer {
+pub struct RoomHandle {
     inner: MatrixRoom,
     buffer_handle: BufferHandle,
 }
 
-impl Deref for RoomBuffer {
+impl Deref for RoomHandle {
     type Target = MatrixRoom;
 
     fn deref(&self) -> &Self::Target {
@@ -163,10 +163,7 @@ impl MatrixRoom {
     ///
     /// buffer.send_message(content).await
     /// ```
-    pub async fn send_message(
-        &self,
-        content: MessageEventContent,
-    ) {
+    pub async fn send_message(&self, content: MessageEventContent) {
         let uuid = Uuid::new_v4();
 
         if let Some(c) = &*self.connection.borrow() {
@@ -208,7 +205,8 @@ impl MatrixRoom {
                         panic!("No own member {}", self.own_user_id)
                     });
 
-                let local_echo = c.render_with_prefix_for_echo(&sender, uuid, &());
+                let local_echo =
+                    c.render_with_prefix_for_echo(&sender, uuid, &());
                 self.print_rendered_event(local_echo);
 
                 self.outgoing_messages.add_with_echo(uuid, content.clone());
@@ -220,10 +218,7 @@ impl MatrixRoom {
         }
     }
 
-    fn print_rendered_event(
-        &self,
-        rendered: RenderedEvent,
-    ) {
+    fn print_rendered_event(&self, rendered: RenderedEvent) {
         let buffer = self.buffer();
 
         for line in rendered.content.lines {
@@ -258,11 +253,7 @@ impl MatrixRoom {
         }
     }
 
-    fn handle_outgoing_message(
-        &self,
-        uuid: Uuid,
-        event_id: &EventId,
-    ) {
+    fn handle_outgoing_message(&self, uuid: Uuid, event_id: &EventId) {
         if let Some((echo, content)) = self.outgoing_messages.remove(uuid) {
             let event = SyncMessageEvent {
                 sender: (&*self.own_user_id).clone(),
@@ -288,8 +279,12 @@ impl MatrixRoom {
         }
     }
 
-    pub fn room(&self) -> RwLockReadGuard<'_, Room> {
+    fn room(&self) -> RwLockReadGuard<'_, Room> {
         block_on(self.room.read())
+    }
+
+    pub fn is_encrypted(&self) -> bool {
+        block_on(self.room.read()).is_encrypted()
     }
 
     pub fn room_id(&self) -> &RoomId {
@@ -343,7 +338,10 @@ impl MatrixRoom {
     }
 
     fn buffer_handle(&self) -> BufferHandle {
-        (&*self.buffer).as_ref().expect("Room struct wasn't initialized properly").clone()
+        (&*self.buffer)
+            .as_ref()
+            .expect("Room struct wasn't initialized properly")
+            .clone()
     }
 
     pub fn buffer(&self) -> Buffer {
@@ -447,10 +445,7 @@ impl MatrixRoom {
         // may have been printed out as a local echo.
         if let Some(id) = &event.unsigned().transaction_id {
             if let Ok(id) = Uuid::parse_str(id) {
-                self.handle_outgoing_message(
-                    id,
-                    event.event_id(),
-                );
+                self.handle_outgoing_message(id, event.event_id());
                 return;
             }
         }
@@ -513,7 +508,7 @@ impl MatrixRoom {
     }
 }
 
-impl RoomBuffer {
+impl RoomHandle {
     pub fn new(
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
@@ -561,7 +556,7 @@ impl RoomBuffer {
                 Some(buffer_handle.clone());
         }
 
-        RoomBuffer {
+        Self {
             inner: room,
             buffer_handle,
         }
