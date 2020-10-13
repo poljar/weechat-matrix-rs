@@ -46,7 +46,7 @@ impl Members {
         }
     }
 
-    pub fn buffer(&self) -> Buffer<'_> {
+    fn buffer(&self) -> Buffer<'_> {
         self.buffer
             .as_ref()
             .as_ref()
@@ -76,7 +76,7 @@ impl Members {
     ///
     /// Returns either the removed Weechat room member, or an error if the
     /// member does not exist.
-    pub fn remove(
+    fn remove(
         &self,
         user_id: &UserId,
     ) -> Result<WeechatRoomMember, RoomError> {
@@ -105,7 +105,7 @@ impl Members {
     ///
     /// Returns either the old nick of the member, or an error if the member
     /// does not exist.
-    pub fn rename_member(
+    fn rename_member(
         &self,
         user_id: &UserId,
         new_nick: String,
@@ -134,7 +134,7 @@ impl Members {
         }
     }
 
-    pub fn room(&self) -> RwLockReadGuard<'_, Room> {
+    fn room(&self) -> RwLockReadGuard<'_, Room> {
         block_on(self.room.read())
     }
 
@@ -152,7 +152,7 @@ impl Members {
         }
     }
 
-    pub fn update_buffer_name(&self) {
+    fn update_buffer_name(&self) {
         let name = self.calculate_buffer_name();
         let buffer = self.buffer();
         buffer.set_name(&name)
@@ -430,7 +430,7 @@ impl Members {
     }
 }
 
-pub enum RoomError {
+enum RoomError {
     NonExistentMember(UserId),
 }
 

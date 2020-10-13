@@ -92,6 +92,7 @@ pub struct MatrixRoom {
     room_id: Rc<RoomId>,
     own_user_id: Rc<UserId>,
     room: Arc<RwLock<Room>>,
+    buffer: Rc<Option<BufferHandle>>,
 
     config: Rc<RefCell<Config>>,
     connection: Rc<RefCell<Option<Connection>>>,
@@ -131,7 +132,7 @@ impl MessageQueue {
 
 #[async_trait(?Send)]
 impl BufferInputCallbackAsync for MatrixRoom {
-    async fn callback(&mut self, buffer_handle: BufferHandle, input: String) {
+    async fn callback(&mut self, _: BufferHandle, input: String) {
         // TODO parse the input here and produce a formatted body.
         let content = MessageEventContent::Text(TextMessageEventContent {
             body: input,
@@ -139,20 +140,37 @@ impl BufferInputCallbackAsync for MatrixRoom {
             relates_to: None,
         });
 
-        self.send_message(buffer_handle, content).await;
+        self.send_message(content).await;
     }
 }
 
 impl MatrixRoom {
+    /// Send the given content to the server.
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - The content that should be sent to the server.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let content = MessageEventContent::Text(TextMessageEventContent {
+    ///     body: "Hello world".to_owned(),
+    ///     formatted: None,
+    ///     relates_to: None,
+    /// });
+    /// let content = AnyMessageEventContent::RoomMessage(content);
+    ///
+    /// buffer.send_message(content).await
+    /// ```
     pub async fn send_message(
         &self,
-        buffer: BufferHandle,
         content: MessageEventContent,
     ) {
         let uuid = Uuid::new_v4();
 
         if let Some(c) = &*self.connection.borrow() {
-            self.queue_outgoing_message(buffer.clone(), uuid, &content);
+            self.queue_outgoing_message(uuid, &content);
             match c
                 .send_message(
                     &self.room_id,
@@ -162,7 +180,7 @@ impl MatrixRoom {
                 .await
             {
                 Ok(r) => {
-                    self.handle_outgoing_message(buffer, uuid, &r.event_id);
+                    self.handle_outgoing_message(uuid, &r.event_id);
                 }
                 Err(_e) => {
                     // TODO print out an error, remember to modify the local
@@ -171,19 +189,15 @@ impl MatrixRoom {
                 }
             }
         } else {
-            let buffer = buffer
-                .upgrade()
-                .expect("Trying to send a message while the buffer is closed");
-
+            let buffer = self.buffer();
             buffer.print("Error not connected");
         }
     }
 
     // Add the content of the message to our outgoing messag queue and print out
     // a local echo line if local echo is enabled.
-    pub fn queue_outgoing_message(
+    fn queue_outgoing_message(
         &self,
-        buffer_handle: BufferHandle,
         uuid: Uuid,
         content: &MessageEventContent,
     ) {
@@ -194,11 +208,8 @@ impl MatrixRoom {
                         panic!("No own member {}", self.own_user_id)
                     });
 
-                if let Ok(b) = buffer_handle.upgrade() {
-                    let local_echo =
-                        c.render_with_prefix_for_echo(&sender, uuid, &());
-                    self.print_rendered_event(&b, local_echo)
-                }
+                let local_echo = c.render_with_prefix_for_echo(&sender, uuid, &());
+                self.print_rendered_event(local_echo);
 
                 self.outgoing_messages.add_with_echo(uuid, content.clone());
             } else {
@@ -209,11 +220,12 @@ impl MatrixRoom {
         }
     }
 
-    pub fn print_rendered_event(
+    fn print_rendered_event(
         &self,
-        buffer: &Buffer,
         rendered: RenderedEvent,
     ) {
+        let buffer = self.buffer();
+
         for line in rendered.content.lines {
             let message = format!("{}\t{}", &rendered.prefix, &line.message);
             let tags: Vec<&str> =
@@ -248,7 +260,6 @@ impl MatrixRoom {
 
     fn handle_outgoing_message(
         &self,
-        buffer_handle: BufferHandle,
         uuid: Uuid,
         event_id: &EventId,
     ) {
@@ -267,11 +278,11 @@ impl MatrixRoom {
                 .render_message_event(&event)
                 .expect("Sent out an event that we don't know how to render");
 
-            if let Ok(buffer) = buffer_handle.upgrade() {
+            if let Ok(buffer) = self.buffer_handle().upgrade() {
                 if echo {
                     self.replace_local_echo(uuid, &buffer, rendered);
                 } else {
-                    self.print_rendered_event(&buffer, rendered);
+                    self.print_rendered_event(rendered);
                 }
             }
         }
@@ -330,6 +341,176 @@ impl MatrixRoom {
 
         Some(rendered)
     }
+
+    fn buffer_handle(&self) -> BufferHandle {
+        (&*self.buffer).as_ref().expect("Room struct wasn't initialized properly").clone()
+    }
+
+    pub fn buffer(&self) -> Buffer {
+        self.buffer
+            .as_ref()
+            .as_ref()
+            .expect("Room struct wasn't initialized properly")
+            .upgrade()
+            .expect(BUFFER_CLOSED_ERROR)
+    }
+
+    fn update_buffer_name(&self) {
+        let name = self.members.calculate_buffer_name();
+        self.buffer().set_name(&name)
+    }
+
+    /// Send out a typing notice.
+    ///
+    /// This will send out a typing notice or reset the one in progress, if
+    /// needed. It will make sure that only one typing notice request is in
+    /// flight at a time.
+    ///
+    /// Typing notices are sent out only if we have more than 4 letters in the
+    /// input and the input isn't a command.
+    ///
+    /// If the input is empty the typing notice is disabled.
+    pub fn update_typing_notice(&self) {
+        let typing_in_flight = self.typing_in_flight.clone();
+        let buffer = self.buffer();
+        let input = buffer.input();
+
+        if input.starts_with('/') && !input.starts_with("//") {
+            // Don't send typing notices for commands.
+            return;
+        }
+
+        let connection = self.connection.clone();
+        let room_id = self.room_id.clone();
+        let typing_notice_time = self.typing_notice_time.clone();
+
+        let send = async move |typing: bool| {
+            let typing_time = typing_notice_time;
+
+            // We're in the process of sending out a typing notice, so don't
+            // make the same request twice.
+            let guard = match typing_in_flight.try_lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    return;
+                }
+            };
+
+            if let Some(connection) = &*connection.borrow() {
+                let response =
+                    connection.send_typing_notice(&*room_id, typing).await;
+
+                // We need to record the time when the last typing notice was
+                // sent to ensure we don't send out new ones while a previous
+                // one is active. If we cancelled the last notice (`!typing`),
+                // we record that there is currently no active notice.
+                //
+                // An unsuccessful response indicates the send operation failed.
+                // In this case we need to retry, so we don't update anything.
+
+                if response.is_ok() {
+                    if typing {
+                        *typing_time.borrow_mut() = Some(Instant::now());
+                    } else {
+                        *typing_time.borrow_mut() = None;
+                    }
+                }
+            };
+
+            drop(guard)
+        };
+
+        let typing_time = self.typing_notice_time.borrow_mut();
+
+        if input.len() < 4 && typing_time.is_some() {
+            // If we have an active typing notice and our input is short, e.g.
+            // we removed the input set the typing notice to false.
+            Weechat::spawn(send(false)).detach();
+        } else if input.len() >= 4 {
+            if let Some(typing_time) = &*typing_time {
+                // If we have some valid input, check if the typing notice
+                // expired and send one out if it indeed expired.
+                if typing_time.elapsed() > TYPING_NOTICE_TIMEOUT {
+                    Weechat::spawn(send(true)).detach();
+                }
+            } else {
+                // If we have some valid input and no active typing notice, send
+                // one out.
+                Weechat::spawn(send(true)).detach();
+            }
+        }
+    }
+
+    fn handle_room_message(&self, event: &AnySyncMessageEvent) {
+        // If the event has a transaction id it's an event that we sent out
+        // ourselves, the content will be in the outgoing message queue and it
+        // may have been printed out as a local echo.
+        if let Some(id) = &event.unsigned().transaction_id {
+            if let Ok(id) = Uuid::parse_str(id) {
+                self.handle_outgoing_message(
+                    id,
+                    event.event_id(),
+                );
+                return;
+            }
+        }
+
+        if let Some(rendered) = self.render_message_event(event) {
+            self.print_rendered_event(rendered);
+        }
+    }
+
+    fn handle_redacted_events(&self, event: &AnyRedactedSyncMessageEvent) {
+        use AnyRedactedSyncMessageEvent::*;
+
+        if let RoomMessage(e) = event {
+            // TODO remove those expects and unwraps.
+            let redacter =
+                &e.unsigned.redacted_because.as_ref().unwrap().sender;
+            let redacter = self.members.get(redacter).expect(
+                "Rendering a message but the sender isn't in the nicklist",
+            );
+            let sender = self.members.get(&e.sender).expect(
+                "Rendering a message but the sender isn't in the nicklist",
+            );
+            let rendered =
+                e.render_with_prefix(&e.origin_server_ts, &sender, &redacter);
+
+            self.print_rendered_event(rendered);
+        }
+    }
+
+    pub fn handle_sync_room_event(&self, event: AnySyncRoomEvent) {
+        match &event {
+            AnySyncRoomEvent::Message(message) => {
+                self.handle_room_message(message)
+            }
+
+            AnySyncRoomEvent::RedactedMessage(e) => {
+                self.handle_redacted_events(e)
+            }
+            // We don't print out redacted state event for now.
+            AnySyncRoomEvent::RedactedState(_) => (),
+
+            AnySyncRoomEvent::State(event) => match event {
+                AnySyncStateEvent::RoomMember(e) => {
+                    self.members.handle_membership_event(e, false)
+                }
+                AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
+                _ => (),
+            },
+        }
+    }
+
+    pub fn handle_sync_state_event(&self, event: AnySyncStateEvent) {
+        match &event {
+            AnySyncStateEvent::RoomMember(e) => {
+                self.members.handle_membership_event(e, true)
+            }
+            AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
+            _ => (),
+        }
+    }
 }
 
 impl RoomBuffer {
@@ -342,6 +523,7 @@ impl RoomBuffer {
         own_user_id: &UserId,
     ) -> Self {
         let members = Members::new(room.clone());
+
         let mut room = MatrixRoom {
             homeserver: Rc::new(homeserver.clone()),
             room_id: Rc::new(room_id.clone()),
@@ -352,6 +534,7 @@ impl RoomBuffer {
             room,
             own_user_id: Rc::new(own_user_id.to_owned()),
             members: members.clone(),
+            buffer: members.buffer.clone(),
             outgoing_messages: MessageQueue::new(),
         };
 
@@ -395,7 +578,7 @@ impl RoomBuffer {
         let room_id = room_lock.room_id.to_owned();
         let own_user_id = &room_lock.own_user_id;
 
-        let room_buffer = RoomBuffer::new(
+        let room_buffer = Self::new(
             connection,
             config,
             room_clone,
@@ -438,7 +621,7 @@ impl RoomBuffer {
         use AnyPossiblyRedactedSyncMessageEvent::*;
 
         let room = self.room();
-        let buffer = self.weechat_buffer();
+        let buffer = self.buffer();
 
         if buffer.num_lines() == 0 {
             for event in room.messages.iter() {
@@ -447,196 +630,6 @@ impl RoomBuffer {
                     Redacted(e) => self.handle_redacted_events(e),
                 }
             }
-        }
-    }
-
-    /// Send the given content to the server.
-    ///
-    /// # Arguments
-    ///
-    /// * `content` - The content that should be sent to the server.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let content = MessageEventContent::Text(TextMessageEventContent {
-    ///     body: "Hello world".to_owned(),
-    ///     formatted: None,
-    ///     relates_to: None,
-    /// });
-    /// let content = AnyMessageEventContent::RoomMessage(content);
-    ///
-    /// buffer.send_message(content).await
-    /// ```
-    pub async fn send_message(&self, content: MessageEventContent) {
-        let buffer = self.buffer_handle.clone();
-        self.inner.send_message(buffer, content).await
-    }
-
-    pub fn weechat_buffer(&self) -> Buffer {
-        self.buffer_handle.upgrade().expect(BUFFER_CLOSED_ERROR)
-    }
-
-    pub fn update_buffer_name(&self) {
-        let name = self.members.calculate_buffer_name();
-        self.weechat_buffer().set_name(&name)
-    }
-
-    /// Send out a typing notice.
-    ///
-    /// This will send out a typing notice or reset the one in progress, if
-    /// needed. It will make sure that only one typing notice request is in
-    /// flight at a time.
-    ///
-    /// Typing notices are sent out only if we have more than 4 letters in the
-    /// input and the input isn't a command.
-    ///
-    /// If the input is empty the typing notice is disabled.
-    pub fn update_typing_notice(&self) {
-        let typing_in_flight = self.inner.typing_in_flight.clone();
-        let buffer = self.weechat_buffer();
-        let input = buffer.input();
-
-        if input.starts_with('/') && !input.starts_with("//") {
-            // Don't send typing notices for commands.
-            return;
-        }
-
-        let connection = self.inner.connection.clone();
-        let room_id = self.inner.room_id.clone();
-        let typing_notice_time = self.inner.typing_notice_time.clone();
-
-        let send = async move |typing: bool| {
-            let typing_time = typing_notice_time;
-
-            // We're in the process of sending out a typing notice, so don't
-            // make the same request twice.
-            let guard = match typing_in_flight.try_lock() {
-                Ok(guard) => guard,
-                Err(_) => {
-                    return;
-                }
-            };
-
-            if let Some(connection) = &*connection.borrow() {
-                let response =
-                    connection.send_typing_notice(&*room_id, typing).await;
-
-                // We need to record the time when the last typing notice was
-                // sent to ensure we don't send out new ones while a previous
-                // one is active. If we cancelled the last notice (`!typing`),
-                // we record that there is currently no active notice.
-                //
-                // An unsuccessful response indicates the send operation failed.
-                // In this case we need to retry, so we don't update anything.
-
-                if response.is_ok() {
-                    if typing {
-                        *typing_time.borrow_mut() = Some(Instant::now());
-                    } else {
-                        *typing_time.borrow_mut() = None;
-                    }
-                }
-            };
-
-            drop(guard)
-        };
-
-        let typing_time = self.inner.typing_notice_time.borrow_mut();
-
-        if input.len() < 4 && typing_time.is_some() {
-            // If we have an active typing notice and our input is short, e.g.
-            // we removed the input set the typing notice to false.
-            Weechat::spawn(send(false)).detach();
-        } else if input.len() >= 4 {
-            if let Some(typing_time) = &*typing_time {
-                // If we have some valid input, check if the typing notice
-                // expired and send one out if it indeed expired.
-                if typing_time.elapsed() > TYPING_NOTICE_TIMEOUT {
-                    Weechat::spawn(send(true)).detach();
-                }
-            } else {
-                // If we have some valid input and no active typing notice, send
-                // one out.
-                Weechat::spawn(send(true)).detach();
-            }
-        }
-    }
-
-    pub fn handle_room_message(&self, event: &AnySyncMessageEvent) {
-        // If the event has a transaction id it's an event that we sent out
-        // ourselves, the content will be in the outgoing message queue and it
-        // may have been printed out as a local echo.
-        if let Some(id) = &event.unsigned().transaction_id {
-            if let Ok(id) = Uuid::parse_str(id) {
-                self.handle_outgoing_message(
-                    self.buffer_handle.clone(),
-                    id,
-                    event.event_id(),
-                );
-                return;
-            }
-        }
-
-        if let Some(rendered) = self.render_message_event(event) {
-            self.print_rendered_event(rendered);
-        }
-    }
-
-    fn print_rendered_event(&self, rendered: RenderedEvent) {
-        let buffer = self.weechat_buffer();
-        self.inner.print_rendered_event(&buffer, rendered);
-    }
-
-    fn handle_redacted_events(&self, event: &AnyRedactedSyncMessageEvent) {
-        use AnyRedactedSyncMessageEvent::*;
-
-        if let RoomMessage(e) = event {
-            // TODO remove those expects and unwraps.
-            let redacter =
-                &e.unsigned.redacted_because.as_ref().unwrap().sender;
-            let redacter = self.members.get(redacter).expect(
-                "Rendering a message but the sender isn't in the nicklist",
-            );
-            let sender = self.members.get(&e.sender).expect(
-                "Rendering a message but the sender isn't in the nicklist",
-            );
-            let rendered =
-                e.render_with_prefix(&e.origin_server_ts, &sender, &redacter);
-
-            self.print_rendered_event(rendered);
-        }
-    }
-
-    pub fn handle_sync_room_event(&mut self, event: AnySyncRoomEvent) {
-        match &event {
-            AnySyncRoomEvent::Message(message) => {
-                self.handle_room_message(message)
-            }
-
-            AnySyncRoomEvent::RedactedMessage(e) => {
-                self.handle_redacted_events(e)
-            }
-            // We don't print out redacted state event for now.
-            AnySyncRoomEvent::RedactedState(_) => (),
-
-            AnySyncRoomEvent::State(event) => match event {
-                AnySyncStateEvent::RoomMember(e) => {
-                    self.members.handle_membership_event(e, false)
-                }
-                AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
-                _ => (),
-            },
-        }
-    }
-
-    pub fn handle_sync_state_event(&mut self, event: AnySyncStateEvent) {
-        match &event {
-            AnySyncStateEvent::RoomMember(e) => {
-                self.members.handle_membership_event(e, true)
-            }
-            AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
-            _ => (),
         }
     }
 }

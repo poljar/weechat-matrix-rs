@@ -59,7 +59,7 @@ impl Servers {
             }
 
             for room_buffer in server.inner().room_buffers.values() {
-                if buffer == &room_buffer.weechat_buffer() {
+                if buffer == &room_buffer.buffer() {
                     return Some(server.clone());
                 }
             }
@@ -77,7 +77,7 @@ impl Servers {
 
         for server in servers.values() {
             for room_buffer in server.inner().room_buffers.values() {
-                if buffer == &room_buffer.weechat_buffer() {
+                if buffer == &room_buffer.buffer() {
                     return Some(room_buffer.clone());
                 }
             }
@@ -162,7 +162,7 @@ impl BarItemCallback for Servers {
             let server = server.inner();
 
             for room in server.room_buffers().values() {
-                let room_buffer = room.weechat_buffer();
+                let room_buffer = room.buffer();
 
                 if &room_buffer == buffer && room.room().is_encrypted() {
                     return server.config().look().encrypted_room_sign();
