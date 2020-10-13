@@ -186,8 +186,9 @@ impl MatrixRoom {
                 }
             }
         } else {
-            let buffer = self.buffer();
-            buffer.print("Error not connected");
+            if let Ok(buffer) = self.buffer_handle().upgrade() {
+                buffer.print("Error not connected");
+            }
         }
     }
 
@@ -341,25 +342,19 @@ impl MatrixRoom {
         Some(rendered)
     }
 
-    fn buffer_handle(&self) -> BufferHandle {
+    pub fn buffer_handle(&self) -> BufferHandle {
         (&*self.buffer)
             .as_ref()
             .expect("Room struct wasn't initialized properly")
             .clone()
     }
 
-    pub fn buffer(&self) -> Buffer {
-        self.buffer
-            .as_ref()
-            .as_ref()
-            .expect("Room struct wasn't initialized properly")
-            .upgrade()
-            .expect(BUFFER_CLOSED_ERROR)
-    }
-
     fn update_buffer_name(&self) {
         let name = self.members.calculate_buffer_name();
-        self.buffer().set_name(&name)
+
+        if let Ok(b) = self.buffer_handle().upgrade() {
+            b.set_name(&name)
+        }
     }
 
     /// Send out a typing notice.
@@ -374,7 +369,14 @@ impl MatrixRoom {
     /// If the input is empty the typing notice is disabled.
     pub fn update_typing_notice(&self) {
         let typing_in_flight = self.typing_in_flight.clone();
-        let buffer = self.buffer();
+        let buffer_handle = self.buffer_handle();
+
+        let buffer = if let Ok(b) = buffer_handle.upgrade() {
+            b
+        } else {
+            return;
+        };
+
         let input = buffer.input();
 
         if input.starts_with('/') && !input.starts_with("//") {
@@ -620,13 +622,14 @@ impl RoomHandle {
         use AnyPossiblyRedactedSyncMessageEvent::*;
 
         let room = self.room();
-        let buffer = self.buffer();
 
-        if buffer.num_lines() == 0 {
-            for event in room.messages.iter() {
-                match event {
-                    Regular(e) => self.handle_room_message(e).await,
-                    Redacted(e) => self.handle_redacted_events(e),
+        if let Ok(buffer) = self.buffer_handle().upgrade() {
+            if buffer.num_lines() == 0 {
+                for event in room.messages.iter() {
+                    match event {
+                        Regular(e) => self.handle_room_message(e).await,
+                        Redacted(e) => self.handle_redacted_events(e),
+                    }
                 }
             }
         }

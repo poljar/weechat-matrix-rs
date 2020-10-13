@@ -59,8 +59,12 @@ impl Servers {
             }
 
             for room in server.inner().rooms().values() {
-                if buffer == &room.buffer() {
-                    return Some(server.clone());
+                let buffer_handle = room.buffer_handle();
+
+                if let Ok(b) = buffer_handle.upgrade() {
+                    if buffer == &b {
+                        return Some(server.clone());
+                    }
                 }
             }
         }
@@ -77,8 +81,10 @@ impl Servers {
 
         for server in servers.values() {
             for room in server.inner().rooms().values() {
-                if buffer == &room.buffer() {
-                    return Some(room.clone());
+                if let Ok(b) = room.buffer_handle().upgrade() {
+                    if buffer == &b {
+                        return Some(room.clone());
+                    }
                 }
             }
         }
@@ -162,10 +168,10 @@ impl BarItemCallback for Servers {
             let server = server.inner();
 
             for room in server.rooms().values() {
-                let room_buffer = room.buffer();
-
-                if &room_buffer == buffer && room.is_encrypted() {
-                    return server.config().look().encrypted_room_sign();
+                if let Ok(b) = room.buffer_handle().upgrade() {
+                    if buffer == &b && room.is_encrypted() {
+                        return server.config().look().encrypted_room_sign();
+                    }
                 }
             }
         }
