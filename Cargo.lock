@@ -2125,9 +2125,9 @@ dependencies = [
 
 [[package]]
 name = "strum_macros"
-version = "0.19.2"
+version = "0.19.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d2ab682ecdcae7f5f45ae85cd7c1e6c8e68ea42c8a612d47fedf831c037146a"
+checksum = "e61bb0be289045cb80bfce000512e32d09f8337e54c186725da381377ad1f8d5"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2646,6 +2646,7 @@ dependencies = [
  "futures",
  "indoc",
  "matrix-sdk",
+ "strum",
  "tokio",
  "tracing",
  "tracing-subscriber",

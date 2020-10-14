@@ -71,7 +71,7 @@ use weechat::{
 };
 
 use crate::{
-    config::Config,
+    config::{Config, RedactionStyle},
     connection::{Connection, TYPING_NOTICE_TIMEOUT},
     render::{Render, RenderedEvent},
     PLUGIN_NAME,
@@ -319,16 +319,6 @@ impl MatrixRoom {
 
         let event_id_tag =
             Cow::from(format!("{}_id_{}", PLUGIN_NAME, event.redacts));
-        let event_type_tag = Cow::from("matrix_redacted");
-
-        let predicate = |l: &BufferLine| {
-            let tags = l.tags();
-            tags.contains(&event_id_tag) && !tags.contains(&event_type_tag)
-        };
-
-        let mut lines = buffer.lines();
-        let first_line = lines.rfind(predicate);
-
         let tag = Cow::from("matrix_redacted");
 
         let reason = if let Some(r) = &event.content.reason {
@@ -336,7 +326,6 @@ impl MatrixRoom {
         } else {
             "".to_owned()
         };
-
         let redaction_message = format!(
             "{}<{}Message redacted by: {}{}{}>{}",
             Weechat::color("chat_delimiters"),
@@ -347,6 +336,14 @@ impl MatrixRoom {
             Weechat::color("reset"),
         );
 
+        let redaction_style = self.config.borrow().look().redaction_style();
+
+        let predicate = |l: &BufferLine| {
+            let tags = l.tags();
+            tags.contains(&event_id_tag)
+                && !tags.contains(&Cow::from("matrix_redacted"))
+        };
+
         let strike_through = |string: Cow<str>| {
             Weechat::remove_color(&string)
                 .graphemes(true)
@@ -355,24 +352,22 @@ impl MatrixRoom {
                 .join("")
         };
 
-        let redact_first_line = |message: Cow<str>| {
-            if false {
-                redaction_message.clone()
-            } else if false {
+        let redact_first_line = |message: Cow<str>| match redaction_style {
+            RedactionStyle::Delete => redaction_message.clone(),
+            RedactionStyle::Notice => {
                 format!("{} {}", message, redaction_message)
-            } else {
+            }
+            RedactionStyle::StrikeThrough => {
                 format!("{} {}", strike_through(message), redaction_message)
             }
         };
 
-        let redact_string = |message: Cow<str>| {
-            if false {
-                redaction_message.clone()
-            } else if false {
+        let redact_string = |message: Cow<str>| match redaction_style {
+            RedactionStyle::Delete => redaction_message.clone(),
+            RedactionStyle::Notice => {
                 format!("{} {}", message, redaction_message)
-            } else {
-                strike_through(message)
             }
+            RedactionStyle::StrikeThrough => strike_through(message),
         };
 
         fn modify_line<F>(line: BufferLine, tag: Cow<str>, redaction_func: F)
@@ -389,6 +384,9 @@ impl MatrixRoom {
             line.set_message(&new_message);
             line.set_tags(&tags);
         };
+
+        let mut lines = buffer.lines();
+        let first_line = lines.rfind(predicate);
 
         if let Some(line) = first_line {
             modify_line(line, tag.clone(), redact_first_line);
