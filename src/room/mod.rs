@@ -316,29 +316,64 @@ impl MatrixRoom {
         let send_time = event.origin_server_ts();
 
         let rendered = match event.content() {
-            RoomEncrypted(c) => c.render_with_prefix(send_time, &sender, &()),
+            RoomEncrypted(c) => {
+                c.render_with_prefix(send_time, event.event_id(), &sender, &())
+            }
             RoomMessage(c) => match c {
-                Text(c) => c.render_with_prefix(send_time, &sender, &()),
-                Emote(c) => c.render_with_prefix(send_time, &sender, &sender),
-                Notice(c) => c.render_with_prefix(send_time, &sender, &sender),
-                ServerNotice(c) => {
-                    c.render_with_prefix(send_time, &sender, &sender)
-                }
-                Location(c) => {
-                    c.render_with_prefix(send_time, &sender, &sender)
-                }
-                Audio(c) => {
-                    c.render_with_prefix(send_time, &sender, &self.homeserver)
-                }
-                Video(c) => {
-                    c.render_with_prefix(send_time, &sender, &self.homeserver)
-                }
-                File(c) => {
-                    c.render_with_prefix(send_time, &sender, &self.homeserver)
-                }
-                Image(c) => {
-                    c.render_with_prefix(send_time, &sender, &self.homeserver)
-                }
+                Text(c) => c.render_with_prefix(
+                    send_time,
+                    event.event_id(),
+                    &sender,
+                    &(),
+                ),
+                Emote(c) => c.render_with_prefix(
+                    send_time,
+                    event.event_id(),
+                    &sender,
+                    &sender,
+                ),
+                Notice(c) => c.render_with_prefix(
+                    send_time,
+                    event.event_id(),
+                    &sender,
+                    &sender,
+                ),
+                ServerNotice(c) => c.render_with_prefix(
+                    send_time,
+                    event.event_id(),
+                    &sender,
+                    &sender,
+                ),
+                Location(c) => c.render_with_prefix(
+                    send_time,
+                    event.event_id(),
+                    &sender,
+                    &sender,
+                ),
+                Audio(c) => c.render_with_prefix(
+                    send_time,
+                    event.event_id(),
+                    &sender,
+                    &self.homeserver,
+                ),
+                Video(c) => c.render_with_prefix(
+                    send_time,
+                    event.event_id(),
+                    &sender,
+                    &self.homeserver,
+                ),
+                File(c) => c.render_with_prefix(
+                    send_time,
+                    event.event_id(),
+                    &sender,
+                    &self.homeserver,
+                ),
+                Image(c) => c.render_with_prefix(
+                    send_time,
+                    event.event_id(),
+                    &sender,
+                    &self.homeserver,
+                ),
             },
             _ => return None,
         };
@@ -594,8 +629,12 @@ impl MatrixRoom {
             let sender = self.members.get(&e.sender).expect(
                 "Rendering a message but the sender isn't in the nicklist",
             );
-            let rendered =
-                e.render_with_prefix(&e.origin_server_ts, &sender, &redacter);
+            let rendered = e.render_with_prefix(
+                &e.origin_server_ts,
+                event.event_id(),
+                &sender,
+                &redacter,
+            );
 
             self.print_rendered_event(rendered);
         }

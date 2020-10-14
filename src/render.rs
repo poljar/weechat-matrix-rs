@@ -16,6 +16,7 @@ use matrix_sdk::{
         },
         RedactedSyncMessageEvent, SyncStateEvent,
     },
+    identifiers::{EventId, UserId},
     uuid::Uuid,
 };
 
@@ -61,6 +62,16 @@ pub trait Render {
         Self::TAGS.iter().map(|t| t.to_string()).collect()
     }
 
+    fn event_tags(&self, event_id: &EventId, sender: &UserId) -> Vec<String> {
+        let mut tags = self.tags();
+        let event_tag = format!("matrix_id_{}", event_id.as_str());
+        let sender_tag = format!("matrix_sender_{}", sender.as_str());
+        tags.push(event_tag);
+        tags.push(sender_tag);
+
+        tags
+    }
+
     fn prefix(&self, sender: &WeechatRoomMember) -> String {
         format!(
             "{}{}{}",
@@ -74,15 +85,22 @@ pub trait Render {
     fn render_with_prefix(
         &self,
         timestamp: &SystemTime,
+        event_id: &EventId,
         sender: &WeechatRoomMember,
         context: &Self::RenderContext,
     ) -> RenderedEvent {
         let prefix = self.prefix(sender);
-        let content = self.render(context);
+        let mut content = self.render(context);
         let timestamp: u64 = timestamp
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+
+        let tags = self.event_tags(event_id, &sender.user_id);
+
+        for line in &mut content.lines {
+            line.tags = tags.clone();
+        }
 
         RenderedEvent {
             prefix,
