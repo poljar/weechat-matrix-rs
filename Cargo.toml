@@ -20,6 +20,7 @@ clap = "2.33.3"
 async-trait = "0.1.41"
 uuid = { version = "0.8.1", features = ["v4"] }
 indoc = "1.0.2"
+unicode-segmentation = "1.6.0"
 chrono = "0.4.19"
 
 [dependencies.weechat]

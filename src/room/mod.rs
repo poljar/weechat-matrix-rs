@@ -43,11 +43,15 @@ use std::{
 use async_trait::async_trait;
 use futures::executor::block_on;
 use tracing::{debug, trace};
+use unicode_segmentation::UnicodeSegmentation;
 use url::Url;
 
 use matrix_sdk::{
     events::{
-        room::message::{MessageEventContent, TextMessageEventContent},
+        room::{
+            message::{MessageEventContent, TextMessageEventContent},
+            redaction::SyncRedactionEvent,
+        },
         AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
         AnyRedactedSyncMessageEvent, AnySyncMessageEvent, AnySyncRoomEvent,
         AnySyncStateEvent, SyncMessageEvent,
@@ -70,6 +74,7 @@ use crate::{
     config::Config,
     connection::{Connection, TYPING_NOTICE_TIMEOUT},
     render::{Render, RenderedEvent},
+    PLUGIN_NAME,
 };
 
 #[derive(Clone)]
@@ -297,6 +302,102 @@ impl MatrixRoom {
                     line.tags.iter().map(|t| t.as_str()).collect();
                 buffer.print_date_tags(0, &tags, &message)
             }
+        }
+    }
+
+    fn redact_event(&self, event: &SyncRedactionEvent) {
+        let buffer_handle = self.buffer_handle();
+
+        let buffer = if let Ok(b) = buffer_handle.upgrade() {
+            b
+        } else {
+            return;
+        };
+
+        // TODO remove this unwrap.
+        let redacter = self.members.get(&event.sender).unwrap();
+
+        let event_id_tag =
+            Cow::from(format!("{}_id_{}", PLUGIN_NAME, event.redacts));
+        let event_type_tag = Cow::from("matrix_redacted");
+
+        let predicate = |l: &BufferLine| {
+            let tags = l.tags();
+            tags.contains(&event_id_tag) && !tags.contains(&event_type_tag)
+        };
+
+        let mut lines = buffer.lines();
+        let first_line = lines.rfind(predicate);
+
+        let tag = Cow::from("matrix_redacted");
+
+        let reason = if let Some(r) = &event.content.reason {
+            format!(", reason: {}", r)
+        } else {
+            "".to_owned()
+        };
+
+        let redaction_message = format!(
+            "{}<{}Message redacted by: {}{}{}>{}",
+            Weechat::color("chat_delimiters"),
+            Weechat::color("logger.color.backlog_line"),
+            redacter.nick.borrow(),
+            reason,
+            Weechat::color("chat_delimiters"),
+            Weechat::color("reset"),
+        );
+
+        let strike_through = |string: Cow<str>| {
+            Weechat::remove_color(&string)
+                .graphemes(true)
+                .map(|g| format!("{}\u{0336}", g))
+                .collect::<Vec<String>>()
+                .join("")
+        };
+
+        let redact_first_line = |message: Cow<str>| {
+            if false {
+                redaction_message.clone()
+            } else if false {
+                format!("{} {}", message, redaction_message)
+            } else {
+                format!("{} {}", strike_through(message), redaction_message)
+            }
+        };
+
+        let redact_string = |message: Cow<str>| {
+            if false {
+                redaction_message.clone()
+            } else if false {
+                format!("{} {}", message, redaction_message)
+            } else {
+                strike_through(message)
+            }
+        };
+
+        fn modify_line<F>(line: BufferLine, tag: Cow<str>, redaction_func: F)
+        where
+            F: Fn(Cow<str>) -> String,
+        {
+            let message = line.message();
+            let new_message = redaction_func(message);
+
+            let mut tags = line.tags();
+            tags.push(tag);
+            let tags: Vec<&str> = tags.iter().map(|t| t.as_ref()).collect();
+
+            line.set_message(&new_message);
+            line.set_tags(&tags);
+        };
+
+        if let Some(line) = first_line {
+            modify_line(line, tag.clone(), redact_first_line);
+        } else {
+            return;
+        }
+
+        while let Some(line) = lines.next_back().filter(predicate) {
+            modify_line(line, tag.clone(), redact_string);
         }
     }
 
@@ -611,7 +712,9 @@ impl MatrixRoom {
             }
         }
 
-        if let Some(rendered) = self.render_message_event(event).await {
+        if let AnySyncMessageEvent::RoomRedaction(r) = event {
+            self.redact_event(r);
+        } else if let Some(rendered) = self.render_message_event(event).await {
             self.print_rendered_event(rendered);
         }
     }
