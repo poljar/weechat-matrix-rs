@@ -517,10 +517,10 @@ impl MatrixServer {
     }
 }
 
-impl Drop for MatrixServer {
+impl Drop for InnerServer {
     fn drop(&mut self) {
         // TODO close all the server buffers.
-        let config = &self.inner.borrow().config;
+        let config = &self.config;
         let mut config_borrow = config.borrow_mut();
 
         let mut section = config_borrow
@@ -530,7 +530,7 @@ impl Drop for MatrixServer {
         for option_name in
             &["homeserver", "autoconnect", "password", "proxy", "username"]
         {
-            let option_name = &format!("{}.{}", self.name(), option_name);
+            let option_name = &format!("{}.{}", self.server_name, option_name);
             section.free_option(option_name).unwrap_or_else(|_| {
                 panic!(format!("Can't free option {}", option_name))
             });
