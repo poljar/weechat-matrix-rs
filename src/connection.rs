@@ -44,7 +44,7 @@ pub struct InteractiveAuthInfo {
 }
 
 impl InteractiveAuthInfo {
-    pub fn as_auth_data<'a>(&'a self) -> AuthData<'a> {
+    pub fn as_auth_data(&self) -> AuthData<'_> {
         let mut auth_parameters = BTreeMap::new();
         let identifier = json!({
             "type": "m.id.user",
