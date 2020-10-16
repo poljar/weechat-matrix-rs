@@ -1,6 +1,10 @@
-use std::{cell::RefCell, path::PathBuf, rc::Weak, sync::Arc, time::Duration};
+use std::{
+    cell::RefCell, collections::BTreeMap, path::PathBuf, rc::Weak, sync::Arc,
+    time::Duration,
+};
 
 use async_std::sync::{channel as async_channel, Receiver, Sender};
+use serde_json::json;
 use tokio::runtime::Runtime;
 use tracing::error;
 use uuid::Uuid;
@@ -8,16 +12,20 @@ use uuid::Uuid;
 pub use matrix_sdk::{
     self,
     api::r0::{
-        device::get_devices::Response as DevicesResponse,
+        device::{
+            delete_devices::Response as DeleteDevicesResponse,
+            get_devices::Response as DevicesResponse,
+        },
         message::send_message_event::Response as RoomSendResponse,
         session::login::Response as LoginResponse,
         typing::create_typing_event::{Response as TypingResponse, Typing},
+        uiaa::AuthData,
     },
     events::{
         room::message::{MessageEventContent, TextMessageEventContent},
         AnyMessageEventContent, AnySyncRoomEvent, AnySyncStateEvent,
     },
-    identifiers::{RoomId, UserId},
+    identifiers::{DeviceIdBox, RoomId, UserId},
     locks::RwLock,
     Client, ClientConfig, LoopCtrl, Result as MatrixResult, Room, SyncSettings,
 };
@@ -28,6 +36,35 @@ use crate::server::{InnerServer, MatrixServer};
 
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 pub const TYPING_NOTICE_TIMEOUT: Duration = Duration::from_secs(4);
+
+pub struct InteractiveAuthInfo {
+    pub user: String,
+    pub password: String,
+    pub session: Option<String>,
+}
+
+impl InteractiveAuthInfo {
+    pub fn as_auth_data<'a>(&'a self) -> AuthData<'a> {
+        let mut auth_parameters = BTreeMap::new();
+        let identifier = json!({
+            "type": "m.id.user",
+            "user": self.user,
+        });
+
+        auth_parameters.insert("identifier".to_owned(), identifier);
+        auth_parameters
+            .insert("password".to_owned(), self.password.clone().into());
+
+        // This is needed because of https://github.com/matrix-org/synapse/issues/5665
+        auth_parameters.insert("user".to_owned(), self.user.clone().into());
+
+        AuthData::DirectRequest {
+            kind: "m.login.password",
+            auth_parameters,
+            session: self.session.as_deref(),
+        }
+    }
+}
 
 pub enum ClientMessage {
     LoginMessage(LoginResponse),
@@ -116,6 +153,30 @@ impl Connection {
                         Some(transaction_id.unwrap_or_else(Uuid::new_v4)),
                     )
                     .await
+            })
+            .await;
+
+        match handle {
+            Ok(response) => response,
+            Err(e) => panic!("Tokio error while sending a message {:?}", e),
+        }
+    }
+
+    pub async fn delete_devices(
+        &self,
+        devices: Vec<DeviceIdBox>,
+        auth_info: Option<InteractiveAuthInfo>,
+    ) -> MatrixResult<DeleteDevicesResponse> {
+        let client = self.client.clone();
+        let handle = self
+            .runtime
+            .spawn(async move {
+                if let Some(info) = auth_info {
+                    let auth = Some(info.as_auth_data());
+                    client.delete_devices(&devices, auth).await
+                } else {
+                    client.delete_devices(&devices, None).await
+                }
             })
             .await;
 

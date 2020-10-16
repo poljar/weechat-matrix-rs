@@ -70,7 +70,7 @@ use matrix_sdk::{
     self,
     api::r0::session::login::Response as LoginResponse,
     events::{AnySyncRoomEvent, AnySyncStateEvent},
-    identifiers::{RoomId, UserId},
+    identifiers::{DeviceIdBox, RoomId, UserId},
     locks::RwLock,
     Client, ClientConfig, Room,
 };
@@ -82,7 +82,10 @@ use weechat::{
 };
 
 use crate::{
-    config::Config, connection::Connection, room::RoomHandle, ConfigHandle,
+    config::Config,
+    connection::{Connection, InteractiveAuthInfo},
+    room::RoomHandle,
+    ConfigHandle,
 };
 
 #[derive(Debug)]
@@ -178,6 +181,55 @@ impl MatrixServer {
 
     pub fn connection(&self) -> Rc<RefCell<Option<Connection>>> {
         self.inner().connection.clone()
+    }
+
+    pub async fn delete_devices(&self, devices: Vec<DeviceIdBox>) {
+        let connection = self.connection();
+        let formatted = devices
+            .iter()
+            .map(|d| d.to_string())
+            .collect::<Vec<String>>()
+            .join(", ");
+
+        let print_success = || {
+            self.print(&format!(
+                "Successfully deleted device(s) {}",
+                formatted
+            ));
+        };
+
+        let print_fail = |e| {
+            self.print_error(&format!(
+                "Error deleting device(s) {} {:#?}",
+                formatted, e
+            ));
+        };
+
+        if let Some(c) = &*connection.borrow() {
+            match c.delete_devices(devices.clone(), None).await {
+                Ok(_) => print_success(),
+                Err(e) => {
+                    if let Some(info) = e.uiaa_response() {
+                        let auth_info = InteractiveAuthInfo {
+                            user: self.inner().settings().username.clone(),
+                            password: self.inner().settings().password.clone(),
+                            session: info.session.clone(),
+                        };
+
+                        if let Err(e) = c
+                            .delete_devices(devices.clone(), Some(auth_info))
+                            .await
+                        {
+                            print_fail(e);
+                        } else {
+                            print_success();
+                        }
+                    } else {
+                        print_fail(e)
+                    }
+                }
+            }
+        };
     }
 
     pub async fn devices(&self) {

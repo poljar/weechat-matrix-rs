@@ -1,4 +1,5 @@
 use clap::{App as Argparse, AppSettings as ArgParseSettings, Arg, SubCommand};
+use matrix_sdk::identifiers::DeviceIdBox;
 
 use weechat::{
     buffer::Buffer,
@@ -37,6 +38,19 @@ impl DevicesCommand {
         )
     }
 
+    fn delete(&self, buffer: &Buffer, devices: Vec<DeviceIdBox>) {
+        let server = self.servers.find_server(buffer);
+
+        if let Some(s) = server {
+            let devices = || async move {
+                s.delete_devices(devices).await;
+            };
+            Weechat::spawn(devices()).detach();
+        } else {
+            Weechat::print("Must be executed on Matrix buffer")
+        }
+    }
+
     fn list(&self, buffer: &Buffer) {
         let server = self.servers.find_server(buffer);
 
@@ -65,7 +79,12 @@ impl CommandCallback for DevicesCommand {
             .subcommand(
                 SubCommand::with_name("delete")
                     .about("Delete the given device")
-                    .arg(Arg::with_name("device-id").required(true)),
+                    .arg(
+                        Arg::with_name("device-id")
+                            .require_delimiter(true)
+                            .multiple(true)
+                            .required(true),
+                    ),
             )
             .subcommand(
                 SubCommand::with_name("set-name")
@@ -91,6 +110,17 @@ impl CommandCallback for DevicesCommand {
 
         match matches.subcommand() {
             ("list", _) => self.list(buffer),
+            ("delete", args) => {
+                let devices = args.unwrap().args.get("device-id").unwrap();
+                let devices: Vec<DeviceIdBox> = devices
+                    .vals
+                    .iter()
+                    .filter_map(|d| {
+                        d.clone().into_string().ok().map(|d| d.into())
+                    })
+                    .collect();
+                self.delete(buffer, devices);
+            }
             _ => Weechat::print(&format!(
                 "{}Subcommand isn't implemented",
                 Weechat::prefix("error")

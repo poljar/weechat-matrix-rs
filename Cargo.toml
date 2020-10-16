@@ -19,10 +19,11 @@ async-std = { version = "1.6.5", features = [ "unstable" ] }
 clap = "2.33.3"
 async-trait = "0.1.41"
 uuid = { version = "0.8.1", features = ["v4"] }
-indoc = "1.0.2"
+indoc = "1.0.3"
 unicode-segmentation = "1.6.0"
 strum = "0.19.5"
 chrono = "0.4.19"
+serde_json = "1.0.59"
 
 [dependencies.weechat]
 version = "0.4.0"
@@ -30,3 +31,4 @@ features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
 git = "https://github.com/matrix-org/matrix-rust-sdk/"
+branch ="crypto-improvements"
