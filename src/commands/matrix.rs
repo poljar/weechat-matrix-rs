@@ -10,7 +10,10 @@ use weechat::{
     Args, Weechat,
 };
 
-use crate::{config::ConfigHandle, MatrixServer, Servers, PLUGIN_NAME};
+use crate::{
+    commands::DevicesCommand, config::ConfigHandle, MatrixServer, Servers,
+    PLUGIN_NAME,
+};
 
 pub struct MatrixCommand {
     servers: Servers,
@@ -27,18 +30,22 @@ impl MatrixCommand {
             .add_argument("server add <server-name> <hostname>[:<port>]")
             .add_argument("server delete|list|listfull <server-name>")
             .add_argument("connect <server-name>")
+            .add_argument("devices delete|list|set-name")
             .add_argument("disconnect <server-name>")
             .add_argument("reconnect <server-name>")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
-            .arguments_description(
+            .arguments_description(&format!(
                 "      server: List, add, or remove Matrix servers.
      connect: Connect to Matrix servers.
   disconnect: Disconnect from one or all Matrix servers.
    reconnect: Reconnect to server(s).
+     devices: {}
         help: Show detailed command help.\n
 Use /matrix [command] help to find out more.\n",
-            )
+                DevicesCommand::DESCRIPTION
+            ))
             .add_completion("server |add|delete|list|listfull")
+            .add_completion("devices |list|delete|set-name")
             .add_completion("connect")
             .add_completion("disconnect")
             .add_completion("reconnect")
@@ -210,7 +217,7 @@ impl CommandCallback for MatrixCommand {
     fn callback(
         &mut self,
         _weechat: &Weechat,
-        _buffer: &Buffer,
+        buffer: &Buffer,
         arguments: Args,
     ) {
         let server_command = SubCommand::with_name("server")
@@ -255,6 +262,11 @@ impl CommandCallback for MatrixCommand {
             .setting(ArgParseSettings::SubcommandRequiredElseHelp)
             .subcommand(server_command)
             .subcommand(
+                SubCommand::with_name("devices")
+                    .about(DevicesCommand::DESCRIPTION)
+                    .subcommands(DevicesCommand::subcommands()),
+            )
+            .subcommand(
                 SubCommand::with_name("connect")
                     .about("Connect to Matrix servers.")
                     .arg(
@@ -293,6 +305,9 @@ impl CommandCallback for MatrixCommand {
             ("connect", Some(subargs)) => self.connect_command(subargs),
             ("disconnect", Some(subargs)) => self.disconnect_command(subargs),
             ("server", Some(subargs)) => self.server_command(subargs),
+            ("devices", Some(subargs)) => {
+                DevicesCommand::run(buffer, &self.servers, subargs)
+            }
             _ => unreachable!(),
         }
     }
