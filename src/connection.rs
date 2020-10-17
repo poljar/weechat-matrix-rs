@@ -403,7 +403,7 @@ impl Connection {
         let sync_channel = &channel;
 
         client
-            .sync_with_callback(sync_settings, async move |response| {
+            .sync_with_callback(sync_settings, |response| async move {
                 let channel = sync_channel;
 
                 for (room_id, room) in response.rooms.join {

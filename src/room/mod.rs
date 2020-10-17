@@ -583,7 +583,7 @@ impl MatrixRoom {
         let room_id = self.room_id.clone();
         let typing_notice_time = self.typing_notice_time.clone();
 
-        let send = async move |typing: bool| {
+        let send = |typing: bool| async move {
             let typing_time = typing_notice_time;
 
             // We're in the process of sending out a typing notice, so don't

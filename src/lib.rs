@@ -1,4 +1,3 @@
-#![feature(async_closure)]
 #![feature(get_mut_unchecked)]
 
 mod commands;
