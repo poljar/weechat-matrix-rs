@@ -74,12 +74,14 @@ impl DevicesCommand {
         match args.subcommand() {
             ("list", _) => Self::list(servers, buffer),
             ("delete", args) => {
-                let devices = args.unwrap().args.get("device-id").unwrap();
+                let devices = args
+                    .and_then(|a| a.args.get("device-id"))
+                    .expect("Args didn't contain any device ids");
                 let devices: Vec<DeviceIdBox> = devices
                     .vals
                     .iter()
-                    .filter_map(|d| {
-                        d.clone().into_string().ok().map(|d| d.into())
+                    .map(|d| {
+                        d.clone().to_string_lossy().as_ref().into()
                     })
                     .collect();
                 Self::delete(servers, buffer, devices);
