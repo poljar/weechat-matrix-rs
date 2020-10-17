@@ -1,6 +1,6 @@
 use std::{
-    cell::RefCell, collections::BTreeMap, path::PathBuf, rc::Weak, sync::Arc,
-    time::Duration,
+    cell::RefCell, collections::BTreeMap, future::Future, path::PathBuf,
+    rc::Rc, rc::Weak, sync::Arc, time::Duration,
 };
 
 use async_std::sync::{channel as async_channel, Receiver, Sender};
@@ -91,6 +91,17 @@ pub struct Connection {
 }
 
 impl Connection {
+    pub async fn spawn<F>(&self, future: F) -> F::Output
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.runtime
+            .spawn(future)
+            .await
+            .expect("Tokio error while sending a message")
+    }
+
     pub fn new(server: &MatrixServer, client: &Client) -> Self {
         let (tx, rx) = async_channel(1000);
 
@@ -143,23 +154,16 @@ impl Connection {
         let room_id = room_id.to_owned();
         let client = self.client.clone();
 
-        let handle = self
-            .runtime
-            .spawn(async move {
-                client
-                    .room_send(
-                        &room_id,
-                        content,
-                        Some(transaction_id.unwrap_or_else(Uuid::new_v4)),
-                    )
-                    .await
-            })
-            .await;
-
-        match handle {
-            Ok(response) => response,
-            Err(e) => panic!("Tokio error while sending a message {:?}", e),
-        }
+        self.spawn(async move {
+            client
+                .room_send(
+                    &room_id,
+                    content,
+                    Some(transaction_id.unwrap_or_else(Uuid::new_v4)),
+                )
+                .await
+        })
+        .await
     }
 
     pub async fn delete_devices(
@@ -168,36 +172,21 @@ impl Connection {
         auth_info: Option<InteractiveAuthInfo>,
     ) -> MatrixResult<DeleteDevicesResponse> {
         let client = self.client.clone();
-        let handle = self
-            .runtime
-            .spawn(async move {
-                if let Some(info) = auth_info {
-                    let auth = Some(info.as_auth_data());
-                    client.delete_devices(&devices, auth).await
-                } else {
-                    client.delete_devices(&devices, None).await
-                }
-            })
-            .await;
-
-        match handle {
-            Ok(response) => response,
-            Err(e) => panic!("Tokio error while sending a message {:?}", e),
-        }
+        self.spawn(async move {
+            if let Some(info) = auth_info {
+                let auth = Some(info.as_auth_data());
+                client.delete_devices(&devices, auth).await
+            } else {
+                client.delete_devices(&devices, None).await
+            }
+        })
+        .await
     }
 
     /// Get the list of our own devices.
     pub async fn devices(&self) -> MatrixResult<DevicesResponse> {
         let client = self.client.clone();
-        let handle = self
-            .runtime
-            .spawn(async move { client.devices().await })
-            .await;
-
-        match handle {
-            Ok(response) => response,
-            Err(e) => panic!("Tokio error while sending a message {:?}", e),
-        }
+        self.spawn(async move { client.devices().await }).await
     }
 
     /// Set or reset a typing notice.
@@ -216,23 +205,16 @@ impl Connection {
         let room_id = room_id.to_owned();
         let client = self.client.clone();
 
-        let handle = self
-            .runtime
-            .spawn(async move {
-                let typing = if typing {
-                    Typing::Yes(TYPING_NOTICE_TIMEOUT)
-                } else {
-                    Typing::No
-                };
+        self.spawn(async move {
+            let typing = if typing {
+                Typing::Yes(TYPING_NOTICE_TIMEOUT)
+            } else {
+                Typing::No
+            };
 
-                client.typing_notice(&room_id, typing).await
-            })
-            .await;
-
-        match handle {
-            Ok(response) => response,
-            Err(e) => panic!("Tokio error while sending a message {:?}", e),
-        }
+            client.typing_notice(&room_id, typing).await
+        })
+        .await
     }
 
     fn save_device_id(
