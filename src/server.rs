@@ -180,12 +180,11 @@ impl MatrixServer {
         Rc::downgrade(&self.inner)
     }
 
-    pub fn connection(&self) -> Rc<RefCell<Option<Connection>>> {
-        self.inner().connection.clone()
+    pub fn connection(&self) -> Option<Connection> {
+        self.inner().connection.borrow().clone()
     }
 
     pub async fn delete_devices(&self, devices: Vec<DeviceIdBox>) {
-        let connection = self.connection();
         let formatted = devices
             .iter()
             .map(|d| d.to_string())
@@ -193,7 +192,7 @@ impl MatrixServer {
             .join(", ");
 
         let print_success = || {
-            self.print(&format!(
+            self.print_network(&format!(
                 "Successfully deleted device(s) {}",
                 formatted
             ));
@@ -206,7 +205,7 @@ impl MatrixServer {
             ));
         };
 
-        if let Some(c) = &*connection.borrow() {
+        if let Some(c) = self.connection() {
             match c.delete_devices(devices.clone(), None).await {
                 Ok(_) => print_success(),
                 Err(e) => {
@@ -234,9 +233,8 @@ impl MatrixServer {
     }
 
     pub async fn devices(&self) {
-        let connection = self.connection();
 
-        if let Some(c) = &*connection.borrow() {
+        if let Some(c) = self.connection() {
             let response = match c.devices().await {
                 Ok(r) => r,
                 Err(e) => {
@@ -475,7 +473,7 @@ impl MatrixServer {
             return Ok(());
         }
 
-        let client = self.inner.borrow_mut().get_or_creaet_client()?;
+        let client = self.inner.borrow_mut().get_or_create_client()?;
         let connection = Connection::new(&self, &client);
 
         *self.inner.borrow_mut().connection.borrow_mut() = Some(connection);
@@ -677,7 +675,7 @@ impl InnerServer {
         buffer_handle
     }
 
-    fn get_or_creaet_client(&mut self) -> Result<Client, ServerError> {
+    fn get_or_create_client(&mut self) -> Result<Client, ServerError> {
         let client = if let Some(c) = self.client.as_ref() {
             c.clone()
         } else {

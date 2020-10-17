@@ -82,12 +82,12 @@ pub enum ClientMessage {
 ///
 /// While this struct is alive a sync loop will be going on. To cancel the sync
 /// loop drop the object.
+#[derive(Debug, Clone)]
 pub struct Connection {
     #[used]
-    receiver_task: Task<()>,
+    receiver_task: Rc<Task<()>>,
     client: Client,
-    #[used]
-    runtime: Runtime,
+    pub runtime: Rc<Runtime>,
 }
 
 impl Connection {
@@ -129,8 +129,8 @@ impl Connection {
 
         Self {
             client: client.clone(),
-            runtime,
-            receiver_task,
+            runtime: Rc::new(runtime),
+            receiver_task: Rc::new(receiver_task),
         }
     }
 
