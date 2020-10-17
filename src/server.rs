@@ -82,6 +82,7 @@ use weechat::{
 };
 
 use crate::{
+    PLUGIN_NAME,
     config::Config,
     connection::{Connection, InteractiveAuthInfo},
     room::RoomHandle,
@@ -723,7 +724,7 @@ impl InnerServer {
     }
 
     /// Print a neutral message to the server buffer.
-    pub fn print(&self, message: &str) {
+    fn print(&self, message: &str) {
         let mut server_buffer = self.server_buffer.borrow_mut();
         let buffer = self
             .get_or_create_buffer(&mut server_buffer)
@@ -734,7 +735,7 @@ impl InnerServer {
 
     /// Print a message with a given prefix to the server buffer.
     pub fn print_with_prefix(&self, prefix: &str, message: &str) {
-        self.print(&format!("{}{}", prefix, message));
+        self.print(&format!("{}{}: {}", prefix, PLUGIN_NAME, message));
     }
 
     /// Print an network message to the server buffer.
