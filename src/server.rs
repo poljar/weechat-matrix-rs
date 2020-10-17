@@ -232,8 +232,62 @@ impl MatrixServer {
         };
     }
 
-    pub async fn devices(&self) {
+    pub async fn export_keys(&self, file: PathBuf, passphrase: String) {
+        let client = self.inner().get_client().unwrap();
 
+        let export = async move {
+            client.export_keys(file, &passphrase, |_| true).await
+        };
+
+        if let Some(c) = self.connection() {
+            if let Err(e) = c.spawn(export).await {
+                self.print_error(&format!(
+                    "Error exporting E2EE keys {:#?}",
+                    e
+                ));
+            } else {
+                self.print_network("Sucessfully exported E2EE keys")
+            }
+        };
+    }
+
+    pub async fn import_keys(&self, file: PathBuf, passphrase: String) {
+        let client = self.inner().get_client().unwrap();
+
+        if let Some(c) = self.connection() {
+            self.print_network(&format!(
+                "Importing E2EE keys from {}, this may take a while..",
+                file.display()
+            ));
+            let import =
+                async move { client.import_keys(file, &passphrase).await };
+
+            match c.spawn(import).await {
+                Ok(num) => {
+                    if num > 0 {
+                        self.print_network(&format!(
+                            "Sucessfully imported {} E2EE keys",
+                            num
+                        ));
+                    } else {
+                        self.print_network(
+                            "No keys were imported, either the export \
+                                   is empty or it contains sessions that we \
+                                   already have",
+                        );
+                    }
+                }
+                Err(e) => {
+                    self.print_error(&format!(
+                        "Error importing E2EE keys {:#?}",
+                        e
+                    ));
+                }
+            }
+        };
+    }
+
+    pub async fn devices(&self) {
         if let Some(c) = self.connection() {
             let response = match c.devices().await {
                 Ok(r) => r,
@@ -673,6 +727,10 @@ impl InnerServer {
         buffer.set_localvar("server", &self.server_name);
 
         buffer_handle
+    }
+
+    fn get_client(&self) -> Option<Client> {
+        self.client.clone()
     }
 
     fn get_or_create_client(&mut self) -> Result<Client, ServerError> {

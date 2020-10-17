@@ -26,9 +26,9 @@ chrono = "0.4.19"
 serde_json = "1.0.59"
 
 [dependencies.weechat]
-version = "0.4.0"
+git = "https://github.com/poljar/rust-weechat"
 features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
 git = "https://github.com/matrix-org/matrix-rust-sdk/"
-branch ="crypto-improvements"
+branch = "crypto-improvements"
