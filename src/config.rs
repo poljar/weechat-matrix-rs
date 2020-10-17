@@ -69,8 +69,8 @@ config!(
 
         local_echo: bool {
             // Description
-            "Should the sending event be printed out before the server \
-             the receipt of the message",
+            "Should the sending message be printed out before the server \
+             confirms the reception of the message",
              // Default value
              true,
         },
