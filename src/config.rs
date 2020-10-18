@@ -15,7 +15,12 @@
 //! loaded so they don't need to be freed manually. The drop implementation of
 //! the section will do so.
 
-use crate::{MatrixServer, Servers};
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    rc::Rc,
+};
+
+use strum::EnumVariantNames;
 use weechat::{
     config,
     config::{
@@ -25,10 +30,32 @@ use weechat::{
     Weechat,
 };
 
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    rc::Rc,
-};
+use crate::{MatrixServer, Servers};
+
+#[derive(EnumVariantNames)]
+#[strum(serialize_all = "kebab_case")]
+pub enum RedactionStyle {
+    StrikeThrough,
+    Delete,
+    Notice,
+}
+
+impl Default for RedactionStyle {
+    fn default() -> Self {
+        RedactionStyle::StrikeThrough
+    }
+}
+
+impl From<i32> for RedactionStyle {
+    fn from(value: i32) -> Self {
+        match value {
+            0 => RedactionStyle::StrikeThrough,
+            1 => RedactionStyle::Delete,
+            2 => RedactionStyle::Notice,
+            _ => unreachable!(),
+        }
+    }
+}
 
 config!(
     "matrix-rust",
@@ -39,6 +66,20 @@ config!(
             // Default value.
             "🔒",
         },
+
+        local_echo: bool {
+            // Description
+            "Should the sending message be printed out before the server \
+             confirms the reception of the message",
+             // Default value
+             true,
+        },
+
+        redaction_style: Enum {
+            // Description
+            "The style that should be used when a message needs to be redacted",
+            RedactionStyle,
+        },
     },
     Section network {
         debug_buffer: bool {
@@ -46,14 +87,14 @@ config!(
             "Use a separate buffer for debug logs",
             // Default value.
             false,
-        }
+        },
     }
 );
 
 /// A wrapper for our config struct that can be cloned around.
 #[derive(Clone)]
 pub struct ConfigHandle {
-    inner: Rc<RefCell<Config>>,
+    pub inner: Rc<RefCell<Config>>,
     servers: Servers,
 }
 

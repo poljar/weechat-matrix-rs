@@ -9,20 +9,20 @@ use matrix_sdk::{
             message::{
                 AudioMessageEventContent, EmoteMessageEventContent,
                 FileMessageEventContent, ImageMessageEventContent,
-                LocationMessageEventContent, MessageEventContent,
-                NoticeMessageEventContent, ServerNoticeMessageEventContent,
+                LocationMessageEventContent, NoticeMessageEventContent,
+                RedactedMessageEventContent, ServerNoticeMessageEventContent,
                 TextMessageEventContent, VideoMessageEventContent,
             },
         },
-        AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
-        SyncStateEvent,
+        RedactedSyncMessageEvent, SyncStateEvent,
     },
-    PossiblyRedactedExt,
+    identifiers::{EventId, UserId},
+    uuid::Uuid,
 };
 
 use weechat::Weechat;
 
-use crate::room_buffer::WeechatRoomMember;
+use crate::room::WeechatRoomMember;
 
 /// The rendered version of an event.
 #[allow(dead_code)]
@@ -62,16 +62,21 @@ pub trait Render {
         Self::TAGS.iter().map(|t| t.to_string()).collect()
     }
 
+    fn event_tags(&self, event_id: &EventId, sender: &UserId) -> Vec<String> {
+        let mut tags = self.tags();
+        let event_tag = format!("matrix_id_{}", event_id.as_str());
+        let sender_tag = format!("matrix_sender_{}", sender.as_str());
+        tags.push(event_tag);
+        tags.push(sender_tag);
+
+        tags
+    }
+
     fn prefix(&self, sender: &WeechatRoomMember) -> String {
-        // TODO the sender should have a color attribute and we should use it
-        // here.
-        let colorname_user =
-            Weechat::info_get("nick_color_name", sender.user_id.as_str())
-                .unwrap_or_else(|| String::from("default"));
         format!(
             "{}{}{}",
-            Weechat::color(&colorname_user),
-            sender.nick,
+            Weechat::color(&sender.color),
+            sender.nick.borrow(),
             Weechat::color("reset")
         )
     }
@@ -80,15 +85,22 @@ pub trait Render {
     fn render_with_prefix(
         &self,
         timestamp: &SystemTime,
+        event_id: &EventId,
         sender: &WeechatRoomMember,
         context: &Self::RenderContext,
     ) -> RenderedEvent {
         let prefix = self.prefix(sender);
-        let content = self.render(context);
+        let mut content = self.render(context);
         let timestamp: u64 = timestamp
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
+
+        let tags = self.event_tags(event_id, &sender.user_id);
+
+        for line in &mut content.lines {
+            line.tags = tags.clone();
+        }
 
         RenderedEvent {
             prefix,
@@ -97,11 +109,49 @@ pub trait Render {
         }
     }
 
+    fn render_with_prefix_for_echo(
+        &self,
+        sender: &WeechatRoomMember,
+        uuid: Uuid,
+        context: &Self::RenderContext,
+    ) -> RenderedEvent {
+        let content = self.render_for_echo(uuid, context);
+        let prefix = self.prefix(sender);
+
+        RenderedEvent {
+            prefix,
+            message_timestamp: 0,
+            content,
+        }
+    }
+
+    fn render_for_echo(
+        &self,
+        uuid: Uuid,
+        context: &Self::RenderContext,
+    ) -> RenderedContent {
+        let mut content = self.render(context);
+        let uuid_tag = format!("matrix_echo_{}", uuid.to_string());
+
+        for line in &mut content.lines {
+            let message = Weechat::remove_color(&line.message);
+            line.message = format!(
+                "{}{}{}",
+                Weechat::color_pair("darkgray", "default"),
+                message,
+                Weechat::color("reset")
+            );
+            line.tags.push(uuid_tag.clone())
+        }
+
+        content
+    }
+
     fn render(&self, context: &Self::RenderContext) -> RenderedContent;
 }
 
 impl Render for TextMessageEventContent {
-    const TAGS: &'static [&'static str] = &["matrix_media"];
+    const TAGS: &'static [&'static str] = &["matrix_text"];
     type RenderContext = ();
 
     fn render(&self, _: &Self::RenderContext) -> RenderedContent {
@@ -119,7 +169,7 @@ impl Render for TextMessageEventContent {
 }
 
 impl Render for EmoteMessageEventContent {
-    const TAGS: &'static [&'static str] = &["matrix_media"];
+    const TAGS: &'static [&'static str] = &["matrix_emote"];
     type RenderContext = WeechatRoomMember;
 
     fn prefix(&self, _: &WeechatRoomMember) -> String {
@@ -129,7 +179,7 @@ impl Render for EmoteMessageEventContent {
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
         // TODO parse and render using the formattted body.
         // TODO handle multiple lines in the body.
-        let message = format!("{} {}", sender.nick, self.body);
+        let message = format!("{} {}", sender.nick.borrow(), self.body);
 
         let line = RenderedLine {
             message,
@@ -152,7 +202,7 @@ impl Render for LocationMessageEventContent {
         let message = format!(
             "{} has shared a location: {color_delimiter}<{color_reset}{}{color_delimiter}>\
             [{color_reset}{}{color_delimiter}]{color_reset}",
-            &sender.nick,
+            sender.nick.borrow(),
             self.body,
             self.geo_uri,
             color_delimiter = Weechat::color("color_delimiter"),
@@ -181,7 +231,7 @@ impl Render for NoticeMessageEventContent {
         let message = format!(
             "{prefix}{color_notice}Notice\
             {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
-            sender.nick,
+            sender.nick.borrow(),
             self.body,
             prefix = Weechat::prefix("network"),
             color_notice = Weechat::color("irc.color.notice"),
@@ -208,9 +258,9 @@ impl Render for ServerNoticeMessageEventContent {
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
         let message = format!(
-            "{prefix}{color_notice}Notice\
+            "{prefix}{color_notice}Server notice\
             {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
-            sender.nick,
+            sender.nick.borrow(),
             self.body,
             prefix = Weechat::prefix("network"),
             color_notice = Weechat::color("irc.color.notice"),
@@ -227,7 +277,7 @@ impl Render for ServerNoticeMessageEventContent {
     }
 }
 
-impl Render for dyn HasUrlOrFile {
+impl<C: HasUrlOrFile> Render for C {
     type RenderContext = Url;
     const TAGS: &'static [&'static str] = &["matrix_media"];
 
@@ -276,136 +326,27 @@ impl Render for EncryptedEventContent {
     }
 }
 
-/// Rendering function for room messages.
-// FIXME: Pass room member
-// TODO: We should not return raw strings here but something like [Block]
-// where Block is (String, [Tags]). Each Block represents one or several lines
-// which have the same tags.
-pub fn render_message(
-    message: &AnyPossiblyRedactedSyncMessageEvent,
-    displayname: String,
-) -> String {
-    use AnyPossiblyRedactedSyncMessageEvent::*;
-    use MessageEventContent::*;
+impl Render for RedactedSyncMessageEvent<RedactedMessageEventContent> {
+    type RenderContext = WeechatRoomMember;
+    const TAGS: &'static [&'static str] = &[&"matrix_redacted"];
 
-    // TODO: Need to render power level indicators as well.
+    fn render(&self, redacter: &Self::RenderContext) -> RenderedContent {
+        // TODO add the redaction reason.
+        let message = format!(
+            "{}<{}Message redacted by: {}{}>{}",
+            Weechat::color("chat_delimiters"),
+            Weechat::color("logger.color.backlog_line"),
+            redacter.nick.borrow(),
+            Weechat::color("chat_delimiters"),
+            Weechat::color("reset"),
+        );
 
-    // In case it's not clear, self.sender is the MXID. We're basing the nick color on it so
-    // that it doesn't change with display name changes.
-    let colorname_user =
-        Weechat::info_get("nick_color_name", message.sender().as_ref())
-            .unwrap_or_else(|| String::from("default"));
-    let color_user = Weechat::color(&colorname_user);
+        let line = RenderedLine {
+            message,
+            tags: self.tags(),
+        };
 
-    let color_reset = Weechat::color("reset");
-
-    match message {
-        Regular(message) => {
-            match message.content() {
-                AnyMessageEventContent::RoomEncrypted(_) => format!(
-                    "{color_user}{}{color_reset}\t{}",
-                    displayname,
-                    "Unable to decrypt message",
-                    color_user = color_user,
-                    color_reset = color_reset
-                ),
-
-                AnyMessageEventContent::RoomMessage(content) => {
-                    match content {
-                        // TODO: formatting for inline markdown and so on
-                        Text(t) => format!(
-                            "{color_user}{}{color_reset}\t{}",
-                            displayname,
-                            t.resolve_body(),
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        Emote(e) => format!(
-                            "{prefix}\t{color_user}{}{color_reset} {}",
-                            displayname,
-                            e.resolve_body(),
-                            prefix = Weechat::prefix("action"),
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        Audio(a) => format!(
-                            "{color_user}{}{color_reset}\t{}: {}",
-                            displayname,
-                            a.body,
-                            a.resolve_url(),
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        File(f) => format!(
-                            "{color_user}{}{color_reset}\t{}: {}",
-                            displayname,
-                            f.body,
-                            f.resolve_url(),
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        Image(i) => format!(
-                            "{color_user}{}{color_reset}\t{}: {}",
-                            displayname,
-                            i.body,
-                            i.resolve_url(),
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        Location(l) => format!(
-                            "{color_user}{}{color_reset}\t{}: {}",
-                            displayname,
-                            l.body,
-                            l.geo_uri,
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        Notice(n) => format!(
-                            "{prefix}{color_notice}Notice{color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
-                            displayname,
-                            n.resolve_body(),
-                            prefix = Weechat::prefix("network"),
-                            color_notice = Weechat::color("irc.color.notice"),
-                            color_delim = Weechat::color("chat_delimiters"),
-                            color_reset = color_reset
-                        ),
-                        Video(v) => format!(
-                            "{color_user}{}{color_reset}\t{}: {}",
-                            displayname,
-                            v.body,
-                            v.resolve_url(),
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                        ServerNotice(n) => format!(
-                            "{prefix}{color_notice}Server notice{color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
-                            displayname,
-                            n.body,
-                            prefix = Weechat::prefix("network"),
-                            color_notice = Weechat::color("irc.color.notice"),
-                            color_delim = Weechat::color("chat_delimiters"),
-                            color_reset = color_reset
-                        ),
-                        e => format!(
-                            "{color_user}{}{color_reset}\tUnknown message type: {:#?}",
-                            displayname,
-                            e,
-                            color_user = color_user,
-                            color_reset = color_reset
-                        ),
-                    }
-                }
-                _ => {
-                    // TODO: Handle rendering of message types other than RoomMessage
-                    todo!("Handle rendering of message types other than RoomMessage");
-                }
-            }
-        }
-
-        AnyPossiblyRedactedSyncMessageEvent::Redacted(_message) => {
-            // TODO: Handle rendering redacted events
-            todo!("Handle rendering redacted events");
-        }
+        RenderedContent { lines: vec![line] }
     }
 }
 
@@ -442,7 +383,7 @@ macro_rules! has_formatted_body {
 
 /// This trait is implemented for message types that can contain either an URL
 /// or an encrypted file. One of these _must_ be present.
-trait HasUrlOrFile {
+pub trait HasUrlOrFile {
     fn url(&self) -> Option<&str>;
     fn file(&self) -> Option<&str>;
     fn body(&self) -> &str;
@@ -511,11 +452,10 @@ pub fn render_membership(
         InvitationRevoked => "had the invitation revoked by",
         ProfileChanged { .. } => "_",
         NotImplemented => "performed an unimplemented operation",
-        _ => "caused an unhandled membership change",
     };
 
     fn formatted_name(member: &WeechatRoomMember) -> String {
-        match &member.display_name {
+        match &*member.display_name.borrow() {
             Some(display_name) => {
                 format!(
                     "{name} {color_delim}({color_reset}{user_id}{color_delim}){color_reset}",
@@ -639,15 +579,6 @@ pub fn render_membership(
             target = target_name,
             op = operation,
             sender = sender_name
-        ),
-
-        // This means an unsupported membership change happened so we just
-        // print a generic message to indicate this.
-        _ => format!(
-            "{prefix} {sender} {op}",
-            prefix = Weechat::prefix(prefix),
-            sender = sender_name,
-            op = operation,
         ),
     }
 }

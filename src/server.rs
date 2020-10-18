@@ -55,12 +55,14 @@
 //! that processing events will not block the Weechat mainloop for too long.
 
 use chrono::{offset::Utc, DateTime};
+use futures::executor::block_on;
 use indoc::indoc;
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
     path::PathBuf,
     rc::{Rc, Weak},
+    sync::Arc,
 };
 use url::Url;
 
@@ -68,7 +70,8 @@ use matrix_sdk::{
     self,
     api::r0::session::login::Response as LoginResponse,
     events::{AnySyncRoomEvent, AnySyncStateEvent},
-    identifiers::{RoomId, UserId},
+    identifiers::{DeviceIdBox, RoomId, UserId},
+    locks::RwLock,
     Client, ClientConfig, Room,
 };
 
@@ -79,7 +82,10 @@ use weechat::{
 };
 
 use crate::{
-    config::Config, connection::Connection, room_buffer::RoomBuffer,
+    PLUGIN_NAME,
+    config::Config,
+    connection::{Connection, InteractiveAuthInfo},
+    room::RoomHandle,
     ConfigHandle,
 };
 
@@ -110,6 +116,7 @@ pub struct LoginInfo {
 
 #[derive(Clone)]
 pub struct MatrixServer {
+    #[allow(clippy::rc_buffer)]
     server_name: Rc<String>,
     inner: Rc<RefCell<InnerServer>>,
 }
@@ -122,8 +129,9 @@ impl std::fmt::Debug for MatrixServer {
 }
 
 pub struct InnerServer {
+    #[allow(clippy::rc_buffer)]
     server_name: Rc<String>,
-    pub room_buffers: HashMap<RoomId, RoomBuffer>,
+    rooms: HashMap<RoomId, RoomHandle>,
     settings: ServerSettings,
     config: ConfigHandle,
     client: Option<Client>,
@@ -142,7 +150,7 @@ impl MatrixServer {
 
         let server = InnerServer {
             server_name: server_name.clone(),
-            room_buffers: HashMap::new(),
+            rooms: HashMap::new(),
             settings: ServerSettings::new(),
             config: config.clone(),
             client: None,
@@ -172,14 +180,115 @@ impl MatrixServer {
         Rc::downgrade(&self.inner)
     }
 
-    pub fn connection(&self) -> Rc<RefCell<Option<Connection>>> {
-        self.inner().connection.clone()
+    pub fn connection(&self) -> Option<Connection> {
+        self.inner().connection.borrow().clone()
+    }
+
+    pub async fn delete_devices(&self, devices: Vec<DeviceIdBox>) {
+        let formatted = devices
+            .iter()
+            .map(|d| d.to_string())
+            .collect::<Vec<String>>()
+            .join(", ");
+
+        let print_success = || {
+            self.print_network(&format!(
+                "Successfully deleted device(s) {}",
+                formatted
+            ));
+        };
+
+        let print_fail = |e| {
+            self.print_error(&format!(
+                "Error deleting device(s) {} {:#?}",
+                formatted, e
+            ));
+        };
+
+        if let Some(c) = self.connection() {
+            match c.delete_devices(devices.clone(), None).await {
+                Ok(_) => print_success(),
+                Err(e) => {
+                    if let Some(info) = e.uiaa_response() {
+                        let auth_info = InteractiveAuthInfo {
+                            user: self.inner().settings().username.clone(),
+                            password: self.inner().settings().password.clone(),
+                            session: info.session.clone(),
+                        };
+
+                        if let Err(e) = c
+                            .delete_devices(devices.clone(), Some(auth_info))
+                            .await
+                        {
+                            print_fail(e);
+                        } else {
+                            print_success();
+                        }
+                    } else {
+                        print_fail(e)
+                    }
+                }
+            }
+        };
+    }
+
+    pub async fn export_keys(&self, file: PathBuf, passphrase: String) {
+        let client = self.inner().get_client().unwrap();
+
+        let export = async move {
+            client.export_keys(file, &passphrase, |_| true).await
+        };
+
+        if let Some(c) = self.connection() {
+            if let Err(e) = c.spawn(export).await {
+                self.print_error(&format!(
+                    "Error exporting E2EE keys {:#?}",
+                    e
+                ));
+            } else {
+                self.print_network("Sucessfully exported E2EE keys")
+            }
+        };
+    }
+
+    pub async fn import_keys(&self, file: PathBuf, passphrase: String) {
+        let client = self.inner().get_client().unwrap();
+
+        if let Some(c) = self.connection() {
+            self.print_network(&format!(
+                "Importing E2EE keys from {}, this may take a while..",
+                file.display()
+            ));
+            let import =
+                async move { client.import_keys(file, &passphrase).await };
+
+            match c.spawn(import).await {
+                Ok(num) => {
+                    if num > 0 {
+                        self.print_network(&format!(
+                            "Sucessfully imported {} E2EE keys",
+                            num
+                        ));
+                    } else {
+                        self.print_network(
+                            "No keys were imported, either the export \
+                                   is empty or it contains sessions that we \
+                                   already have",
+                        );
+                    }
+                }
+                Err(e) => {
+                    self.print_error(&format!(
+                        "Error importing E2EE keys {:#?}",
+                        e
+                    ));
+                }
+            }
+        };
     }
 
     pub async fn devices(&self) {
-        let connection = self.connection();
-
-        if let Some(c) = &*connection.borrow() {
+        if let Some(c) = self.connection() {
             let response = match c.devices().await {
                 Ok(r) => r,
                 Err(e) => {
@@ -418,7 +527,7 @@ impl MatrixServer {
             return Ok(());
         }
 
-        let client = self.inner.borrow_mut().get_or_creaet_client()?;
+        let client = self.inner.borrow_mut().get_or_create_client()?;
         let connection = Connection::new(&self, &client);
 
         *self.inner.borrow_mut().connection.borrow_mut() = Some(connection);
@@ -513,10 +622,10 @@ impl MatrixServer {
     }
 }
 
-impl Drop for MatrixServer {
+impl Drop for InnerServer {
     fn drop(&mut self) {
         // TODO close all the server buffers.
-        let config = &self.inner.borrow().config;
+        let config = &self.config;
         let mut config_borrow = config.borrow_mut();
 
         let mut section = config_borrow
@@ -526,7 +635,7 @@ impl Drop for MatrixServer {
         for option_name in
             &["homeserver", "autoconnect", "password", "proxy", "username"]
         {
-            let option_name = &format!("{}.{}", self.name(), option_name);
+            let option_name = &format!("{}.{}", self.server_name, option_name);
             section.free_option(option_name).unwrap_or_else(|_| {
                 panic!(format!("Can't free option {}", option_name))
             });
@@ -538,8 +647,8 @@ impl InnerServer {
     pub(crate) fn get_or_create_room(
         &mut self,
         room_id: &RoomId,
-    ) -> &mut RoomBuffer {
-        if !self.room_buffers.contains_key(room_id) {
+    ) -> &RoomHandle {
+        if !self.rooms.contains_key(room_id) {
             let homeserver = self
                 .settings
                 .homeserver
@@ -549,42 +658,57 @@ impl InnerServer {
                 .login_state
                 .as_ref()
                 .expect("Receiving events while not being logged in");
-            let buffer = RoomBuffer::new(
+            let room = block_on(
+                self.client
+                    .as_ref()
+                    .expect("Receiving events without a client")
+                    .get_joined_room(room_id),
+            );
+            let room =
+                room.expect("Receiving events for a room while no room found");
+            let buffer = RoomHandle::new(
                 &self.connection,
+                self.config.inner.clone(),
+                room,
                 homeserver,
                 room_id.clone(),
                 &login_state.user_id,
             );
-            self.room_buffers.insert(room_id.clone(), buffer);
+            self.rooms.insert(room_id.clone(), buffer);
         }
 
-        self.room_buffers.get_mut(room_id).unwrap()
+        self.rooms.get_mut(room_id).unwrap()
     }
 
     pub fn settings(&self) -> &ServerSettings {
         &self.settings
     }
 
-    pub fn room_buffers(&self) -> &HashMap<RoomId, RoomBuffer> {
-        &self.room_buffers
+    pub fn rooms(&self) -> &HashMap<RoomId, RoomHandle> {
+        &self.rooms
     }
 
     pub fn config(&self) -> Ref<Config> {
         self.config.borrow()
     }
 
-    pub fn restore_room(&mut self, room: Room) {
+    pub async fn restore_room(&mut self, room: Arc<RwLock<Room>>) {
         let homeserver = self
             .settings
             .homeserver
             .as_ref()
             .expect("Creating room buffer while no homeserver");
 
-        let room_id = room.room_id.clone();
+        let buffer = RoomHandle::restore(
+            room,
+            &self.connection,
+            self.config.inner.clone(),
+            homeserver,
+        )
+        .await;
+        let room_id = buffer.room_id().to_owned();
 
-        let buffer = RoomBuffer::restore(room, &self.connection, homeserver);
-
-        self.room_buffers.insert(room_id, buffer);
+        self.rooms.insert(room_id, buffer);
     }
 
     fn create_server_buffer(&self) -> BufferHandle {
@@ -605,7 +729,11 @@ impl InnerServer {
         buffer_handle
     }
 
-    fn get_or_creaet_client(&mut self) -> Result<Client, ServerError> {
+    fn get_client(&self) -> Option<Client> {
+        self.client.clone()
+    }
+
+    fn get_or_create_client(&mut self) -> Result<Client, ServerError> {
         let client = if let Some(c) = self.client.as_ref() {
             c.clone()
         } else {
@@ -652,7 +780,7 @@ impl InnerServer {
     }
 
     /// Print a neutral message to the server buffer.
-    pub fn print(&self, message: &str) {
+    fn print(&self, message: &str) {
         let mut server_buffer = self.server_buffer.borrow_mut();
         let buffer = self
             .get_or_create_buffer(&mut server_buffer)
@@ -663,7 +791,7 @@ impl InnerServer {
 
     /// Print a message with a given prefix to the server buffer.
     pub fn print_with_prefix(&self, prefix: &str, message: &str) {
-        self.print(&format!("{}{}", prefix, message));
+        self.print(&format!("{}{}: {}", prefix, PLUGIN_NAME, message));
     }
 
     /// Print an network message to the server buffer.
@@ -681,22 +809,22 @@ impl InnerServer {
         self.connection.borrow().is_some()
     }
 
-    pub(crate) fn receive_joined_state_event(
+    pub fn receive_joined_state_event(
         &mut self,
         room_id: &RoomId,
         event: AnySyncStateEvent,
     ) {
         let room = self.get_or_create_room(room_id);
-        room.handle_state_event(event)
+        room.handle_sync_state_event(event)
     }
 
-    pub(crate) fn receive_joined_timeline_event(
+    pub async fn receive_joined_timeline_event(
         &mut self,
         room_id: &RoomId,
         event: AnySyncRoomEvent,
     ) {
         let room = self.get_or_create_room(room_id);
-        room.handle_room_event(event)
+        room.handle_sync_room_event(event).await
     }
 
     pub fn receive_login(&mut self, response: LoginResponse) {

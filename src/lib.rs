@@ -1,11 +1,11 @@
-#![feature(async_closure)]
+#![feature(get_mut_unchecked)]
 
 mod commands;
 mod config;
 mod connection;
 mod debug;
 mod render;
-mod room_buffer;
+mod room;
 mod server;
 
 use std::{
@@ -21,7 +21,7 @@ use weechat::{
 };
 
 use crate::{
-    commands::Commands, config::ConfigHandle, room_buffer::RoomBuffer,
+    commands::Commands, config::ConfigHandle, room::RoomHandle,
     server::MatrixServer,
 };
 
@@ -57,9 +57,13 @@ impl Servers {
                 }
             }
 
-            for room_buffer in server.inner().room_buffers.values() {
-                if buffer == &room_buffer.weechat_buffer() {
-                    return Some(server.clone());
+            for room in server.inner().rooms().values() {
+                let buffer_handle = room.buffer_handle();
+
+                if let Ok(b) = buffer_handle.upgrade() {
+                    if buffer == &b {
+                        return Some(server.clone());
+                    }
                 }
             }
         }
@@ -67,17 +71,19 @@ impl Servers {
         None
     }
 
-    /// Find a `RoomBuffer` that the given buffer belongs to.
+    /// Find a `RoomHandle` that the given buffer belongs to.
     ///
     /// Returns None if the buffer doesn't belong to any of our servers of
     /// rooms.
-    pub fn find_room(&self, buffer: &Buffer) -> Option<RoomBuffer> {
+    pub fn find_room(&self, buffer: &Buffer) -> Option<RoomHandle> {
         let servers = self.borrow();
 
         for server in servers.values() {
-            for room_buffer in server.inner().room_buffers.values() {
-                if buffer == &room_buffer.weechat_buffer() {
-                    return Some(room_buffer.clone());
+            for room in server.inner().rooms().values() {
+                if let Ok(b) = room.buffer_handle().upgrade() {
+                    if buffer == &b {
+                        return Some(room.clone());
+                    }
                 }
             }
         }
@@ -95,8 +101,8 @@ impl SignalCallback for Servers {
     ) -> ReturnCode {
         if let Some(data) = data {
             if let SignalData::Buffer(buffer) = data {
-                if let Some(room_buffer) = self.find_room(&buffer) {
-                    room_buffer.update_typing_notice();
+                if let Some(room) = self.find_room(&buffer) {
+                    room.update_typing_notice();
                 }
             }
         }
@@ -160,11 +166,11 @@ impl BarItemCallback for Servers {
         for server in servers.values() {
             let server = server.inner();
 
-            for room in server.room_buffers().values() {
-                let room_buffer = room.weechat_buffer();
-
-                if &room_buffer == buffer && room.room().is_encrypted() {
-                    return server.config().look().encrypted_room_sign();
+            for room in server.rooms().values() {
+                if let Ok(b) = room.buffer_handle().upgrade() {
+                    if buffer == &b && room.is_encrypted() {
+                        return server.config().look().encrypted_room_sign();
+                    }
                 }
             }
         }
@@ -216,7 +222,8 @@ impl Plugin for Matrix {
         Weechat::spawn(async move {
             let mut servers = servers.borrow_mut();
             Matrix::autoconnect(&mut servers);
-        });
+        })
+        .detach();
 
         Ok(plugin)
     }

@@ -1,6 +1,10 @@
-use std::{cell::RefCell, path::PathBuf, rc::Weak, time::Duration};
+use std::{
+    cell::RefCell, collections::BTreeMap, future::Future, path::PathBuf,
+    rc::Rc, rc::Weak, sync::Arc, time::Duration,
+};
 
 use async_std::sync::{channel as async_channel, Receiver, Sender};
+use serde_json::json;
 use tokio::runtime::Runtime;
 use tracing::error;
 use uuid::Uuid;
@@ -8,31 +12,65 @@ use uuid::Uuid;
 pub use matrix_sdk::{
     self,
     api::r0::{
-        device::get_devices::Response as DevicesResponse,
+        device::{
+            delete_devices::Response as DeleteDevicesResponse,
+            get_devices::Response as DevicesResponse,
+        },
         message::send_message_event::Response as RoomSendResponse,
         session::login::Response as LoginResponse,
         typing::create_typing_event::{Response as TypingResponse, Typing},
+        uiaa::AuthData,
     },
     events::{
         room::message::{MessageEventContent, TextMessageEventContent},
         AnyMessageEventContent, AnySyncRoomEvent, AnySyncStateEvent,
     },
-    identifiers::{RoomId, UserId},
-    Client, ClientConfig, Result as MatrixResult, Room, SyncSettings,
+    identifiers::{DeviceIdBox, RoomId, UserId},
+    locks::RwLock,
+    Client, ClientConfig, LoopCtrl, Result as MatrixResult, Room, SyncSettings,
 };
 
-use weechat::{JoinHandle, Weechat};
+use weechat::{Task, Weechat};
 
 use crate::server::{InnerServer, MatrixServer};
 
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 pub const TYPING_NOTICE_TIMEOUT: Duration = Duration::from_secs(4);
 
+pub struct InteractiveAuthInfo {
+    pub user: String,
+    pub password: String,
+    pub session: Option<String>,
+}
+
+impl InteractiveAuthInfo {
+    pub fn as_auth_data(&self) -> AuthData<'_> {
+        let mut auth_parameters = BTreeMap::new();
+        let identifier = json!({
+            "type": "m.id.user",
+            "user": self.user,
+        });
+
+        auth_parameters.insert("identifier".to_owned(), identifier);
+        auth_parameters
+            .insert("password".to_owned(), self.password.clone().into());
+
+        // This is needed because of https://github.com/matrix-org/synapse/issues/5665
+        auth_parameters.insert("user".to_owned(), self.user.clone().into());
+
+        AuthData::DirectRequest {
+            kind: "m.login.password",
+            auth_parameters,
+            session: self.session.as_deref(),
+        }
+    }
+}
+
 pub enum ClientMessage {
     LoginMessage(LoginResponse),
     SyncState(RoomId, AnySyncStateEvent),
     SyncEvent(RoomId, AnySyncRoomEvent),
-    RestoredRoom(Room),
+    RestoredRoom(Arc<RwLock<Room>>),
 }
 
 /// Struc representing an active connection to the homeserver.
@@ -44,20 +82,26 @@ pub enum ClientMessage {
 ///
 /// While this struct is alive a sync loop will be going on. To cancel the sync
 /// loop drop the object.
+#[derive(Debug, Clone)]
 pub struct Connection {
-    receiver_task: JoinHandle<(), ()>,
-    client: Client,
     #[used]
-    runtime: Runtime,
-}
-
-impl Drop for Connection {
-    fn drop(&mut self) {
-        self.receiver_task.cancel();
-    }
+    receiver_task: Rc<Task<()>>,
+    client: Client,
+    pub runtime: Rc<Runtime>,
 }
 
 impl Connection {
+    pub async fn spawn<F>(&self, future: F) -> F::Output
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.runtime
+            .spawn(future)
+            .await
+            .expect("Tokio error while sending a message")
+    }
+
     pub fn new(server: &MatrixServer, client: &Client) -> Self {
         let (tx, rx) = async_channel(1000);
 
@@ -85,8 +129,8 @@ impl Connection {
 
         Self {
             client: client.clone(),
-            runtime,
-            receiver_task,
+            runtime: Rc::new(runtime),
+            receiver_task: Rc::new(receiver_task),
         }
     }
 
@@ -110,37 +154,39 @@ impl Connection {
         let room_id = room_id.to_owned();
         let client = self.client.clone();
 
-        let handle = self
-            .runtime
-            .spawn(async move {
-                client
-                    .room_send(
-                        &room_id,
-                        content,
-                        Some(transaction_id.unwrap_or_else(Uuid::new_v4)),
-                    )
-                    .await
-            })
-            .await;
+        self.spawn(async move {
+            client
+                .room_send(
+                    &room_id,
+                    content,
+                    Some(transaction_id.unwrap_or_else(Uuid::new_v4)),
+                )
+                .await
+        })
+        .await
+    }
 
-        match handle {
-            Ok(response) => response,
-            Err(e) => panic!("Tokio error while sending a message {:?}", e),
-        }
+    pub async fn delete_devices(
+        &self,
+        devices: Vec<DeviceIdBox>,
+        auth_info: Option<InteractiveAuthInfo>,
+    ) -> MatrixResult<DeleteDevicesResponse> {
+        let client = self.client.clone();
+        self.spawn(async move {
+            if let Some(info) = auth_info {
+                let auth = Some(info.as_auth_data());
+                client.delete_devices(&devices, auth).await
+            } else {
+                client.delete_devices(&devices, None).await
+            }
+        })
+        .await
     }
 
     /// Get the list of our own devices.
     pub async fn devices(&self) -> MatrixResult<DevicesResponse> {
         let client = self.client.clone();
-        let handle = self
-            .runtime
-            .spawn(async move { client.devices().await })
-            .await;
-
-        match handle {
-            Ok(response) => response,
-            Err(e) => panic!("Tokio error while sending a message {:?}", e),
-        }
+        self.spawn(async move { client.devices().await }).await
     }
 
     /// Set or reset a typing notice.
@@ -159,23 +205,16 @@ impl Connection {
         let room_id = room_id.to_owned();
         let client = self.client.clone();
 
-        let handle = self
-            .runtime
-            .spawn(async move {
-                let typing = if typing {
-                    Typing::Yes(TYPING_NOTICE_TIMEOUT)
-                } else {
-                    Typing::No
-                };
+        self.spawn(async move {
+            let typing = if typing {
+                Typing::Yes(TYPING_NOTICE_TIMEOUT)
+            } else {
+                Typing::No
+            };
 
-                client.typing_notice(&room_id, typing).await
-            })
-            .await;
-
-        match handle {
-            Ok(response) => response,
-            Err(e) => panic!("Tokio error while sending a message {:?}", e),
-        }
+            client.typing_notice(&room_id, typing).await
+        })
+        .await
     }
 
     fn save_device_id(
@@ -244,13 +283,13 @@ impl Connection {
                 Ok(message) => match message {
                     ClientMessage::LoginMessage(r) => server.receive_login(r),
                     ClientMessage::SyncEvent(r, e) => {
-                        server.receive_joined_timeline_event(&r, e)
+                        server.receive_joined_timeline_event(&r, e).await
                     }
                     ClientMessage::SyncState(r, e) => {
                         server.receive_joined_state_event(&r, e)
                     }
                     ClientMessage::RestoredRoom(room) => {
-                        server.restore_room(room)
+                        server.restore_room(room).await
                     }
                 },
                 Err(e) => server.print_error(&format!("Ruma error {}", e)),
@@ -327,8 +366,6 @@ impl Connection {
             if !first_login {
                 let joined_rooms = client.joined_rooms();
                 for room in joined_rooms.read().await.values() {
-                    let room = room.read().await;
-                    let room: &Room = &*room;
                     channel
                         .send(Ok(ClientMessage::RestoredRoom(room.clone())))
                         .await
@@ -348,7 +385,7 @@ impl Connection {
         let sync_channel = &channel;
 
         client
-            .sync_forever(sync_settings, async move |response| {
+            .sync_with_callback(sync_settings, |response| async move {
                 let channel = sync_channel;
 
                 for (room_id, room) in response.rooms.join {
@@ -383,6 +420,8 @@ impl Connection {
                         }
                     }
                 }
+
+                LoopCtrl::Continue
             })
             .await;
     }
