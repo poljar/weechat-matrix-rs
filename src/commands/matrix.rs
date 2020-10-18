@@ -10,6 +10,7 @@ use weechat::{
     Args, Weechat,
 };
 
+use super::parse_and_run;
 use crate::{
     commands::{DevicesCommand, KeysCommand},
     config::ConfigHandle,
@@ -216,6 +217,21 @@ Use /matrix [command] help to find out more.\n",
             self.server_not_found(server_name)
         }
     }
+
+    fn run(&self, buffer: &Buffer, args: &ArgMatches) {
+        match args.subcommand() {
+            ("connect", Some(subargs)) => self.connect_command(subargs),
+            ("disconnect", Some(subargs)) => self.disconnect_command(subargs),
+            ("server", Some(subargs)) => self.server_command(subargs),
+            ("devices", Some(subargs)) => {
+                DevicesCommand::run(buffer, &self.servers, subargs)
+            }
+            ("keys", Some(subargs)) => {
+                KeysCommand::run(buffer, &self.servers, subargs)
+            }
+            _ => unreachable!(),
+        }
+    }
 }
 
 impl CommandCallback for MatrixCommand {
@@ -296,32 +312,6 @@ impl CommandCallback for MatrixCommand {
                     ),
             );
 
-        let matches = match argparse.get_matches_from_safe(arguments) {
-            Ok(m) => m,
-            Err(e) => {
-                Weechat::print(
-                    &Weechat::execute_modifier(
-                        "color_decode_ansi",
-                        "1",
-                        &e.to_string(),
-                    )
-                    .unwrap(),
-                );
-                return;
-            }
-        };
-
-        match matches.subcommand() {
-            ("connect", Some(subargs)) => self.connect_command(subargs),
-            ("disconnect", Some(subargs)) => self.disconnect_command(subargs),
-            ("server", Some(subargs)) => self.server_command(subargs),
-            ("devices", Some(subargs)) => {
-                DevicesCommand::run(buffer, &self.servers, subargs)
-            }
-            ("keys", Some(subargs)) => {
-                KeysCommand::run(buffer, &self.servers, subargs)
-            }
-            _ => unreachable!(),
-        }
+        parse_and_run(argparse, arguments, |args| self.run(buffer, args));
     }
 }

@@ -1,5 +1,7 @@
+use clap::{App, ArgMatches};
+use weechat::{hooks::Command, Args, Weechat};
+
 use crate::{config::ConfigHandle, Servers};
-use weechat::hooks::Command;
 
 mod devices;
 mod keys;
@@ -25,5 +27,24 @@ impl Commands {
             _devices: DevicesCommand::create(servers)?,
             _keys: KeysCommand::create(servers)?,
         })
+    }
+}
+
+fn parse_and_run(
+    parser: App,
+    arguments: Args,
+    command: impl FnOnce(&ArgMatches),
+) {
+    match parser.get_matches_from_safe(arguments) {
+        Ok(m) => command(&m),
+        Err(e) => {
+            let error = Weechat::execute_modifier(
+                "color_decode_ansi",
+                "1",
+                &e.to_string(),
+            )
+            .expect("Can't color decode ansi string");
+            Weechat::print(&error);
+        }
     }
 }

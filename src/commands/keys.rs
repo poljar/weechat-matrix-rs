@@ -11,6 +11,7 @@ use weechat::{
     Args, Weechat,
 };
 
+use super::parse_and_run;
 use crate::{MatrixServer, Servers};
 
 pub struct KeysCommand {
@@ -121,21 +122,8 @@ impl CommandCallback for KeysCommand {
             .setting(ArgParseSettings::SubcommandRequiredElseHelp)
             .subcommands(Self::subcommands());
 
-        let matches = match argparse.get_matches_from_safe(arguments) {
-            Ok(m) => m,
-            Err(e) => {
-                Weechat::print(
-                    &Weechat::execute_modifier(
-                        "color_decode_ansi",
-                        "1",
-                        &e.to_string(),
-                    )
-                    .unwrap(),
-                );
-                return;
-            }
-        };
-
-        Self::run(buffer, &self.servers, &matches)
+        parse_and_run(argparse, arguments, |matches| {
+            Self::run(buffer, &self.servers, matches)
+        });
     }
 }
