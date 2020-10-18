@@ -28,8 +28,7 @@ impl DevicesCommand {
             .add_argument("set-name <device-id> <name>")
             .arguments_description(
                 "device-id: The unique id of the device that should be deleted.
-                name:
-                ",
+     name: The name that the device name should be set to.",
             )
             .add_completion("list")
             .add_completion("delete %(matrix-own-devices)")
