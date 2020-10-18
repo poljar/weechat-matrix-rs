@@ -26,7 +26,6 @@ impl KeysCommand {
             .description(Self::DESCRIPTION)
             .add_argument("import <file> <passphrase>")
             .add_argument("export <file> <passphrase>")
-            .add_argument("set-name <device-id> <name>")
             .arguments_description(
                 "file: Path to a file that is or will contain the E2EE keys export",
             )
