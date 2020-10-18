@@ -19,7 +19,7 @@ pub struct KeysCommand {
 
 impl KeysCommand {
     pub const DESCRIPTION: &'static str = "Import or export E2EE keys.";
-    pub const COMPLETION: &'static str  = "import|export %(filename)";
+    pub const COMPLETION: &'static str = "import|export %(filename)";
 
     pub fn create(servers: &Servers) -> Result<Command, ()> {
         let settings = CommandSettings::new("keys")
@@ -45,12 +45,17 @@ impl KeysCommand {
         let passphrase = args
             .args
             .get("passphrase")
-            .map(|p| p.vals.iter().next().map(|p| p.clone().into_string().ok()))
+            .map(|p| p.vals.get(0).map(|p| p.clone().into_string().ok()))
             .flatten()
             .flatten()
             .expect("No passphrase found");
 
-        let file = args.args.get("file").unwrap().vals.iter().next().unwrap();
+        let file = args
+            .args
+            .get("file")
+            .map(|f| f.vals.get(0))
+            .flatten()
+            .expect("No file found");
         let file = Weechat::expand_home(&file.to_string_lossy());
         let file = PathBuf::from(file);
         (file, passphrase)
