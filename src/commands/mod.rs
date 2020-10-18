@@ -2,12 +2,12 @@ use crate::{config::ConfigHandle, Servers};
 use weechat::hooks::Command;
 
 mod devices;
-mod matrix;
 mod keys;
+mod matrix;
 
 use devices::DevicesCommand;
-use matrix::MatrixCommand;
 use keys::KeysCommand;
+use matrix::MatrixCommand;
 
 pub struct Commands {
     _matrix: Command,

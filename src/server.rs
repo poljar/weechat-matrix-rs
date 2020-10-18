@@ -82,11 +82,10 @@ use weechat::{
 };
 
 use crate::{
-    PLUGIN_NAME,
     config::Config,
     connection::{Connection, InteractiveAuthInfo},
     room::RoomHandle,
-    ConfigHandle,
+    ConfigHandle, PLUGIN_NAME,
 };
 
 #[derive(Debug)]

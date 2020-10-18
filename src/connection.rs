@@ -1,6 +1,11 @@
 use std::{
-    cell::RefCell, collections::BTreeMap, future::Future, path::PathBuf,
-    rc::Rc, rc::Weak, sync::Arc, time::Duration,
+    cell::RefCell,
+    collections::BTreeMap,
+    future::Future,
+    path::PathBuf,
+    rc::{Rc, Weak},
+    sync::Arc,
+    time::Duration,
 };
 
 use async_std::sync::{channel as async_channel, Receiver, Sender};

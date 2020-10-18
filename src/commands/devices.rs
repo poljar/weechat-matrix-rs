@@ -80,9 +80,7 @@ impl DevicesCommand {
                 let devices: Vec<DeviceIdBox> = devices
                     .vals
                     .iter()
-                    .map(|d| {
-                        d.clone().to_string_lossy().as_ref().into()
-                    })
+                    .map(|d| d.clone().to_string_lossy().as_ref().into())
                     .collect();
                 Self::delete(servers, buffer, devices);
             }
