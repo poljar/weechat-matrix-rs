@@ -11,8 +11,9 @@ use weechat::{
 };
 
 use crate::{
-    commands::DevicesCommand, config::ConfigHandle, MatrixServer, Servers,
-    PLUGIN_NAME,
+    commands::{DevicesCommand, KeysCommand},
+    config::ConfigHandle,
+    MatrixServer, Servers, PLUGIN_NAME,
 };
 
 pub struct MatrixCommand {
@@ -31,6 +32,7 @@ impl MatrixCommand {
             .add_argument("server delete|list|listfull <server-name>")
             .add_argument("connect <server-name>")
             .add_argument("devices delete|list|set-name")
+            .add_argument("keys import|export <file> <passphrase>")
             .add_argument("disconnect <server-name>")
             .add_argument("reconnect <server-name>")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
@@ -40,12 +42,15 @@ impl MatrixCommand {
   disconnect: Disconnect from one or all Matrix servers.
    reconnect: Reconnect to server(s).
      devices: {}
+        keys: {}
         help: Show detailed command help.\n
 Use /matrix [command] help to find out more.\n",
-                DevicesCommand::DESCRIPTION
+                DevicesCommand::DESCRIPTION,
+                KeysCommand::DESCRIPTION,
             ))
             .add_completion("server |add|delete|list|listfull")
             .add_completion("devices |list|delete|set-name")
+            .add_completion(&format!("keys {}", KeysCommand::COMPLETION))
             .add_completion("connect")
             .add_completion("disconnect")
             .add_completion("reconnect")
@@ -267,6 +272,11 @@ impl CommandCallback for MatrixCommand {
                     .subcommands(DevicesCommand::subcommands()),
             )
             .subcommand(
+                SubCommand::with_name("keys")
+                    .about(KeysCommand::DESCRIPTION)
+                    .subcommands(KeysCommand::subcommands()),
+            )
+            .subcommand(
                 SubCommand::with_name("connect")
                     .about("Connect to Matrix servers.")
                     .arg(
@@ -307,6 +317,9 @@ impl CommandCallback for MatrixCommand {
             ("server", Some(subargs)) => self.server_command(subargs),
             ("devices", Some(subargs)) => {
                 DevicesCommand::run(buffer, &self.servers, subargs)
+            }
+            ("keys", Some(subargs)) => {
+                KeysCommand::run(buffer, &self.servers, subargs)
             }
             _ => unreachable!(),
         }

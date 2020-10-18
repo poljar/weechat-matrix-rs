@@ -19,6 +19,7 @@ pub struct KeysCommand {
 
 impl KeysCommand {
     pub const DESCRIPTION: &'static str = "Import or export E2EE keys.";
+    pub const COMPLETION: &'static str  = "import|export %(filename)";
 
     pub fn create(servers: &Servers) -> Result<Command, ()> {
         let settings = CommandSettings::new("keys")
@@ -29,8 +30,7 @@ impl KeysCommand {
             .arguments_description(
                 "file: Path to a file that is or will contain the E2EE keys export",
             )
-            .add_completion("import %(filename)")
-            .add_completion("export %(filename)")
+            .add_completion(Self::COMPLETION)
             .add_completion("help import|export");
 
         Command::new(
