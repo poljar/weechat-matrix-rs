@@ -96,7 +96,7 @@ pub struct MatrixRoom {
     homeserver: Rc<Url>,
     room_id: Rc<RoomId>,
     own_user_id: Rc<UserId>,
-    room: Arc<RwLock<Room>>,
+    room: Room,
     buffer: Rc<Option<BufferHandle>>,
 
     config: Rc<RefCell<Config>>,
@@ -139,7 +139,7 @@ impl RoomHandle {
     pub fn new(
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
-        room: Arc<RwLock<Room>>,
+        room: Room,
         homeserver: &Url,
         room_id: RoomId,
         own_user_id: &UserId,
@@ -190,70 +190,70 @@ impl RoomHandle {
     }
 
     pub async fn restore(
-        room: Arc<RwLock<Room>>,
+        room: Room,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
         homeserver: &Url,
     ) -> Self {
-        let room_clone = room.clone();
-        let room_lock = block_on(room.read());
-        let room_id = room_lock.room_id.to_owned();
-        let own_user_id = &room_lock.own_user_id;
+        todo!();
+        // let room_clone = room.clone();
+        // let room_id = room_lock.room_id.to_owned();
+        // let own_user_id = &room_lock.own_user_id;
 
-        let room_buffer = Self::new(
-            connection,
-            config,
-            room_clone,
-            homeserver,
-            room_id,
-            own_user_id,
-        );
+        // let room_buffer = Self::new(
+        //     connection,
+        //     config,
+        //     room_clone,
+        //     homeserver,
+        //     room_id,
+        //     own_user_id,
+        // );
 
-        debug!("Restoring room {}", room_lock.room_id);
+        // debug!("Restoring room {}", room_lock.room_id);
 
-        let matrix_members = room_lock
-            .joined_members
-            .values()
-            .chain(room_lock.invited_members.values());
+        // let matrix_members = room_lock
+        //     .joined_members
+        //     .values()
+        //     .chain(room_lock.invited_members.values());
 
-        for member in matrix_members {
-            let display_name = room_lock
-                .get_member(&member.user_id)
-                .unwrap()
-                .display_name
-                .clone();
+        // for member in matrix_members {
+        //     let display_name = room_lock
+        //         .get_member(&member.user_id)
+        //         .unwrap()
+        //         .display_name
+        //         .clone();
 
-            trace!("Restoring member {}", member.user_id);
-            let member = WeechatRoomMember::new(
-                &member.user_id,
-                member.disambiguated_name(),
-                display_name,
-            );
+        //     trace!("Restoring member {}", member.user_id);
+        //     let member = WeechatRoomMember::new(
+        //         &member.user_id,
+        //         member.disambiguated_name(),
+        //         display_name,
+        //     );
 
-            room_buffer.members.add(member);
-        }
+        //     room_buffer.members.add(member);
+        // }
 
-        room_buffer.update_buffer_name();
-        room_buffer.restore_messages().await;
+        // room_buffer.update_buffer_name();
+        // room_buffer.restore_messages().await;
 
-        room_buffer
+        // room_buffer
     }
 
     pub async fn restore_messages(&self) {
         use AnyPossiblyRedactedSyncMessageEvent::*;
 
-        let room = self.room();
+        // let room = self.room();
 
-        if let Ok(buffer) = self.buffer_handle().upgrade() {
-            if buffer.num_lines() == 0 {
-                for event in room.messages.iter() {
-                    match event {
-                        Regular(e) => self.handle_room_message(e).await,
-                        Redacted(e) => self.handle_redacted_events(e),
-                    }
-                }
-            }
-        }
+        // if let Ok(buffer) = self.buffer_handle().upgrade() {
+        //     if buffer.num_lines() == 0 {
+        //         for event in room.messages.iter() {
+        //             match event {
+        //                 Regular(e) => self.handle_room_message(e).await,
+        //                 Redacted(e) => self.handle_redacted_events(e),
+        //             }
+        //         }
+        //     }
+        // }
     }
 }
 
@@ -272,12 +272,12 @@ impl BufferInputCallbackAsync for MatrixRoom {
 }
 
 impl MatrixRoom {
-    fn room(&self) -> RwLockReadGuard<'_, Room> {
-        block_on(self.room.read())
+    fn room(&self) -> &Room {
+        &self.room
     }
 
     pub fn is_encrypted(&self) -> bool {
-        block_on(self.room.read()).is_encrypted()
+        self.room.is_encrypted()
     }
 
     pub fn room_id(&self) -> &RoomId {

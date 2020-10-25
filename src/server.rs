@@ -657,14 +657,16 @@ impl InnerServer {
                 .login_state
                 .as_ref()
                 .expect("Receiving events while not being logged in");
-            let room = block_on(
-                self.client
-                    .as_ref()
-                    .expect("Receiving events without a client")
-                    .get_joined_room(room_id),
-            );
-            let room =
-                room.expect("Receiving events for a room while no room found");
+            let room = self
+                .client
+                .as_ref()
+                .expect("Receiving events without a client")
+                .get_joined_room(room_id);
+
+            let room = room.expect(&format!(
+                "Receiving events for a room while no room found {}",
+                room_id
+            ));
             let buffer = RoomHandle::new(
                 &self.connection,
                 self.config.inner.clone(),
@@ -691,23 +693,23 @@ impl InnerServer {
         self.config.borrow()
     }
 
-    pub async fn restore_room(&mut self, room: Arc<RwLock<Room>>) {
+    pub async fn restore_room(&mut self, room: Room) {
         let homeserver = self
             .settings
             .homeserver
             .as_ref()
             .expect("Creating room buffer while no homeserver");
 
-        let buffer = RoomHandle::restore(
-            room,
-            &self.connection,
-            self.config.inner.clone(),
-            homeserver,
-        )
-        .await;
-        let room_id = buffer.room_id().to_owned();
+        // let buffer = RoomHandle::restore(
+        //     room,
+        //     &self.connection,
+        //     self.config.inner.clone(),
+        //     homeserver,
+        // )
+        // .await;
+        // let room_id = buffer.room_id().to_owned();
 
-        self.rooms.insert(room_id, buffer);
+        // self.rooms.insert(room_id, buffer);
     }
 
     fn create_server_buffer(&self) -> BufferHandle {

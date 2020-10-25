@@ -32,7 +32,7 @@ use crate::render::render_membership;
 
 #[derive(Clone)]
 pub struct Members {
-    room: Arc<RwLock<Room>>,
+    room: Room,
     inner: Rc<RefCell<HashMap<UserId, WeechatRoomMember>>>,
     pub(super) buffer: Rc<Option<BufferHandle>>,
 }
@@ -52,7 +52,7 @@ pub struct WeechatRoomMember {
 }
 
 impl Members {
-    pub fn new(room: Arc<RwLock<Room>>) -> Self {
+    pub fn new(room: Room) -> Self {
         Self {
             room,
             inner: Rc::new(RefCell::new(HashMap::new())),
@@ -145,8 +145,8 @@ impl Members {
         }
     }
 
-    fn room(&self) -> RwLockReadGuard<'_, Room> {
-        block_on(self.room.read())
+    fn room(&self) -> &Room {
+        &self.room
     }
 
     pub fn calculate_buffer_name(&self) -> String {
@@ -181,7 +181,13 @@ impl Members {
     fn calculate_user_name(&self, user_id: &UserId) -> String {
         self.room()
             .get_member(user_id)
-            .unwrap_or_else(|| panic!("No such member {}", user_id))
+            .unwrap_or_else(|| {
+                panic!(
+                    "No such member {} in {}",
+                    user_id,
+                    self.room.room_id().as_str()
+                )
+            })
             .disambiguated_name()
     }
 
@@ -274,7 +280,7 @@ impl Members {
                         .room()
                         .get_member(&target_id)
                         .unwrap()
-                        .display_name
+                        .display_name()
                         .clone();
 
                     self.add(WeechatRoomMember::new(
@@ -315,7 +321,7 @@ impl Members {
                         .room()
                         .get_member(&target_id)
                         .unwrap()
-                        .display_name
+                        .display_name()
                         .clone();
 
                     let member = WeechatRoomMember::new(

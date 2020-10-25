@@ -30,5 +30,5 @@ git = "https://github.com/poljar/rust-weechat"
 features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
-git = "https://github.com/matrix-org/matrix-rust-sdk/"
+path = "/home/poljar/werk/priv/nio-rust/matrix_sdk"
 branch = "crypto-improvements"

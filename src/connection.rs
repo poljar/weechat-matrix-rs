@@ -75,7 +75,7 @@ pub enum ClientMessage {
     LoginMessage(LoginResponse),
     SyncState(RoomId, AnySyncStateEvent),
     SyncEvent(RoomId, AnySyncRoomEvent),
-    RestoredRoom(Arc<RwLock<Room>>),
+    RestoredRoom(Room),
 }
 
 /// Struc representing an active connection to the homeserver.
@@ -368,14 +368,14 @@ impl Connection {
                 }
             }
 
-            if !first_login {
-                let joined_rooms = client.joined_rooms();
-                for room in joined_rooms.read().await.values() {
-                    channel
-                        .send(Ok(ClientMessage::RestoredRoom(room.clone())))
-                        .await
-                }
-            }
+            // if !first_login {
+            //     let joined_rooms = client.joined_rooms();
+            //     for room in joined_rooms.read().await.values() {
+            //         channel
+            //             .send(Ok(ClientMessage::RestoredRoom(room.clone())))
+            //             .await
+            //     }
+            // }
         }
 
         let sync_token = client.sync_token().await;
