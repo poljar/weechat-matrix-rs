@@ -1,20 +1,29 @@
 use clap::{App, ArgMatches};
-use weechat::{hooks::Command, Args, Weechat};
+use weechat::{
+    hooks::{Command, CommandRun},
+    Args, Weechat,
+};
 
 use crate::{config::ConfigHandle, Servers};
 
 mod devices;
 mod keys;
 mod matrix;
+mod page_up;
+mod buffer_clear;
 
 use devices::DevicesCommand;
 use keys::KeysCommand;
 use matrix::MatrixCommand;
+use page_up::PageUpCommand;
+use buffer_clear::BufferClearCommand;
 
 pub struct Commands {
     _matrix: Command,
     _keys: Command,
     _devices: Command,
+    _page_up: CommandRun,
+    _buffer_clear: CommandRun,
 }
 
 impl Commands {
@@ -26,6 +35,8 @@ impl Commands {
             _matrix: MatrixCommand::create(servers, config)?,
             _devices: DevicesCommand::create(servers)?,
             _keys: KeysCommand::create(servers)?,
+            _page_up: PageUpCommand::create(servers)?,
+            _buffer_clear: BufferClearCommand::create(servers)?,
         })
     }
 }

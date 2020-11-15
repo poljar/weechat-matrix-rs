@@ -163,19 +163,31 @@ impl BarItemCallback for Servers {
     fn callback(&mut self, _: &Weechat, buffer: &Buffer) -> String {
         let servers = self.borrow();
 
+        let mut signs = Vec::new();
+
         for server in servers.values() {
             let server = server.inner();
 
             for room in server.rooms().values() {
                 if let Ok(b) = room.buffer_handle().upgrade() {
-                    if buffer == &b && room.is_encrypted() {
-                        return server.config().look().encrypted_room_sign();
+                    if buffer == &b {
+                        if room.is_encrypted() {
+                            signs.push(
+                                server.config().look().encrypted_room_sign(),
+                            );
+                        }
+
+                        if room.is_busy() {
+                            signs.push("⏳".to_owned());
+                        }
+
+                        break;
                     }
                 }
             }
         }
 
-        "".to_owned()
+        signs.join("")
     }
 }
 

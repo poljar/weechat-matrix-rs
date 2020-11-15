@@ -1,6 +1,4 @@
-use std::{
-    cell::RefCell, collections::HashMap, convert::TryFrom, rc::Rc, sync::Arc,
-};
+use std::{cell::RefCell, collections::HashMap, convert::TryFrom, rc::Rc};
 
 use futures::executor::block_on;
 use tracing::{debug, error, trace};
@@ -18,7 +16,6 @@ use matrix_sdk::{
         SyncStateEvent,
     },
     identifiers::UserId,
-    locks::{RwLock, RwLockReadGuard},
     Room,
 };
 
@@ -151,7 +148,7 @@ impl Members {
 
     pub fn calculate_buffer_name(&self) -> String {
         let room = self.room();
-        let room_name = room.display_name();
+        let room_name = block_on(room.display_name());
 
         if room_name == "#" {
             "##".to_owned()

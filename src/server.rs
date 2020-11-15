@@ -55,14 +55,12 @@
 //! that processing events will not block the Weechat mainloop for too long.
 
 use chrono::{offset::Utc, DateTime};
-use futures::executor::block_on;
 use indoc::indoc;
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
     path::PathBuf,
     rc::{Rc, Weak},
-    sync::Arc,
 };
 use url::Url;
 
@@ -71,7 +69,6 @@ use matrix_sdk::{
     api::r0::session::login::Response as LoginResponse,
     events::{AnySyncRoomEvent, AnySyncStateEvent},
     identifiers::{DeviceIdBox, RoomId, UserId},
-    locks::RwLock,
     Client, ClientConfig, Room,
 };
 
@@ -693,12 +690,12 @@ impl InnerServer {
         self.config.borrow()
     }
 
-    pub async fn restore_room(&mut self, room: Room) {
-        let homeserver = self
-            .settings
-            .homeserver
-            .as_ref()
-            .expect("Creating room buffer while no homeserver");
+    pub async fn restore_room(&mut self, _room: Room) {
+        // let homeserver = self
+        //     .settings
+        //     .homeserver
+        //     .as_ref()
+        //     .expect("Creating room buffer while no homeserver");
 
         // let buffer = RoomHandle::restore(
         //     room,

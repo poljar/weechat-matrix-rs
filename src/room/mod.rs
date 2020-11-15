@@ -33,16 +33,18 @@ pub const BUFFER_CLOSED_ERROR: &str =
 use std::{
     borrow::Cow,
     cell::RefCell,
+    cmp::Reverse,
     collections::HashMap,
     ops::Deref,
     rc::Rc,
-    sync::{Arc, Mutex},
-    time::Instant,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex, MutexGuard,
+    },
+    time::{Instant, SystemTime},
 };
 
 use async_trait::async_trait;
-use futures::executor::block_on;
-use tracing::{debug, trace};
 use unicode_segmentation::UnicodeSegmentation;
 use url::Url;
 
@@ -53,11 +55,10 @@ use matrix_sdk::{
             redaction::SyncRedactionEvent,
         },
         AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
-        AnyRedactedSyncMessageEvent, AnySyncMessageEvent, AnySyncRoomEvent,
-        AnySyncStateEvent, SyncMessageEvent,
+        AnyRedactedSyncMessageEvent, AnyRoomEvent, AnySyncMessageEvent,
+        AnySyncRoomEvent, AnySyncStateEvent, SyncMessageEvent,
     },
     identifiers::{EventId, RoomId, UserId},
-    locks::{RwLock, RwLockReadGuard},
     uuid::Uuid,
     Room,
 };
@@ -65,7 +66,7 @@ use matrix_sdk::{
 use weechat::{
     buffer::{
         Buffer, BufferBuilderAsync, BufferHandle, BufferInputCallbackAsync,
-        BufferLine,
+        BufferLine, LineData,
     },
     Weechat,
 };
@@ -91,6 +92,46 @@ impl Deref for RoomHandle {
     }
 }
 
+#[derive(Clone, Debug)]
+struct IntMutex {
+    inner: Rc<Mutex<Rc<AtomicBool>>>,
+    locked: Rc<AtomicBool>,
+}
+
+struct IntMutexGuard<'a> {
+    inner: MutexGuard<'a, Rc<AtomicBool>>,
+}
+
+impl<'a> Drop for IntMutexGuard<'a> {
+    fn drop(&mut self) {
+        self.inner.store(false, Ordering::SeqCst)
+    }
+}
+
+impl IntMutex {
+    fn new() -> Self {
+        let locked = Rc::new(AtomicBool::from(false));
+        let inner = Rc::new(Mutex::new(locked.clone()));
+
+        Self { inner, locked }
+    }
+
+    fn locked(&self) -> bool {
+        self.locked.load(Ordering::SeqCst)
+    }
+
+    fn try_lock(&self) -> Result<IntMutexGuard<'_>, ()> {
+        match self.inner.try_lock() {
+            Ok(guard) => {
+                guard.store(true, Ordering::SeqCst);
+
+                Ok(IntMutexGuard { inner: guard })
+            }
+            Err(_) => Err(()),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct MatrixRoom {
     homeserver: Rc<Url>,
@@ -104,6 +145,9 @@ pub struct MatrixRoom {
 
     typing_notice_time: Rc<RefCell<Option<Instant>>>,
     typing_in_flight: Rc<Mutex<()>>,
+
+    messages_in_flight: IntMutex,
+    prev_batch: Rc<RefCell<Option<String>>>,
 
     outgoing_messages: MessageQueue,
 
@@ -153,11 +197,13 @@ impl RoomHandle {
             typing_notice_time: Rc::new(RefCell::new(None)),
             typing_in_flight: Rc::new(Mutex::new(())),
             config,
-            room,
+            prev_batch: Rc::new(RefCell::new(room.last_prev_batch())),
             own_user_id: Rc::new(own_user_id.to_owned()),
             members: members.clone(),
             buffer: members.buffer,
             outgoing_messages: MessageQueue::new(),
+            messages_in_flight: IntMutex::new(),
+            room,
         };
 
         let buffer_handle = BufferBuilderAsync::new(&room_id.to_string())
@@ -234,26 +280,8 @@ impl RoomHandle {
         // }
 
         // room_buffer.update_buffer_name();
-        // room_buffer.restore_messages().await;
 
         // room_buffer
-    }
-
-    pub async fn restore_messages(&self) {
-        use AnyPossiblyRedactedSyncMessageEvent::*;
-
-        // let room = self.room();
-
-        // if let Ok(buffer) = self.buffer_handle().upgrade() {
-        //     if buffer.num_lines() == 0 {
-        //         for event in room.messages.iter() {
-        //             match event {
-        //                 Regular(e) => self.handle_room_message(e).await,
-        //                 Redacted(e) => self.handle_redacted_events(e),
-        //             }
-        //         }
-        //     }
-        // }
     }
 }
 
@@ -399,77 +427,57 @@ impl MatrixRoom {
         }
     }
 
-    async fn render_message_event(
+    async fn render_message_content(
         &self,
-        event: &AnySyncMessageEvent,
+        event_id: &EventId,
+        send_time: &SystemTime,
+        sender: &WeechatRoomMember,
+        content: &AnyMessageEventContent,
     ) -> Option<RenderedEvent> {
         use AnyMessageEventContent::*;
         use MessageEventContent::*;
 
-        // TODO remove this expect.
-        let sender = self
-            .members
-            .get(event.sender())
-            .expect("Rendering a message but the sender isn't in the nicklist");
-
-        let send_time = event.origin_server_ts();
-
-        let rendered = match event.content() {
+        let rendered = match content {
             RoomEncrypted(c) => {
-                c.render_with_prefix(send_time, event.event_id(), &sender, &())
+                c.render_with_prefix(send_time, event_id, sender, &())
             }
             RoomMessage(c) => match c {
-                Text(c) => c.render_with_prefix(
-                    send_time,
-                    event.event_id(),
-                    &sender,
-                    &(),
-                ),
-                Emote(c) => c.render_with_prefix(
-                    send_time,
-                    event.event_id(),
-                    &sender,
-                    &sender,
-                ),
-                Notice(c) => c.render_with_prefix(
-                    send_time,
-                    event.event_id(),
-                    &sender,
-                    &sender,
-                ),
-                ServerNotice(c) => c.render_with_prefix(
-                    send_time,
-                    event.event_id(),
-                    &sender,
-                    &sender,
-                ),
-                Location(c) => c.render_with_prefix(
-                    send_time,
-                    event.event_id(),
-                    &sender,
-                    &sender,
-                ),
+                Text(c) => {
+                    c.render_with_prefix(send_time, event_id, sender, &())
+                }
+                Emote(c) => {
+                    c.render_with_prefix(send_time, event_id, &sender, &sender)
+                }
+                Notice(c) => {
+                    c.render_with_prefix(send_time, event_id, &sender, &sender)
+                }
+                ServerNotice(c) => {
+                    c.render_with_prefix(send_time, event_id, &sender, &sender)
+                }
+                Location(c) => {
+                    c.render_with_prefix(send_time, event_id, &sender, &sender)
+                }
                 Audio(c) => c.render_with_prefix(
                     send_time,
-                    event.event_id(),
+                    event_id,
                     &sender,
                     &self.homeserver,
                 ),
                 Video(c) => c.render_with_prefix(
                     send_time,
-                    event.event_id(),
+                    event_id,
                     &sender,
                     &self.homeserver,
                 ),
                 File(c) => c.render_with_prefix(
                     send_time,
-                    event.event_id(),
+                    event_id,
                     &sender,
                     &self.homeserver,
                 ),
                 Image(c) => c.render_with_prefix(
                     send_time,
-                    event.event_id(),
+                    event_id,
                     &sender,
                     &self.homeserver,
                 ),
@@ -478,6 +486,26 @@ impl MatrixRoom {
         };
 
         Some(rendered)
+    }
+
+    async fn render_sync_message(
+        &self,
+        event: &AnySyncMessageEvent,
+    ) -> Option<RenderedEvent> {
+        // TODO remove this expect.
+        let sender = self
+            .members
+            .get(event.sender())
+            .expect("Rendering a message but the sender isn't in the nicklist");
+
+        let send_time = event.origin_server_ts();
+        self.render_message_content(
+            event.event_id(),
+            send_time,
+            &sender,
+            &event.content(),
+        )
+        .await
     }
 
     // Add the content of the message to our outgoing messag queue and print out
@@ -640,6 +668,105 @@ impl MatrixRoom {
         }
     }
 
+    pub fn is_busy(&self) -> bool {
+        self.messages_in_flight.locked()
+    }
+
+    pub fn reset_prev_batch(&self) {
+        // TODO we'll want to be able to scroll up again after we clear the
+        // buffer.
+        *self.prev_batch.borrow_mut() = None;
+    }
+
+    pub async fn get_messages(&self) {
+        let messages_lock = self.messages_in_flight.clone();
+
+        let connection = self.connection.borrow().as_ref().cloned();
+        let room_id = self.room_id().clone();
+
+        let prev_batch =
+            if let Some(p) = self.prev_batch.borrow().as_ref().cloned() {
+                p
+            } else {
+                return;
+            };
+
+        let guard = if let Ok(l) = messages_lock.try_lock() {
+            l
+        } else {
+            return;
+        };
+
+        Weechat::bar_item_update("matrix_modes");
+
+        if let Some(connection) = connection {
+            match connection.room_messages(room_id, prev_batch).await {
+                Ok(r) => {
+                    for event in
+                        r.chunk.iter().filter_map(|e| e.deserialize().ok())
+                    {
+                        self.handle_room_event(&event).await;
+                    }
+
+                    if r.chunk.is_empty() {
+                        *self.prev_batch.borrow_mut() = None;
+                    } else {
+                        *self.prev_batch.borrow_mut() = r.end;
+                        self.sort_messages();
+                    }
+                }
+                // TODO print out the error.
+                Err(_) => (),
+            }
+        }
+
+        drop(guard);
+
+        Weechat::bar_item_update("matrix_modes");
+    }
+
+    fn sort_messages(&self) {
+        struct LineCopy {
+            date: i64,
+            date_printed: i64,
+            tags: Vec<String>,
+            prefix: String,
+            message: String,
+        }
+
+        impl<'a> From<BufferLine<'a>> for LineCopy {
+            fn from(line: BufferLine) -> Self {
+                Self {
+                    date: line.date(),
+                    date_printed: line.date_printed(),
+                    message: line.message().to_string(),
+                    prefix: line.prefix().to_string(),
+                    tags: line.tags().iter().map(|t| t.to_string()).collect(),
+                }
+            }
+        }
+
+        // TODO update the highlight once Weechat starts supporting it.
+        if let Ok(buffer) = self.buffer_handle().upgrade() {
+            let mut lines: Vec<LineCopy> =
+                buffer.lines().map(|l| l.into()).collect();
+            lines.sort_by_key(|l| Reverse(l.date));
+
+            for (line, new) in buffer.lines().zip(lines.drain(..)) {
+                let tags =
+                    new.tags.iter().map(|t| t.as_str()).collect::<Vec<&str>>();
+                let data = LineData {
+                    prefix: Some(&new.prefix),
+                    message: Some(&new.message),
+                    date: Some(new.date),
+                    date_printed: Some(new.date_printed),
+                    tags: Some(&tags),
+                };
+                line.update(data)
+            }
+        }
+    }
+
     /// Replace the local echo of an event with a fully rendered one.
     fn replace_local_echo(
         &self,
@@ -677,7 +804,7 @@ impl MatrixRoom {
             let event = AnySyncMessageEvent::RoomMessage(event);
 
             let rendered = self
-                .render_message_event(&event)
+                .render_sync_message(&event)
                 .await
                 .expect("Sent out an event that we don't know how to render");
 
@@ -712,7 +839,7 @@ impl MatrixRoom {
 
         if let AnySyncMessageEvent::RoomRedaction(r) = event {
             self.redact_event(r);
-        } else if let Some(rendered) = self.render_message_event(event).await {
+        } else if let Some(rendered) = self.render_sync_message(event).await {
             self.print_rendered_event(rendered);
         }
     }
@@ -760,6 +887,33 @@ impl MatrixRoom {
                 AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
                 _ => (),
             },
+        }
+    }
+
+    pub async fn handle_room_event(&self, event: &AnyRoomEvent) {
+        match &event {
+            AnyRoomEvent::Message(event) => {
+                let sender = self.members.get(event.sender()).expect(
+                    "Rendering a message but the sender isn't in the nicklist",
+                );
+
+                let send_time = event.origin_server_ts();
+                if let Some(rendered) = self
+                    .render_message_content(
+                        event.event_id(),
+                        send_time,
+                        &sender,
+                        &event.content(),
+                    )
+                    .await
+                {
+                    self.print_rendered_event(rendered);
+                }
+            }
+            // TODO print out redacted messages.
+            AnyRoomEvent::RedactedMessage(_) => (),
+            AnyRoomEvent::RedactedState(_) => (),
+            AnyRoomEvent::State(_) => (),
         }
     }
 

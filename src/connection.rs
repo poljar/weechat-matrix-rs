@@ -4,7 +4,6 @@ use std::{
     future::Future,
     path::PathBuf,
     rc::{Rc, Weak},
-    sync::Arc,
     time::Duration,
 };
 
@@ -21,7 +20,12 @@ pub use matrix_sdk::{
             delete_devices::Response as DeleteDevicesResponse,
             get_devices::Response as DevicesResponse,
         },
-        message::send_message_event::Response as RoomSendResponse,
+        message::{
+            get_message_events::{
+                Request as MessagesRequest, Response as MessagesResponse,
+            },
+            send_message_event::Response as RoomSendResponse,
+        },
         session::login::Response as LoginResponse,
         typing::create_typing_event::{Response as TypingResponse, Typing},
         uiaa::AuthData,
@@ -184,6 +188,21 @@ impl Connection {
             } else {
                 client.delete_devices(&devices, None).await
             }
+        })
+        .await
+    }
+
+    /// Fetch historical messages for the given room.
+    pub async fn room_messages(
+        &self,
+        room_id: RoomId,
+        prev_batch: String,
+    ) -> MatrixResult<MessagesResponse> {
+        let client = self.client.clone();
+
+        self.spawn(async move {
+            let request = MessagesRequest::backward(&room_id, &prev_batch);
+            client.room_messages(request).await
         })
         .await
     }
