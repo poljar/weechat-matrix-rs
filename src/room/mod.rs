@@ -181,6 +181,7 @@ impl MessageQueue {
 
 impl RoomHandle {
     pub fn new(
+        server_name: &str,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
         room: Room,
@@ -206,7 +207,9 @@ impl RoomHandle {
             room,
         };
 
-        let buffer_handle = BufferBuilderAsync::new(&room_id.to_string())
+        let buffer_name = format!("{}.{}", server_name, room_id);
+
+        let buffer_handle = BufferBuilderAsync::new(&buffer_name)
             .input_callback(room.clone())
             .close_callback(|_weechat: &Weechat, _buffer: &Buffer| {
                 // TODO remove the roombuffer from the server here.

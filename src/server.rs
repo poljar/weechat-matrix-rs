@@ -665,6 +665,7 @@ impl InnerServer {
                 room_id
             ));
             let buffer = RoomHandle::new(
+                &self.server_name,
                 &self.connection,
                 self.config.inner.clone(),
                 room,
