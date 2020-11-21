@@ -414,34 +414,20 @@ impl Connection {
 
                 for (room_id, room) in response.rooms.join {
                     for event in room.state.events {
-                        if let Ok(e) = event.deserialize() {
-                            channel
-                                .send(Ok(ClientMessage::SyncState(
-                                    room_id.clone(),
-                                    e,
-                                )))
-                                .await;
-                        } else {
-                            error!(
-                                "Failed deserializing state event: {:#?}",
-                                event
-                            );
-                        }
+                        channel
+                            .send(Ok(ClientMessage::SyncState(
+                                room_id.clone(),
+                                event,
+                            )))
+                            .await;
                     }
                     for event in room.timeline.events {
-                        if let Ok(e) = event.deserialize() {
-                            channel
-                                .send(Ok(ClientMessage::SyncEvent(
-                                    room_id.clone(),
-                                    e,
-                                )))
-                                .await;
-                        } else {
-                            error!(
-                                "Failed deserializing timeline event: {:#?}",
-                                event
-                            );
-                        }
+                        channel
+                            .send(Ok(ClientMessage::SyncEvent(
+                                room_id.clone(),
+                                event,
+                            )))
+                            .await;
                     }
                 }
 
