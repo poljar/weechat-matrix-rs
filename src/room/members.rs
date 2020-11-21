@@ -163,7 +163,7 @@ impl Members {
     fn update_buffer_name(&self) {
         let name = self.calculate_buffer_name();
         let buffer = self.buffer();
-        buffer.set_name(&name)
+        buffer.set_short_name(&name)
     }
 
     /// Helper method to calculate the display name of a room member from their

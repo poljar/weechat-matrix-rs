@@ -822,7 +822,7 @@ impl MatrixRoom {
         let name = self.members.calculate_buffer_name();
 
         if let Ok(b) = self.buffer_handle().upgrade() {
-            b.set_name(&name)
+            b.set_short_name(&name)
         }
     }
 
