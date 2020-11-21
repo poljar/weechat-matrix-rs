@@ -73,9 +73,9 @@ impl Members {
             let nick = member.nick.borrow();
             let nick_settings = NickSettings::new(&nick);
 
-            buffer.add_nick(nick_settings).unwrap_or_else(|_| {
-                panic!("Error adding nick for {:#?}, already added?", member)
-            });
+            if let Err(_) = buffer.add_nick(nick_settings) {
+                error!("Error adding nick {}, already addded.", nick);
+            };
         }
 
         self.inner
