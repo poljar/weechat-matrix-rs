@@ -20,7 +20,7 @@ use matrix_sdk::{
     uuid::Uuid,
 };
 
-use weechat::Weechat;
+use weechat::{Prefix, Weechat};
 
 use crate::room::WeechatRoomMember;
 
@@ -173,7 +173,7 @@ impl Render for EmoteMessageEventContent {
     type RenderContext = WeechatRoomMember;
 
     fn prefix(&self, _: &WeechatRoomMember) -> String {
-        Weechat::prefix("action").to_owned()
+        Weechat::prefix(Prefix::Action).to_owned()
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
@@ -195,7 +195,7 @@ impl Render for LocationMessageEventContent {
     type RenderContext = WeechatRoomMember;
 
     fn prefix(&self, _: &WeechatRoomMember) -> String {
-        Weechat::prefix("action").to_owned()
+        Weechat::prefix(Prefix::Action).to_owned()
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
@@ -223,7 +223,7 @@ impl Render for NoticeMessageEventContent {
     type RenderContext = WeechatRoomMember;
 
     fn prefix(&self, _: &WeechatRoomMember) -> String {
-        Weechat::prefix("action").to_owned()
+        Weechat::prefix(Prefix::Action).to_owned()
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
@@ -233,7 +233,7 @@ impl Render for NoticeMessageEventContent {
             {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
             sender.nick.borrow(),
             self.body,
-            prefix = Weechat::prefix("network"),
+            prefix = Weechat::prefix(Prefix::Network),
             color_notice = Weechat::color("irc.color.notice"),
             color_delim = Weechat::color("chat_delimiters"),
             color_reset = Weechat::color("reset"),
@@ -253,7 +253,7 @@ impl Render for ServerNoticeMessageEventContent {
     type RenderContext = WeechatRoomMember;
 
     fn prefix(&self, _: &WeechatRoomMember) -> String {
-        Weechat::prefix("action").to_owned()
+        Weechat::prefix(Prefix::Action).to_owned()
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
@@ -262,7 +262,7 @@ impl Render for ServerNoticeMessageEventContent {
             {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
             sender.nick.borrow(),
             self.body,
-            prefix = Weechat::prefix("network"),
+            prefix = Weechat::prefix(Prefix::Network),
             color_notice = Weechat::color("irc.color.notice"),
             color_delim = Weechat::color("chat_delimiters"),
             color_reset = Weechat::color("reset"),
@@ -472,9 +472,11 @@ pub fn render_membership(
     }
 
     let (prefix, color_action) = match change_op {
-        Joined => ("join", "green"),
-        Banned | ProfileChanged { .. } | Invited => ("network", "magenta"),
-        _ => ("quit", "red"),
+        Joined => (Prefix::Join, "green"),
+        Banned | ProfileChanged { .. } | Invited => {
+            (Prefix::Network, "magenta")
+        }
+        _ => (Prefix::Quit, "red"),
     };
 
     let color_action = Weechat::color(color_action);

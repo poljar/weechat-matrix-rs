@@ -6,17 +6,17 @@ use weechat::{
 
 use crate::{config::ConfigHandle, Servers};
 
+mod buffer_clear;
 mod devices;
 mod keys;
 mod matrix;
 mod page_up;
-mod buffer_clear;
 
+use buffer_clear::BufferClearCommand;
 use devices::DevicesCommand;
 use keys::KeysCommand;
 use matrix::MatrixCommand;
 use page_up::PageUpCommand;
-use buffer_clear::BufferClearCommand;
 
 pub struct Commands {
     _matrix: Command,

@@ -7,7 +7,7 @@ use matrix_sdk::identifiers::DeviceIdBox;
 use weechat::{
     buffer::Buffer,
     hooks::{Command, CommandCallback, CommandSettings},
-    Args, Weechat,
+    Args, Prefix, Weechat,
 };
 
 use super::parse_and_run;
@@ -86,7 +86,7 @@ impl DevicesCommand {
             }
             _ => Weechat::print(&format!(
                 "{}Subcommand isn't implemented",
-                Weechat::prefix("error")
+                Weechat::prefix(Prefix::Error)
             )),
         }
     }

@@ -7,7 +7,7 @@ use url::Url;
 use weechat::{
     buffer::Buffer,
     hooks::{Command, CommandCallback, CommandSettings},
-    Args, Weechat,
+    Args, Prefix, Weechat,
 };
 
 use super::parse_and_run;
@@ -174,7 +174,7 @@ Use /matrix [command] help to find out more.\n",
     fn server_not_found(&self, server_name: &str) {
         Weechat::print(&format!(
             "{}{}: Server \"{}{}{}\" not found.",
-            Weechat::prefix("error"),
+            Weechat::prefix(Prefix::Error),
             PLUGIN_NAME,
             Weechat::color("chat_server"),
             server_name,

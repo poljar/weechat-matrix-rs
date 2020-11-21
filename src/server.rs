@@ -75,7 +75,7 @@ use matrix_sdk::{
 use weechat::{
     buffer::{BufferBuilder, BufferHandle},
     config::{BooleanOptionSettings, ConfigSection, StringOptionSettings},
-    Weechat,
+    Prefix, Weechat,
 };
 
 use crate::{
@@ -794,12 +794,12 @@ impl InnerServer {
 
     /// Print an network message to the server buffer.
     pub fn print_network(&self, message: &str) {
-        self.print_with_prefix(Weechat::prefix("network"), message);
+        self.print_with_prefix(&Weechat::prefix(Prefix::Network), message);
     }
 
     /// Print an error message to the server buffer.
     pub fn print_error(&self, message: &str) {
-        self.print_with_prefix(Weechat::prefix("error"), message);
+        self.print_with_prefix(&Weechat::prefix(Prefix::Error), message);
     }
 
     /// Is the server connected.

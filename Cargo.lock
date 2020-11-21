@@ -1269,6 +1269,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "dashmap",
+ "futures",
  "futures-timer",
  "http",
  "matrix-sdk-base",
@@ -2883,7 +2884,6 @@ dependencies = [
 [[package]]
 name = "weechat"
 version = "0.4.0"
-source = "git+https://github.com/poljar/rust-weechat#a418b770a4bfa70457792f9817bc966f61cb9be1"
 dependencies = [
  "async-task",
  "async-trait",
@@ -2899,7 +2899,6 @@ dependencies = [
 [[package]]
 name = "weechat-macro"
 version = "0.4.0"
-source = "git+https://github.com/poljar/rust-weechat#a418b770a4bfa70457792f9817bc966f61cb9be1"
 dependencies = [
  "libc",
  "proc-macro2",
@@ -2932,7 +2931,6 @@ dependencies = [
 [[package]]
 name = "weechat-sys"
 version = "0.4.0"
-source = "git+https://github.com/poljar/rust-weechat#a418b770a4bfa70457792f9817bc966f61cb9be1"
 dependencies = [
  "bindgen",
  "libc",
