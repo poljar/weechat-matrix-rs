@@ -91,13 +91,27 @@ pub enum ServerError {
     IoError(String),
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ServerSettings {
     pub homeserver: Option<Url>,
     pub proxy: Option<Url>,
     pub autoconnect: bool,
     pub username: String,
     pub password: String,
+    pub ssl_verify: bool,
+}
+
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self {
+            ssl_verify: true,
+            proxy: None,
+            autoconnect: false,
+            homeserver: None,
+            username: "".to_owned(),
+            password: "".to_owned(),
+        }
+    }
 }
 
 impl ServerSettings {
@@ -129,6 +143,7 @@ pub struct InnerServer {
     server_name: Rc<String>,
     rooms: HashMap<RoomId, RoomHandle>,
     settings: ServerSettings,
+    current_settings: ServerSettings,
     config: ConfigHandle,
     client: Option<Client>,
     login_state: Option<LoginInfo>,
@@ -148,6 +163,7 @@ impl MatrixServer {
             server_name: server_name.clone(),
             rooms: HashMap::new(),
             settings: ServerSettings::new(),
+            current_settings: ServerSettings::new(),
             config: config.clone(),
             client: None,
             login_state: None,
@@ -402,7 +418,6 @@ impl MatrixServer {
         let autoconnect =
             BooleanOptionSettings::new(format!("{}.autoconnect", server_name))
                 .set_change_callback(move |_, option| {
-                    let server = server.clone();
                     let value = option.value();
 
                     let server_ref = server.upgrade().expect(
@@ -426,7 +441,6 @@ impl MatrixServer {
                     MatrixServer::is_url_valid(&value)
                 })
                 .set_change_callback(move |_, option| {
-                    let server = server.clone();
                     let server_ref = server.upgrade().expect(
                         "Server got deleted while server config is alive",
                     );
@@ -449,7 +463,6 @@ impl MatrixServer {
                 MatrixServer::is_url_valid(&value)
             })
             .set_change_callback(move |_, option| {
-                let server = server.clone();
                 let server_ref = server
                     .upgrade()
                     .expect("Server got deleted while server config is alive");
@@ -469,8 +482,6 @@ impl MatrixServer {
         let username =
             StringOptionSettings::new(format!("{}.username", server_name))
                 .set_change_callback(move |_, option| {
-                    let server = server.clone();
-
                     let server_ref = server.upgrade().expect(
                         "Server got deleted while server config is alive",
                     );
@@ -484,12 +495,11 @@ impl MatrixServer {
             .expect("Can't create username option");
 
         let server = server_copy;
+        let server_copy = server.clone();
 
         let password =
             StringOptionSettings::new(format!("{}.password", server_name))
                 .set_change_callback(move |_, option| {
-                    let server = server.clone();
-
                     let server_ref = server.upgrade().expect(
                         "Server got deleted while server config is alive",
                     );
@@ -501,6 +511,26 @@ impl MatrixServer {
         server_section
             .new_string_option(password)
             .expect("Can't create password option");
+
+        let server = server_copy;
+
+        let ssl_verify =
+            BooleanOptionSettings::new(format!("{}.ssl_verify", server_name))
+                .default_value(true)
+                .set_change_callback(move |_, option| {
+                    let value = option.value();
+
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
+
+                    let mut server = server_ref.borrow_mut();
+                    server.settings.ssl_verify = value;
+                });
+
+        server_section
+            .new_boolean_option(ssl_verify)
+            .expect("Can't create autoconnect option");
     }
 
     pub fn connected(&self) -> bool {
@@ -509,6 +539,10 @@ impl MatrixServer {
 
     pub fn autoconnect(&self) -> bool {
         self.inner.borrow().settings.autoconnect
+    }
+
+    pub fn ssl_verify(&self) -> bool {
+        self.inner.borrow().settings.ssl_verify
     }
 
     pub fn connect(&self) -> Result<(), ServerError> {
@@ -741,15 +775,9 @@ impl InnerServer {
 
         // Check if the homeserver setting changed and swap our client if it
         // did.
-        if client.homeserver()
-            != self
-                .settings
-                .homeserver
-                .as_ref()
-                .expect("Homeserver URL isn't set")
-        {
-            // TODO close all the room buffers of the server here, they don't
-            // belong to our client anymore.
+        if self.current_settings != self.settings {
+            // TODO if the homeserver changed close all the room buffers of the
+            // server here, they don't belong to our client anymore.
             self.create_client()
         } else {
             Ok(client)
@@ -848,8 +876,10 @@ impl InnerServer {
     }
 
     pub fn create_client(&mut self) -> Result<Client, ServerError> {
+        let settings = self.settings.clone();
+
         let homeserver =
-            self.settings.homeserver.as_ref().ok_or_else(|| {
+            settings.homeserver.as_ref().ok_or_else(|| {
                 ServerError::StartError("Homeserver not configured".to_owned())
             })?;
 
@@ -863,15 +893,17 @@ impl InnerServer {
         let mut client_config =
             ClientConfig::new().store_path(self.get_server_path());
 
-        if let Some(proxy) = &self.settings.proxy {
-            client_config = client_config
-                .proxy(proxy.as_str())
-                .unwrap()
-                .disable_ssl_verification();
+        if let Some(proxy) = settings.proxy.as_ref() {
+            client_config = client_config.proxy(proxy.as_str()).unwrap();
+        }
+
+        if !settings.ssl_verify {
+            client_config = client_config.disable_ssl_verification();
         }
 
         let client =
             Client::new_with_config(homeserver.clone(), client_config).unwrap();
+        self.current_settings = settings;
         self.client = Some(client.clone());
 
         Ok(client)
