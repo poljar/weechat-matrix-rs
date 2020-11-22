@@ -465,9 +465,7 @@ pub fn render_membership(
                     color_reset = Weechat::color("reset"))
             }
 
-            Option::None => {
-                member.user_id.as_ref().to_string()
-            }
+            Option::None => member.user_id.as_ref().to_string(),
         }
     }
 

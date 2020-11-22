@@ -1,7 +1,7 @@
-use weechat::hooks::BarItem;
 use weechat::{
-    Weechat, buffer::Buffer,
-    hooks::BarItemCallback
+    buffer::Buffer,
+    hooks::{BarItem, BarItemCallback},
+    Weechat,
 };
 
 use crate::Servers;

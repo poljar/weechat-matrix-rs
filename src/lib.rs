@@ -1,5 +1,6 @@
 #![feature(get_mut_unchecked)]
 
+mod bar_items;
 mod commands;
 mod config;
 mod connection;
@@ -7,7 +8,6 @@ mod debug;
 mod render;
 mod room;
 mod server;
-mod bar_items;
 
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -22,15 +22,38 @@ use weechat::{
 };
 
 use crate::{
-    commands::Commands, config::ConfigHandle, room::RoomHandle,
-    server::MatrixServer,
-    bar_items::BarItems,
+    bar_items::BarItems, commands::Commands, config::ConfigHandle,
+    room::RoomHandle, server::MatrixServer,
 };
 
 const PLUGIN_NAME: &str = "matrix";
 
 #[derive(Clone, Debug)]
 pub struct Servers(Rc<RefCell<HashMap<String, MatrixServer>>>);
+
+pub enum BufferOwner {
+    Server(MatrixServer),
+    Room(MatrixServer, RoomHandle),
+    None,
+}
+
+impl BufferOwner {
+    fn into_server(self) -> Option<MatrixServer> {
+        match self {
+            BufferOwner::Server(s) => Some(s),
+            BufferOwner::Room(s, _) => Some(s),
+            BufferOwner::None => None,
+        }
+    }
+
+    fn into_room(self) -> Option<RoomHandle> {
+        if let BufferOwner::Room(_, r) = self {
+            Some(r)
+        } else {
+            None
+        }
+    }
+}
 
 impl Servers {
     fn new() -> Self {
@@ -45,17 +68,13 @@ impl Servers {
         self.0.borrow_mut()
     }
 
-    /// Find a `MatrixServer` that the given buffer belongs to.
-    ///
-    /// Returns None if the buffer doesn't belong to any of our servers of
-    /// rooms.
-    pub fn find_server(&self, buffer: &Buffer) -> Option<MatrixServer> {
+    pub fn buffer_owner(&self, buffer: &Buffer) -> BufferOwner {
         let servers = self.borrow();
 
         for server in servers.values() {
             if let Some(b) = &*server.inner().server_buffer() {
                 if b.upgrade().map_or(false, |b| &b == buffer) {
-                    return Some(server.clone());
+                    return BufferOwner::Server(server.clone());
                 }
             }
 
@@ -64,13 +83,21 @@ impl Servers {
 
                 if let Ok(b) = buffer_handle.upgrade() {
                     if buffer == &b {
-                        return Some(server.clone());
+                        return BufferOwner::Room(server.clone(), room.clone());
                     }
                 }
             }
         }
 
-        None
+        BufferOwner::None
+    }
+
+    /// Find a `MatrixServer` that the given buffer belongs to.
+    ///
+    /// Returns None if the buffer doesn't belong to any of our servers of
+    /// rooms.
+    pub fn find_server(&self, buffer: &Buffer) -> Option<MatrixServer> {
+        self.buffer_owner(buffer).into_server()
     }
 
     /// Find a `RoomHandle` that the given buffer belongs to.
@@ -78,19 +105,7 @@ impl Servers {
     /// Returns None if the buffer doesn't belong to any of our servers of
     /// rooms.
     pub fn find_room(&self, buffer: &Buffer) -> Option<RoomHandle> {
-        let servers = self.borrow();
-
-        for server in servers.values() {
-            for room in server.inner().rooms().values() {
-                if let Ok(b) = room.buffer_handle().upgrade() {
-                    if buffer == &b {
-                        return Some(room.clone());
-                    }
-                }
-            }
-        }
-
-        None
+        self.buffer_owner(buffer).into_room()
     }
 }
 

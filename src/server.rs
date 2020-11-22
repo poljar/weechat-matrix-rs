@@ -878,10 +878,9 @@ impl InnerServer {
     pub fn create_client(&mut self) -> Result<Client, ServerError> {
         let settings = self.settings.clone();
 
-        let homeserver =
-            settings.homeserver.as_ref().ok_or_else(|| {
-                ServerError::StartError("Homeserver not configured".to_owned())
-            })?;
+        let homeserver = settings.homeserver.as_ref().ok_or_else(|| {
+            ServerError::StartError("Homeserver not configured".to_owned())
+        })?;
 
         self.create_server_dir().map_err(|e| {
             ServerError::IoError(format!(
