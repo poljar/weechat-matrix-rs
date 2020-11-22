@@ -7,6 +7,7 @@ mod debug;
 mod render;
 mod room;
 mod server;
+mod bar_items;
 
 use std::{
     cell::{Ref, RefCell, RefMut},
@@ -16,13 +17,14 @@ use std::{
 
 use weechat::{
     buffer::{Buffer, BufferHandle},
-    hooks::{BarItem, BarItemCallback, SignalCallback, SignalData, SignalHook},
+    hooks::{SignalCallback, SignalData, SignalHook},
     plugin, Args, Plugin, ReturnCode, Weechat,
 };
 
 use crate::{
     commands::Commands, config::ConfigHandle, room::RoomHandle,
     server::MatrixServer,
+    bar_items::BarItems,
 };
 
 const PLUGIN_NAME: &str = "matrix";
@@ -117,7 +119,7 @@ struct Matrix {
     #[used]
     config: ConfigHandle,
     #[used]
-    status_bar: BarItem,
+    bar_items: BarItems,
     #[used]
     typing_notice_signal: SignalHook,
     debug_buffer: RefCell<Option<BufferHandle>>,
@@ -159,38 +161,6 @@ impl Matrix {
     }
 }
 
-impl BarItemCallback for Servers {
-    fn callback(&mut self, _: &Weechat, buffer: &Buffer) -> String {
-        let servers = self.borrow();
-
-        let mut signs = Vec::new();
-
-        for server in servers.values() {
-            let server = server.inner();
-
-            for room in server.rooms().values() {
-                if let Ok(b) = room.buffer_handle().upgrade() {
-                    if buffer == &b {
-                        if room.is_encrypted() {
-                            signs.push(
-                                server.config().look().encrypted_room_sign(),
-                            );
-                        }
-
-                        if room.is_busy() {
-                            signs.push("⏳".to_owned());
-                        }
-
-                        break;
-                    }
-                }
-            }
-        }
-
-        signs.join("")
-    }
-}
-
 impl Plugin for Matrix {
     fn init(_: &Weechat, _args: Args) -> Result<Self, ()> {
         let servers = Servers::new();
@@ -198,7 +168,7 @@ impl Plugin for Matrix {
         let commands = Commands::hook_all(&servers, &config)?;
 
         // TODO move the bar creation into a separate file.
-        let status_bar = BarItem::new("matrix_modes", servers.clone())?;
+        let bar_items = BarItems::hook_all(servers.clone())?;
 
         tracing_subscriber::fmt()
             .with_writer(debug::Debug)
@@ -226,7 +196,7 @@ impl Plugin for Matrix {
             servers: servers.clone(),
             commands,
             config,
-            status_bar,
+            bar_items,
             debug_buffer: RefCell::new(None),
             typing_notice_signal: typing,
         };
