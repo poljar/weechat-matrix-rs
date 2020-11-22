@@ -13,12 +13,15 @@ use tokio::runtime::Runtime;
 use tracing::error;
 use uuid::Uuid;
 
-pub use matrix_sdk::{
+use matrix_sdk::{
     self,
     api::r0::{
         device::{
             delete_devices::Response as DeleteDevicesResponse,
             get_devices::Response as DevicesResponse,
+        },
+        filter::{
+            FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
         },
         message::{
             get_message_events::{
@@ -27,6 +30,7 @@ pub use matrix_sdk::{
             send_message_event::Response as RoomSendResponse,
         },
         session::login::Response as LoginResponse,
+        sync::sync_events::Filter,
         typing::create_typing_event::{Response as TypingResponse, Typing},
         uiaa::AuthData,
     },
@@ -321,6 +325,22 @@ impl Connection {
         }
     }
 
+    fn sync_filter() -> FilterDefinition<'static> {
+        FilterDefinition {
+            room: RoomFilter {
+                state: RoomEventFilter {
+                    lazy_load_options: LazyLoadOptions::Enabled {
+                        include_redundant_members: false,
+                    },
+                    limit: Some(10u16.into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
     /// Main client sync loop.
     /// This runs on the per server tokio executor.
     /// It communicates with the main Weechat thread using a async channel.
@@ -397,8 +417,15 @@ impl Connection {
             // }
         }
 
+        let filter = client
+            .get_or_upload_filter("sync", Connection::sync_filter())
+            .await
+            .unwrap();
+
         let sync_token = client.sync_token().await;
-        let sync_settings = SyncSettings::new().timeout(DEFAULT_SYNC_TIMEOUT);
+        let sync_settings = SyncSettings::new()
+            .timeout(DEFAULT_SYNC_TIMEOUT)
+            .filter(Filter::FilterId(&filter));
 
         let sync_settings = if let Some(t) = sync_token {
             sync_settings.token(t)
