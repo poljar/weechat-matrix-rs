@@ -541,8 +541,16 @@ impl MatrixServer {
         self.inner.borrow().settings.autoconnect
     }
 
-    pub fn ssl_verify(&self) -> bool {
-        self.inner.borrow().settings.ssl_verify
+    pub fn is_connection_secure(&self) -> bool {
+        self.inner.borrow().current_settings.ssl_verify
+            && self
+                .inner
+                .borrow()
+                .current_settings
+                .homeserver
+                .as_ref()
+                .map(|u| u.scheme() == "https")
+                .unwrap_or(false)
     }
 
     pub fn connect(&self) -> Result<(), ServerError> {

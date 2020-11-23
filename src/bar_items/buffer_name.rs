@@ -21,7 +21,7 @@ impl BarItemCallback for BufferName {
     fn callback(&mut self, _: &Weechat, buffer: &Buffer) -> String {
         match self.servers.buffer_owner(buffer) {
             BufferOwner::Server(server) => {
-                let color = if server.ssl_verify() {
+                let color = if server.is_connection_secure() {
                     "status_name_ssl"
                 } else {
                     "status_name"
@@ -36,7 +36,7 @@ impl BarItemCallback for BufferName {
             }
 
             BufferOwner::Room(server, _) => {
-                let color = if server.ssl_verify() {
+                let color = if server.is_connection_secure() {
                     "status_name_ssl"
                 } else {
                     "status_name"
