@@ -51,12 +51,13 @@ use url::Url;
 use matrix_sdk::{
     events::{
         room::{
+            member::MemberEventContent,
             message::{MessageEventContent, TextMessageEventContent},
             redaction::SyncRedactionEvent,
         },
         AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
         AnyRedactedSyncMessageEvent, AnyRoomEvent, AnySyncMessageEvent,
-        AnySyncRoomEvent, AnySyncStateEvent, SyncMessageEvent,
+        AnySyncRoomEvent, AnySyncStateEvent, SyncMessageEvent, SyncStateEvent,
     },
     identifiers::{EventId, RoomId, UserId},
     uuid::Uuid,
@@ -821,6 +822,12 @@ impl MatrixRoom {
         }
     }
 
+    fn set_topic(&self, topic: &str) {
+        if let Ok(buffer) = self.buffer_handle().upgrade() {
+            buffer.set_title(topic);
+        }
+    }
+
     fn update_buffer_name(&self) {
         let name = self.members.calculate_buffer_name();
 
@@ -871,25 +878,27 @@ impl MatrixRoom {
         }
     }
 
+    pub async fn handle_membership_event(
+        &self,
+        event: &SyncStateEvent<MemberEventContent>,
+        state_event: bool,
+    ) {
+        self.members.handle_membership_event(event, state_event)
+    }
+
     pub async fn handle_sync_room_event(&self, event: AnySyncRoomEvent) {
         match &event {
             AnySyncRoomEvent::Message(message) => {
                 self.handle_room_message(message).await
             }
-
             AnySyncRoomEvent::RedactedMessage(e) => {
                 self.handle_redacted_events(e)
             }
-            // We don't print out redacted state event for now.
+            // We don't print out redacted state events for now.
             AnySyncRoomEvent::RedactedState(_) => (),
-
-            AnySyncRoomEvent::State(event) => match event {
-                AnySyncStateEvent::RoomMember(e) => {
-                    self.members.handle_membership_event(e, false)
-                }
-                AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
-                _ => (),
-            },
+            AnySyncRoomEvent::State(event) => {
+                self.handle_sync_state_event(event, false).await
+            }
         }
     }
 
@@ -920,12 +929,17 @@ impl MatrixRoom {
         }
     }
 
-    pub fn handle_sync_state_event(&self, event: AnySyncStateEvent) {
-        match &event {
+    pub async fn handle_sync_state_event(
+        &self,
+        event: &AnySyncStateEvent,
+        state_event: bool,
+    ) {
+        match event {
             AnySyncStateEvent::RoomMember(e) => {
-                self.members.handle_membership_event(e, true)
+                self.handle_membership_event(e, state_event).await
             }
             AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
+            AnySyncStateEvent::RoomTopic(t) => self.set_topic(&t.content.topic),
             _ => (),
         }
     }

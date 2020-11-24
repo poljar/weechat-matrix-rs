@@ -62,12 +62,19 @@ use std::{
     path::PathBuf,
     rc::{Rc, Weak},
 };
+use tracing::{error, info};
 use url::Url;
 
 use matrix_sdk::{
     self,
-    api::r0::session::login::Response as LoginResponse,
-    events::{AnySyncRoomEvent, AnySyncStateEvent},
+    api::r0::{
+        membership::get_member_events::Response as MembersResponse,
+        session::login::Response as LoginResponse,
+    },
+    events::{
+        room::member::MemberEventContent, AnySyncRoomEvent, AnySyncStateEvent,
+        StateEvent,
+    },
     identifiers::{DeviceIdBox, RoomId, UserId},
     Client, ClientConfig, Room,
 };
@@ -844,13 +851,29 @@ impl InnerServer {
         self.connection.borrow().is_some()
     }
 
-    pub fn receive_joined_state_event(
+    pub async fn receive_members(
+        &self,
+        room_id: &RoomId,
+        members: MembersResponse,
+    ) {
+        if let Some(room) = self.rooms.get(room_id) {
+            for event in members.chunk {
+                if let Ok(member) = event.deserialize() {
+                    room.handle_membership_event(&member.into(), true).await;
+                }
+            }
+        } else {
+            error!("ROOM WITH ID {} NOT FOUND", room_id);
+        }
+    }
+
+    pub async fn receive_joined_state_event(
         &mut self,
         room_id: &RoomId,
         event: AnySyncStateEvent,
     ) {
         let room = self.get_or_create_room(room_id);
-        room.handle_sync_state_event(event)
+        room.handle_sync_state_event(&event, true).await
     }
 
     pub async fn receive_joined_timeline_event(

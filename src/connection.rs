@@ -10,7 +10,7 @@ use std::{
 use async_std::sync::{channel as async_channel, Receiver, Sender};
 use serde_json::json;
 use tokio::runtime::Runtime;
-use tracing::error;
+use tracing::{error, info};
 use uuid::Uuid;
 
 use matrix_sdk::{
@@ -23,6 +23,7 @@ use matrix_sdk::{
         filter::{
             FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
         },
+        membership::get_member_events::Response as MembersResponse,
         message::{
             get_message_events::{
                 Request as MessagesRequest, Response as MessagesResponse,
@@ -35,8 +36,12 @@ use matrix_sdk::{
         uiaa::AuthData,
     },
     events::{
-        room::message::{MessageEventContent, TextMessageEventContent},
+        room::{
+            member::MemberEventContent,
+            message::{MessageEventContent, TextMessageEventContent},
+        },
         AnyMessageEventContent, AnySyncRoomEvent, AnySyncStateEvent,
+        StateEvent,
     },
     identifiers::{DeviceIdBox, RoomId, UserId},
     locks::RwLock,
@@ -83,6 +88,7 @@ pub enum ClientMessage {
     LoginMessage(LoginResponse),
     SyncState(RoomId, AnySyncStateEvent),
     SyncEvent(RoomId, AnySyncRoomEvent),
+    Members(RoomId, MembersResponse),
     RestoredRoom(Room),
 }
 
@@ -314,10 +320,13 @@ impl Connection {
                         server.receive_joined_timeline_event(&r, e).await
                     }
                     ClientMessage::SyncState(r, e) => {
-                        server.receive_joined_state_event(&r, e)
+                        server.receive_joined_state_event(&r, e).await
                     }
                     ClientMessage::RestoredRoom(room) => {
                         server.restore_room(room).await
+                    }
+                    ClientMessage::Members(room, e) => {
+                        server.receive_members(&room, e).await
                     }
                 },
                 Err(e) => server.print_error(&format!("Ruma error {}", e)),
@@ -435,13 +444,13 @@ impl Connection {
 
         let sync_channel = &channel;
 
+        let client_ref = &client;
+
         client
             .sync_with_callback(sync_settings, |response| async move {
-                let channel = sync_channel;
-
                 for (room_id, room) in response.rooms.join {
                     for event in room.state.events {
-                        channel
+                        sync_channel
                             .send(Ok(ClientMessage::SyncState(
                                 room_id.clone(),
                                 event,
@@ -449,12 +458,33 @@ impl Connection {
                             .await;
                     }
                     for event in room.timeline.events {
-                        channel
+                        sync_channel
                             .send(Ok(ClientMessage::SyncEvent(
                                 room_id.clone(),
                                 event,
                             )))
                             .await;
+                    }
+
+                    if let Some(r) = client_ref.get_joined_room(&room_id) {
+                        if !r.are_members_synced() {
+                            let room_id = room_id.clone();
+                            let client = client_ref.clone();
+                            let channel = sync_channel.clone();
+
+                            tokio::spawn(async move {
+                                if let Ok(members) =
+                                    client.room_members(&room_id).await
+                                {
+                                    channel
+                                        .send(Ok(ClientMessage::Members(
+                                            room_id.clone(),
+                                            members,
+                                        )))
+                                        .await;
+                                }
+                            });
+                        }
                     }
                 }
 

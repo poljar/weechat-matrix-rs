@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, convert::TryFrom, rc::Rc};
 
 use futures::executor::block_on;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace};
 
 use matrix_sdk::{
     events::{
@@ -72,6 +72,8 @@ impl Members {
             let buffer = self.buffer();
             let nick = member.nick.borrow();
             let nick_settings = NickSettings::new(&nick);
+
+            info!("Inserting nick {} for room {}", nick, buffer.short_name());
 
             if let Err(_) = buffer.add_nick(nick_settings) {
                 error!("Error adding nick {}, already addded.", nick);
@@ -176,16 +178,22 @@ impl Members {
     ///
     /// This panics if no member with the given user id can be found.
     fn calculate_user_name(&self, user_id: &UserId) -> String {
-        self.room()
-            .get_member(user_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "No such member {} in {}",
-                    user_id,
-                    self.room.room_id().as_str()
-                )
-            })
-            .disambiguated_name()
+        block_on(async {
+            let member =
+                self.room().get_member(user_id).await.unwrap_or_else(|| {
+                    panic!(
+                        "No such member {} in {}",
+                        user_id,
+                        self.buffer().short_name()
+                    )
+                });
+
+            if let Some(name) = member.display_name() {
+                name.to_owned()
+            } else {
+                member.disambiguated_name()
+            }
+        })
     }
 
     /// Process disambiguations received from the SDK.
@@ -199,11 +207,13 @@ impl Members {
     ) {
         for (affected_member, is_ambiguous) in disambiguations.iter() {
             if *is_ambiguous {
-                let new_nick = self
-                    .room()
-                    .get_member(affected_member)
-                    .unwrap()
-                    .unique_name();
+                let new_nick = block_on(async {
+                    self.room()
+                        .get_member(affected_member)
+                        .await
+                        .unwrap()
+                        .unique_name()
+                });
 
                 match self.rename_member(affected_member, new_nick.clone()) {
                     Ok(old_nick) => debug!(
@@ -219,8 +229,13 @@ impl Members {
                     ),
                 }
             } else {
-                let new_nick =
-                    self.room().get_member(affected_member).unwrap().name();
+                let new_nick = block_on(async {
+                    self.room()
+                        .get_member(affected_member)
+                        .await
+                        .unwrap()
+                        .name()
+                });
 
                 match self.rename_member(affected_member, new_nick.clone()) {
                         Ok(old_nick) => debug!(
@@ -244,6 +259,13 @@ impl Members {
     ) {
         let buffer = self.buffer();
 
+        info!(
+            "Handling membership event for room {} {} {:?}",
+            buffer.short_name(),
+            event.state_key,
+            event.content.membership
+        );
+
         let sender_id = event.sender.clone();
         let target_id;
 
@@ -256,8 +278,6 @@ impl Members {
             );
             return;
         }
-
-        let new_nick = self.calculate_user_name(&target_id);
 
         if state_event {
             use MembershipState::*;
@@ -272,13 +292,16 @@ impl Members {
             // For leaves and bans we just need to remove the member.
             match event.content.membership {
                 Invite | Join => {
+                    let new_nick = self.calculate_user_name(&target_id);
                     // TODO remove this unwrap.
-                    let display_name = self
-                        .room()
-                        .get_member(&target_id)
-                        .unwrap()
-                        .display_name()
-                        .clone();
+                    let display_name = block_on(async {
+                        self.room()
+                            .get_member(&target_id)
+                            .await
+                            .unwrap()
+                            .display_name()
+                            .clone()
+                    });
 
                     self.add(WeechatRoomMember::new(
                         &target_id,
@@ -306,6 +329,7 @@ impl Members {
 
             match change_op {
                 Joined | Invited => {
+                    let new_nick = self.calculate_user_name(&target_id);
                     debug!(
                         "{}: User {} joining, adding nick {}",
                         self.calculate_buffer_name(),
@@ -314,12 +338,14 @@ impl Members {
                     );
 
                     // TODO remove this unwrap
-                    let display_name = self
-                        .room()
-                        .get_member(&target_id)
-                        .unwrap()
-                        .display_name()
-                        .clone();
+                    let display_name = block_on(async {
+                        self.room()
+                            .get_member(&target_id)
+                            .await
+                            .unwrap()
+                            .display_name()
+                            .clone()
+                    });
 
                     let member = WeechatRoomMember::new(
                         &target_id,
@@ -363,6 +389,7 @@ impl Members {
                 } => {
                     sender = self.get(&sender_id);
                     target = self.get(&target_id);
+                    let new_nick = self.calculate_user_name(&target_id);
 
                     if displayname_changed {
                         match self.rename_member(&target_id, new_nick.clone()) {
