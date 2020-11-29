@@ -509,7 +509,7 @@ pub fn render_membership(
             match (displayname_changed, avatar_url_changed) {
                 (false, true) =>
                     format!(
-                        "{prefix} {target} {color_action}changed their avatar{color_reset}",
+                        "{prefix}{target} {color_action}changed their avatar{color_reset}",
                         prefix = Weechat::prefix(prefix),
                         target = target_name,
                         color_action = color_action,
@@ -518,7 +518,7 @@ pub fn render_membership(
                 (true, false) => {
                     match new_display_name {
                         Some(name) => format!(
-                            "{prefix} {target} {color_action}changed their display name to{color_reset} {new}",
+                            "{prefix}{target} {color_action}changed their display name to{color_reset} {new}",
                             prefix = Weechat::prefix(prefix),
                             target = target_name,
                             new = name,
@@ -526,7 +526,7 @@ pub fn render_membership(
                             color_reset = color_reset
                             ),
                         Option::None => format!(
-                            "{prefix} {target} {color_action}removed their display name{color_reset}",
+                            "{prefix}{target} {color_action}removed their display name{color_reset}",
                             prefix = Weechat::prefix(prefix),
                             target = target_name,
                             color_action = color_action,
@@ -537,7 +537,7 @@ pub fn render_membership(
                 (true, true) =>
                     match new_display_name {
                         Some(name) => format!(
-                            "{prefix} {target} {color_action}changed their avatar \
+                            "{prefix}{target} {color_action}changed their avatar \
                             and changed their display name to{color_reset} {new}",
                             prefix = Weechat::prefix(prefix),
                             target = target_name,
@@ -546,7 +546,7 @@ pub fn render_membership(
                             color_reset = color_reset
                             ),
                         Option::None => format!(
-                            "{prefix} {target} {color_action}changed their \
+                            "{prefix}{target} {color_action}changed their \
                             avatar and removed display name{color_reset}",
                             prefix = Weechat::prefix(prefix),
                             target = target_name,
@@ -560,7 +560,7 @@ pub fn render_membership(
         }
         Banned | Unbanned | Kicked | Invited | InvitationRevoked
         | KickedAndBanned => format!(
-            "{prefix} {target} {op} {sender}",
+            "{prefix}{target} {op} {sender}",
             prefix = Weechat::prefix(prefix),
             target = target_name,
             op = operation,
@@ -568,7 +568,7 @@ pub fn render_membership(
         ),
         None | Error | Joined | Left | InvitationRejected | _ => {
             format!(
-                "{prefix} {target} {op}",
+                "{prefix}{target} {op}",
                 prefix = Weechat::prefix(prefix),
                 target = target_name,
                 op = operation
