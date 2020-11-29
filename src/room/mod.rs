@@ -55,9 +55,9 @@ use matrix_sdk::{
             message::{MessageEventContent, TextMessageEventContent},
             redaction::SyncRedactionEvent,
         },
-        AnyMessageEventContent, AnyPossiblyRedactedSyncMessageEvent,
-        AnyRedactedSyncMessageEvent, AnyRoomEvent, AnySyncMessageEvent,
-        AnySyncRoomEvent, AnySyncStateEvent, SyncMessageEvent, SyncStateEvent,
+        AnyMessageEventContent, AnyRedactedSyncMessageEvent, AnyRoomEvent,
+        AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
+        SyncMessageEvent, SyncStateEvent,
     },
     identifiers::{EventId, RoomId, UserId},
     uuid::Uuid,
@@ -240,10 +240,10 @@ impl RoomHandle {
     }
 
     pub async fn restore(
-        room: Room,
-        connection: &Rc<RefCell<Option<Connection>>>,
-        config: Rc<RefCell<Config>>,
-        homeserver: &Url,
+        _room: Room,
+        _connection: &Rc<RefCell<Option<Connection>>>,
+        _config: Rc<RefCell<Config>>,
+        _homeserver: &Url,
     ) -> Self {
         todo!();
         // let room_clone = room.clone();
@@ -293,21 +293,13 @@ impl RoomHandle {
 impl BufferInputCallbackAsync for MatrixRoom {
     async fn callback(&mut self, _: BufferHandle, input: String) {
         // TODO parse the input here and produce a formatted body.
-        let content = MessageEventContent::Text(TextMessageEventContent {
-            body: input,
-            formatted: None,
-            relates_to: None,
-        });
-
+        let content =
+            MessageEventContent::Text(TextMessageEventContent::plain(input));
         self.send_message(content).await;
     }
 }
 
 impl MatrixRoom {
-    fn room(&self) -> &Room {
-        &self.room
-    }
-
     pub fn is_encrypted(&self) -> bool {
         self.room.is_encrypted()
     }
@@ -362,7 +354,7 @@ impl MatrixRoom {
             "{}<{}Message redacted by: {}{}{}>{}",
             Weechat::color("chat_delimiters"),
             Weechat::color("logger.color.backlog_line"),
-            redacter.nick.borrow(),
+            redacter.nick(),
             reason,
             Weechat::color("chat_delimiters"),
             Weechat::color("reset"),
@@ -485,6 +477,7 @@ impl MatrixRoom {
                     &sender,
                     &self.homeserver,
                 ),
+                _ => return None,
             },
             _ => return None,
         };
@@ -883,7 +876,9 @@ impl MatrixRoom {
         event: &SyncStateEvent<MemberEventContent>,
         state_event: bool,
     ) {
-        self.members.handle_membership_event(event, state_event)
+        self.members
+            .handle_membership_event(event, state_event)
+            .await
     }
 
     pub async fn handle_sync_room_event(&self, event: AnySyncRoomEvent) {

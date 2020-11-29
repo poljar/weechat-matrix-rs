@@ -25,7 +25,6 @@ use weechat::{Prefix, Weechat};
 use crate::room::WeechatRoomMember;
 
 /// The rendered version of an event.
-#[allow(dead_code)]
 pub struct RenderedEvent {
     /// The UNIX timestamp of the event.
     pub message_timestamp: u64,
@@ -73,12 +72,7 @@ pub trait Render {
     }
 
     fn prefix(&self, sender: &WeechatRoomMember) -> String {
-        format!(
-            "{}{}{}",
-            Weechat::color(&sender.color),
-            sender.nick.borrow(),
-            Weechat::color("reset")
-        )
+        sender.nick_colored()
     }
 
     /// Render the event.
@@ -179,7 +173,7 @@ impl Render for EmoteMessageEventContent {
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
         // TODO parse and render using the formattted body.
         // TODO handle multiple lines in the body.
-        let message = format!("{} {}", sender.nick.borrow(), self.body);
+        let message = format!("{} {}", sender.nick(), self.body);
 
         let line = RenderedLine {
             message,
@@ -202,7 +196,7 @@ impl Render for LocationMessageEventContent {
         let message = format!(
             "{} has shared a location: {color_delimiter}<{color_reset}{}{color_delimiter}>\
             [{color_reset}{}{color_delimiter}]{color_reset}",
-            sender.nick.borrow(),
+            sender.nick(),
             self.body,
             self.geo_uri,
             color_delimiter = Weechat::color("color_delimiter"),
@@ -231,7 +225,7 @@ impl Render for NoticeMessageEventContent {
         let message = format!(
             "{prefix}{color_notice}Notice\
             {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
-            sender.nick.borrow(),
+            sender.nick(),
             self.body,
             prefix = Weechat::prefix(Prefix::Network),
             color_notice = Weechat::color("irc.color.notice"),
@@ -260,7 +254,7 @@ impl Render for ServerNoticeMessageEventContent {
         let message = format!(
             "{prefix}{color_notice}Server notice\
             {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
-            sender.nick.borrow(),
+            sender.nick(),
             self.body,
             prefix = Weechat::prefix(Prefix::Network),
             color_notice = Weechat::color("irc.color.notice"),
@@ -336,7 +330,7 @@ impl Render for RedactedSyncMessageEvent<RedactedMessageEventContent> {
             "{}<{}Message redacted by: {}{}>{}",
             Weechat::color("chat_delimiters"),
             Weechat::color("logger.color.backlog_line"),
-            redacter.nick.borrow(),
+            redacter.nick(),
             Weechat::color("chat_delimiters"),
             Weechat::color("reset"),
         );
@@ -451,11 +445,11 @@ pub fn render_membership(
         InvitationRejected => "rejected the invitation",
         InvitationRevoked => "had the invitation revoked by",
         ProfileChanged { .. } => "_",
-        NotImplemented => "performed an unimplemented operation",
+        _ => "performed an unimplemented operation",
     };
 
     fn formatted_name(member: &WeechatRoomMember) -> String {
-        match &*member.display_name.borrow() {
+        match &*member.display_name {
             Some(display_name) => {
                 format!(
                     "{name} {color_delim}({color_reset}{user_id}{color_delim}){color_reset}",
@@ -564,14 +558,6 @@ pub fn render_membership(
                     "Cannot happen: got profile changed but nothing really changed".to_string()
             }
         }
-        None | Error | Joined | Left | InvitationRejected | NotImplemented => {
-            format!(
-                "{prefix} {target} {op}",
-                prefix = Weechat::prefix(prefix),
-                target = target_name,
-                op = operation
-            )
-        }
         Banned | Unbanned | Kicked | Invited | InvitationRevoked
         | KickedAndBanned => format!(
             "{prefix} {target} {op} {sender}",
@@ -580,5 +566,13 @@ pub fn render_membership(
             op = operation,
             sender = sender_name
         ),
+        None | Error | Joined | Left | InvitationRejected | _ => {
+            format!(
+                "{prefix} {target} {op}",
+                prefix = Weechat::prefix(prefix),
+                target = target_name,
+                op = operation
+            )
+        }
     }
 }

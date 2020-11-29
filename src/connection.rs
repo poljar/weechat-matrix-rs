@@ -10,7 +10,7 @@ use std::{
 use async_std::sync::{channel as async_channel, Receiver, Sender};
 use serde_json::json;
 use tokio::runtime::Runtime;
-use tracing::{error, info};
+
 use uuid::Uuid;
 
 use matrix_sdk::{
@@ -36,16 +36,10 @@ use matrix_sdk::{
         uiaa::AuthData,
     },
     events::{
-        room::{
-            member::MemberEventContent,
-            message::{MessageEventContent, TextMessageEventContent},
-        },
         AnyMessageEventContent, AnySyncRoomEvent, AnySyncStateEvent,
-        StateEvent,
     },
-    identifiers::{DeviceIdBox, RoomId, UserId},
-    locks::RwLock,
-    Client, ClientConfig, LoopCtrl, Result as MatrixResult, Room, SyncSettings,
+    identifiers::{DeviceIdBox, RoomId},
+    Client, LoopCtrl, Result as MatrixResult, Room, SyncSettings,
 };
 
 use weechat::{Task, Weechat};
@@ -335,19 +329,17 @@ impl Connection {
     }
 
     fn sync_filter() -> FilterDefinition<'static> {
-        FilterDefinition {
-            room: RoomFilter {
-                state: RoomEventFilter {
-                    lazy_load_options: LazyLoadOptions::Enabled {
-                        include_redundant_members: false,
-                    },
-                    limit: Some(10u16.into()),
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        }
+        let mut filter = FilterDefinition::default();
+        let mut room_filter = RoomFilter::default();
+        let mut event_filter = RoomEventFilter::default();
+
+        event_filter.lazy_load_options = LazyLoadOptions::Enabled { include_redundant_members: false };
+        event_filter.limit = Some(10u16.into());
+
+        room_filter.state = event_filter;
+        filter.room = room_filter;
+
+        filter
     }
 
     /// Main client sync loop.
@@ -378,7 +370,7 @@ impl Connection {
                 Ok(d) => d,
             };
 
-            let first_login = device_id.is_none();
+            let _first_login = device_id.is_none();
 
             let ret = client
                 .login(

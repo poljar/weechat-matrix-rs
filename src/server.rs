@@ -62,7 +62,7 @@ use std::{
     path::PathBuf,
     rc::{Rc, Weak},
 };
-use tracing::{error, info};
+use tracing::error;
 use url::Url;
 
 use matrix_sdk::{
@@ -71,10 +71,7 @@ use matrix_sdk::{
         membership::get_member_events::Response as MembersResponse,
         session::login::Response as LoginResponse,
     },
-    events::{
-        room::member::MemberEventContent, AnySyncRoomEvent, AnySyncStateEvent,
-        StateEvent,
-    },
+    events::{AnySyncRoomEvent, AnySyncStateEvent},
     identifiers::{DeviceIdBox, RoomId, UserId},
     Client, ClientConfig, Room,
 };
