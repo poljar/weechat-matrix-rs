@@ -320,8 +320,7 @@ impl MatrixRoom {
 
         if let Ok(buffer) = buffer.upgrade() {
             for line in rendered.content.lines {
-                let message =
-                    format!("{}\t{}", &rendered.prefix, &line.message);
+                let message = format!("{}{}", &rendered.prefix, &line.message);
                 let tags: Vec<&str> =
                     line.tags.iter().map(|t| t.as_str()).collect();
                 buffer.print_date_tags(0, &tags, &message)
@@ -502,7 +501,8 @@ impl MatrixRoom {
             &sender,
             &event.content(),
         )
-        .await.map(|r| {
+        .await
+        .map(|r| {
             // TODO the tags are different if the room is a DM.
             if sender.user_id == self.own_user_id {
                 r.add_self_tags()
@@ -526,8 +526,8 @@ impl MatrixRoom {
                         panic!("No own member {}", self.own_user_id)
                     });
 
-                let local_echo =
-                    c.render_with_prefix_for_echo(&sender, uuid, &())
+                let local_echo = c
+                    .render_with_prefix_for_echo(&sender, uuid, &())
                     .add_self_tags();
                 self.print_rendered_event(local_echo);
 

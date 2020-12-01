@@ -94,7 +94,7 @@ pub trait Render {
     }
 
     fn prefix(&self, sender: &WeechatRoomMember) -> String {
-        sender.nick_colored()
+        format!("{}\t", sender.nick_colored())
     }
 
     /// Render the event.
@@ -239,17 +239,16 @@ impl Render for NoticeMessageEventContent {
     type RenderContext = WeechatRoomMember;
 
     fn prefix(&self, _: &WeechatRoomMember) -> String {
-        Weechat::prefix(Prefix::Action).to_owned()
+        Weechat::prefix(Prefix::Network).to_owned()
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
         // TODO parse and render using the formattted body.
         let message = format!(
-            "{prefix}{color_notice}Notice\
+            "{color_notice}Notice\
             {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
             sender.nick(),
             self.body,
-            prefix = Weechat::prefix(Prefix::Network),
             color_notice = Weechat::color("irc.color.notice"),
             color_delim = Weechat::color("chat_delimiters"),
             color_reset = Weechat::color("reset"),
@@ -269,16 +268,15 @@ impl Render for ServerNoticeMessageEventContent {
     type RenderContext = WeechatRoomMember;
 
     fn prefix(&self, _: &WeechatRoomMember) -> String {
-        Weechat::prefix(Prefix::Action).to_owned()
+        Weechat::prefix(Prefix::Network).to_owned()
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
         let message = format!(
-            "{prefix}{color_notice}Server notice\
+            "{color_notice}Server notice\
             {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
             sender.nick(),
             self.body,
-            prefix = Weechat::prefix(Prefix::Network),
             color_notice = Weechat::color("irc.color.notice"),
             color_delim = Weechat::color("chat_delimiters"),
             color_reset = Weechat::color("reset"),
@@ -542,7 +540,7 @@ pub fn render_membership(
                         Some(name) => format!(
                             "{prefix}{target} {color_action}changed their display name to{color_reset} {new}",
                             prefix = Weechat::prefix(prefix),
-                            target = target_name,
+                            target = event.prev_content.as_ref().map(|p| p.displayname.clone()).flatten().unwrap_or(target_name),
                             new = name,
                             color_action = color_action,
                             color_reset = color_reset
@@ -588,13 +586,11 @@ pub fn render_membership(
             op = operation,
             sender = sender_name
         ),
-        None | Error | Joined | Left | InvitationRejected | _ => {
-            format!(
-                "{prefix}{target} {op}",
-                prefix = Weechat::prefix(prefix),
-                target = target_name,
-                op = operation
-            )
-        }
+        None | Error | Joined | Left | InvitationRejected | _ => format!(
+            "{prefix}{target} {op}",
+            prefix = Weechat::prefix(prefix),
+            target = target_name,
+            op = operation
+        ),
     }
 }

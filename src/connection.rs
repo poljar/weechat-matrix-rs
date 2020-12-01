@@ -35,9 +35,7 @@ use matrix_sdk::{
         typing::create_typing_event::{Response as TypingResponse, Typing},
         uiaa::AuthData,
     },
-    events::{
-        AnyMessageEventContent, AnySyncRoomEvent, AnySyncStateEvent,
-    },
+    events::{AnyMessageEventContent, AnySyncRoomEvent, AnySyncStateEvent},
     identifiers::{DeviceIdBox, RoomId},
     Client, LoopCtrl, Result as MatrixResult, Room, SyncSettings,
 };
@@ -333,7 +331,9 @@ impl Connection {
         let mut room_filter = RoomFilter::default();
         let mut event_filter = RoomEventFilter::default();
 
-        event_filter.lazy_load_options = LazyLoadOptions::Enabled { include_redundant_members: false };
+        event_filter.lazy_load_options = LazyLoadOptions::Enabled {
+            include_redundant_members: false,
+        };
         event_filter.limit = Some(10u16.into());
 
         room_filter.state = event_filter;

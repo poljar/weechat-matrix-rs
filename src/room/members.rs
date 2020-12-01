@@ -178,12 +178,6 @@ impl Members {
             buffer.remove_nick(&member.nick());
             Some(member)
         } else {
-            error!(
-                "{}: Tried removing a non-existent Weechat room member: {}",
-                buffer.name(),
-                user_id
-            );
-
             None
         }
     }
