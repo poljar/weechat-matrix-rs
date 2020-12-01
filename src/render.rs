@@ -32,6 +32,28 @@ pub struct RenderedEvent {
     pub content: RenderedContent,
 }
 
+impl RenderedEvent {
+    const MSG_TAGS: &'static [&'static str] = &["notify_message"];
+    const SELF_TAGS: &'static [&'static str] =
+        &["notify_none", "no_highlight", "self_msg"];
+
+    pub fn add_self_tags(self) -> Self {
+        self.add_tags(Self::SELF_TAGS)
+    }
+
+    pub fn add_msg_tags(self) -> Self {
+        self.add_tags(Self::MSG_TAGS)
+    }
+
+    fn add_tags(mut self, tags: &[&str]) -> Self {
+        for line in &mut self.content.lines {
+            line.tags.extend(tags.iter().map(|tag| tag.to_string()))
+        }
+
+        self
+    }
+}
+
 pub struct RenderedLine {
     /// The tags of the line.
     pub tags: Vec<String>,
@@ -322,7 +344,7 @@ impl Render for EncryptedEventContent {
 
 impl Render for RedactedSyncMessageEvent<RedactedMessageEventContent> {
     type RenderContext = WeechatRoomMember;
-    const TAGS: &'static [&'static str] = &[&"matrix_redacted"];
+    const TAGS: &'static [&'static str] = &["matrix_redacted"];
 
     fn render(&self, redacter: &Self::RenderContext) -> RenderedContent {
         // TODO add the redaction reason.

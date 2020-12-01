@@ -502,7 +502,14 @@ impl MatrixRoom {
             &sender,
             &event.content(),
         )
-        .await
+        .await.map(|r| {
+            // TODO the tags are different if the room is a DM.
+            if sender.user_id == self.own_user_id {
+                r.add_self_tags()
+            } else {
+                r.add_msg_tags()
+            }
+        })
     }
 
     // Add the content of the message to our outgoing messag queue and print out
@@ -520,7 +527,8 @@ impl MatrixRoom {
                     });
 
                 let local_echo =
-                    c.render_with_prefix_for_echo(&sender, uuid, &());
+                    c.render_with_prefix_for_echo(&sender, uuid, &())
+                    .add_self_tags();
                 self.print_rendered_event(local_echo);
 
                 self.outgoing_messages.add_with_echo(uuid, content.clone());
