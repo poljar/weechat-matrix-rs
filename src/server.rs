@@ -279,17 +279,20 @@ impl MatrixServer {
                 async move { client.import_keys(file, &passphrase).await };
 
             match c.spawn(import).await {
-                Ok(num) => {
-                    if num > 0 {
+                Ok((imported, total)) => {
+                    if imported > 0 {
                         self.print_network(&format!(
                             "Sucessfully imported {} E2EE keys",
-                            num
+                            imported
                         ));
+                    } else if total > 0 {
+                        self.print_network(
+                            "No keys were imported, the key export contains only \
+                            keys that we already have",
+                        );
                     } else {
                         self.print_network(
-                            "No keys were imported, either the export \
-                                   is empty or it contains sessions that we \
-                                   already have",
+                            "No keys were imported, either the key export is empty"
                         );
                     }
                 }
