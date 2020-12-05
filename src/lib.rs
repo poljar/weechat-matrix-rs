@@ -2,6 +2,7 @@
 
 mod bar_items;
 mod commands;
+mod completions;
 mod config;
 mod connection;
 mod debug;
@@ -22,8 +23,8 @@ use weechat::{
 };
 
 use crate::{
-    bar_items::BarItems, commands::Commands, config::ConfigHandle,
-    room::RoomHandle, server::MatrixServer,
+    bar_items::BarItems, commands::Commands, completions::Completions,
+    config::ConfigHandle, room::RoomHandle, server::MatrixServer,
 };
 
 const PLUGIN_NAME: &str = "matrix";
@@ -137,6 +138,8 @@ struct Matrix {
     bar_items: BarItems,
     #[used]
     typing_notice_signal: SignalHook,
+    #[used]
+    completions: Completions,
     debug_buffer: RefCell<Option<BufferHandle>>,
 }
 
@@ -182,8 +185,8 @@ impl Plugin for Matrix {
         let config = ConfigHandle::new(&servers);
         let commands = Commands::hook_all(&servers, &config)?;
 
-        // TODO move the bar creation into a separate file.
         let bar_items = BarItems::hook_all(servers.clone())?;
+        let completions = Completions::hook_all(servers.clone())?;
 
         tracing_subscriber::fmt()
             .with_writer(debug::Debug)
@@ -212,6 +215,7 @@ impl Plugin for Matrix {
             commands,
             config,
             bar_items,
+            completions,
             debug_buffer: RefCell::new(None),
             typing_notice_signal: typing,
         };

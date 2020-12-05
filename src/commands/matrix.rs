@@ -52,10 +52,12 @@ Use /matrix [command] help to find out more.\n",
             .add_completion("server |add|delete|list|listfull")
             .add_completion("devices |list|delete|set-name")
             .add_completion(&format!("keys {}", KeysCommand::COMPLETION))
-            .add_completion("connect")
-            .add_completion("disconnect")
-            .add_completion("reconnect")
-            .add_completion("help server|connect|disconnect|reconnect");
+            .add_completion("connect %(matrix_servers)")
+            .add_completion("disconnect %(matrix_servers)")
+            .add_completion("reconnect %(matrix_servers)")
+            .add_completion(
+                "help server|connect|disconnect|reconnect|keys|devices",
+            );
 
         Command::new(
             matrix_settings,
