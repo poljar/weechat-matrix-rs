@@ -31,9 +31,9 @@ pub struct Members {
 
 #[derive(Clone, Debug)]
 pub struct WeechatRoomMember {
-    pub inner: RoomMember,
-    pub own_user: bool,
-    pub ambiguous_nick: Rc<RefCell<bool>>,
+    inner: RoomMember,
+    color: String,
+    ambiguous_nick: Rc<RefCell<bool>>,
 }
 
 impl Members {
@@ -173,11 +173,18 @@ impl Members {
 
     /// Retrieve a reference to a Weechat room member by user ID.
     pub async fn get(&self, user_id: &UserId) -> Option<WeechatRoomMember> {
+        let color = if self.room.own_user_id() == user_id {
+            "weechat.color.chat_nick_self".into()
+        } else {
+            Weechat::info_get("nick_color_name", user_id.as_str())
+                .expect("Couldn't get the nick color name").into()
+        };
+
         self.room
             .get_member(user_id)
             .await
             .map(|m| WeechatRoomMember {
-                own_user: self.room.own_user_id() == m.user_id(),
+                color,
                 ambiguous_nick: Rc::new(RefCell::new(
                     m.display_name()
                         .map(|d| {
@@ -309,13 +316,8 @@ impl WeechatRoomMember {
         self.inner.display_name()
     }
 
-    fn color(&self) -> String {
-        if self.own_user {
-            "weechat.color.chat_nick_self".to_owned()
-        } else {
-            Weechat::info_get("nick_color_name", self.user_id().as_str())
-                .expect("Couldn't get the nick color name")
-        }
+    fn color(&self) -> &str {
+        &self.color
     }
 
     fn set_ambiguous(&self, ambiguous: bool) {
