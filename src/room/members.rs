@@ -77,7 +77,7 @@ impl Members {
                     let member = self.get(&user).await.expect(
                         "Used display names and memeber list out of sync",
                     );
-                    self.remove(&user).await;
+                    self.remove_only(&user).await;
                     member.set_ambiguous(false);
                     self.add_nick(&buffer, &member);
                 }
@@ -99,7 +99,7 @@ impl Members {
                     let member = self.get(&user).await.expect(
                         "Used display names and memeber list out of sync",
                     );
-                    self.remove(&user).await;
+                    self.remove_only(&user).await;
                     self.add_nick(&buffer, &member);
                 }
             }
@@ -156,6 +156,17 @@ impl Members {
         member
     }
 
+    async fn remove_only(&self, user_id: &UserId) -> Option<WeechatRoomMember> {
+        let buffer = self.buffer();
+
+        if let Some((_, nick)) = self.nicks.remove(user_id) {
+            buffer.remove_nick(&nick);
+            self.get(user_id).await
+        } else {
+            None
+        }
+    }
+
     /// Remove a Weechat room member by user ID.
     ///
     /// Returns either the removed Weechat room member, or an error if the
@@ -165,6 +176,7 @@ impl Members {
 
         if let Some((_, nick)) = self.nicks.remove(user_id) {
             buffer.remove_nick(&nick);
+            self.disambiguate_nicks(user_id, Some(&nick), None).await;
             self.get(user_id).await
         } else {
             None
