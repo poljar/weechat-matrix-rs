@@ -1,10 +1,6 @@
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    convert::TryFrom,
-    rc::Rc,
-};
+use std::{cell::RefCell, convert::TryFrom, rc::Rc};
 
+use dashmap::{DashMap, DashSet};
 use futures::executor::block_on;
 use tracing::{error, info};
 
@@ -14,7 +10,7 @@ use matrix_sdk::{
         SyncStateEvent,
     },
     identifiers::UserId,
-    Room,
+    Room, RoomMember,
 };
 
 use weechat::{
@@ -28,18 +24,15 @@ use crate::render::render_membership;
 #[derive(Clone)]
 pub struct Members {
     room: Room,
-    inner: Rc<RefCell<HashMap<UserId, WeechatRoomMember>>>,
-    display_names: Rc<RefCell<HashMap<String, HashSet<UserId>>>>,
+    display_names: Rc<DashMap<String, Rc<DashSet<UserId>>>>,
+    nicks: Rc<DashMap<UserId, String>>,
     pub(super) buffer: Rc<Option<BufferHandle>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct WeechatRoomMember {
-    pub user_id: Rc<UserId>,
-    pub nick: Rc<RefCell<String>>,
-    pub display_name: Rc<Option<String>>,
-    pub prefix: Rc<Option<String>>,
-    pub color: Rc<str>,
+    pub inner: RoomMember,
+    pub own_user: bool,
     pub ambiguous_nick: Rc<RefCell<bool>>,
 }
 
@@ -47,9 +40,9 @@ impl Members {
     pub fn new(room: Room) -> Self {
         Self {
             room,
-            inner: Rc::new(RefCell::new(HashMap::new())),
-            display_names: Rc::new(RefCell::new(HashMap::new())),
-            buffer: Rc::new(None),
+            nicks: DashMap::new().into(),
+            display_names: DashMap::new().into(),
+            buffer: None.into(),
         }
     }
 
@@ -65,126 +58,138 @@ impl Members {
     pub async fn disambiguate_nicks(
         &self,
         user_id: &UserId,
-        current_nick: &str,
-        new_nick: &str,
+        current_nick: Option<&str>,
+        new_nick: Option<&str>,
     ) -> bool {
         let buffer = self.buffer();
 
-        let mut display_names = self.display_names.borrow_mut();
+        if let Some(nick) = current_nick {
+            let used_names = self
+                .display_names
+                .entry(nick.to_owned())
+                .or_insert_with(|| Rc::new(DashSet::new()))
+                .clone();
 
-        let used_names = display_names
-            .entry(current_nick.to_owned())
-            .or_insert_with(HashSet::new);
+            used_names.remove(user_id);
 
-        used_names.remove(user_id);
-
-        if used_names.len() == 1 {
-            for user in used_names.iter() {
-                let member = self
-                    .get(user)
-                    .expect("Used display names and memeber list out of sync");
-                buffer.remove_nick(&member.nick());
-                member.set_ambiguous(false);
-                self.add_nick(&buffer, &member);
+            if used_names.len() == 1 {
+                for user in used_names.iter() {
+                    let member = self.get(&user).await.expect(
+                        "Used display names and memeber list out of sync",
+                    );
+                    self.remove(&user).await;
+                    member.set_ambiguous(false);
+                    self.add_nick(&buffer, &member);
+                }
             }
         }
 
-        let used_names = display_names
-            .entry(new_nick.to_owned())
-            .or_insert_with(HashSet::new);
+        if let Some(nick) = new_nick {
+            let used_names = self
+                .display_names
+                .entry(nick.to_owned())
+                .or_insert_with(|| Rc::new(DashSet::new()))
+                .clone();
 
-        used_names.insert(user_id.to_owned());
+            used_names.insert(user_id.to_owned());
 
-        if used_names.len() > 1 {
-            for user in used_names.iter().filter(|u| u != &user_id) {
-                let member = self
-                    .get(user)
-                    .expect("Used display names and memeber list out of sync");
-                buffer.remove_nick(&member.nick());
-                member.set_ambiguous(true);
-                self.add_nick(&buffer, &member);
+            if used_names.len() > 1 {
+                for user in used_names.iter().filter(|u| u.as_ref() != user_id)
+                {
+                    let member = self.get(&user).await.expect(
+                        "Used display names and memeber list out of sync",
+                    );
+                    self.remove(&user).await;
+                    self.add_nick(&buffer, &member);
+                }
             }
-        }
 
-        used_names.len() > 1
+            used_names.len() > 1
+        } else {
+            false
+        }
     }
 
     fn add_nick(&self, buffer: &Buffer, member: &WeechatRoomMember) {
         let nick = member.nick();
-        let nick_settings = NickSettings::new(&nick).set_color(&member.color);
+        let color = member.color();
+        let nick_settings = NickSettings::new(&nick).set_color(&color);
 
         info!("Inserting nick {} for room {}", nick, buffer.short_name());
 
         if let Err(_) = buffer.add_nick(nick_settings) {
-            error!("Error adding nick {}, already addded.", nick);
+            error!(
+                "Error adding nick {} to room {}, already addded.",
+                nick,
+                buffer.short_name()
+            );
         };
+
+        self.nicks.insert(member.user_id().to_owned(), nick);
     }
 
     /// Add a new Weechat room member.
     pub async fn add_or_modify(&self, user_id: &UserId) -> WeechatRoomMember {
         let buffer = self.buffer();
 
-        if let Some(member) = self.get(user_id) {
-            let (new_nick, ambiguous) = {
-                buffer.remove_nick(&member.nick());
-
-                let current_nick = member.nick.borrow();
-                let new_nick = self.calculate_user_name(&user_id).await;
-                let ambiguous = self
-                    .disambiguate_nicks(&user_id, &current_nick, &new_nick)
-                    .await;
-
-                (new_nick, ambiguous)
-            };
-
-            member.update_nick(new_nick, ambiguous);
-            self.add_nick(&buffer, &member);
+        let prev_nick = if let Some((_, nick)) = self.nicks.remove(user_id) {
+            buffer.remove_nick(&nick);
+            Some(nick)
         } else {
-            let new_nick = self.calculate_user_name(&user_id).await;
-            let display_name = self
-                .room()
-                .get_member(&user_id)
-                .await
-                .map(|m| m.display_name().clone())
-                .flatten();
-
-            let ambiguous = self
-                .disambiguate_nicks(&user_id, &new_nick, &new_nick)
-                .await;
-
-            let member = WeechatRoomMember::new(
-                user_id,
-                new_nick,
-                display_name,
-                ambiguous,
-                user_id == self.room.own_user_id(),
-            );
-
-            self.add_nick(&buffer, &member);
-            self.inner.borrow_mut().insert(user_id.clone(), member);
+            None
         };
 
-        self.get(user_id).expect("Can't get inserted member")
+        let member = self.get(user_id).await.expect("Couldn't find member");
+
+        let new_nick = member.nick_raw();
+        let ambigous = self
+            .disambiguate_nicks(
+                member.user_id(),
+                prev_nick.as_deref(),
+                Some(&new_nick),
+            )
+            .await;
+        member.set_ambiguous(ambigous);
+
+        self.add_nick(&buffer, &member);
+
+        member
     }
 
     /// Remove a Weechat room member by user ID.
     ///
     /// Returns either the removed Weechat room member, or an error if the
     /// member does not exist.
-    fn remove(&self, user_id: &UserId) -> Option<WeechatRoomMember> {
+    async fn remove(&self, user_id: &UserId) -> Option<WeechatRoomMember> {
         let buffer = self.buffer();
 
-        if let Some(member) = self.inner.borrow_mut().remove(user_id) {
-            buffer.remove_nick(&member.nick());
-            Some(member)
+        if let Some((_, nick)) = self.nicks.remove(user_id) {
+            buffer.remove_nick(&nick);
+            self.get(user_id).await
         } else {
             None
         }
     }
 
     /// Retrieve a reference to a Weechat room member by user ID.
-    pub fn get(&self, user_id: &UserId) -> Option<WeechatRoomMember> {
-        self.inner.borrow().get(user_id).cloned()
+    pub async fn get(&self, user_id: &UserId) -> Option<WeechatRoomMember> {
+        self.room
+            .get_member(user_id)
+            .await
+            .map(|m| WeechatRoomMember {
+                own_user: self.room.own_user_id() == m.user_id(),
+                ambiguous_nick: Rc::new(RefCell::new(
+                    m.display_name()
+                        .map(|d| {
+                            self.display_names
+                                .get(d)
+                                .map(|u| u.len() > 1)
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false),
+                )),
+                inner: m,
+            })
     }
 
     fn room(&self) -> &Room {
@@ -211,29 +216,6 @@ impl Members {
         buffer.set_short_name(&name)
     }
 
-    /// Helper method to calculate the display name of a room member from their
-    /// UserId.
-    ///
-    /// If no member with that ID is in the room, the string representation of
-    /// the ID will be returned.
-    async fn calculate_user_name(&self, user_id: &UserId) -> String {
-        let member =
-            self.room().get_member(user_id).await.unwrap_or_else(|| {
-                panic!(
-                    "No such member {} in {}",
-                    user_id,
-                    self.buffer().short_name()
-                )
-            });
-
-        // TODO
-        if let Some(name) = member.display_name() {
-            name.to_owned()
-        } else {
-            member.disambiguated_name()
-        }
-    }
-
     pub async fn handle_membership_event(
         &self,
         event: &SyncStateEvent<MemberEventContent>,
@@ -255,8 +237,10 @@ impl Members {
             t
         } else {
             error!(
-                "Invalid state key given by the server: {}",
-                event.state_key
+                "Invalid state key in room {} from sender {}: {}",
+                buffer.short_name(),
+                event.sender,
+                event.state_key,
             );
             return;
         };
@@ -271,7 +255,7 @@ impl Members {
         // For leaves and bans we just need to remove the member.
         let target = match event.content.membership {
             Invite | Join => Some(self.add_or_modify(&target_id).await),
-            Leave | Ban => self.remove(&target_id),
+            Leave | Ban => self.remove(&target_id).await,
             Knock | _ => None,
         };
 
@@ -280,7 +264,7 @@ impl Members {
         self.update_buffer_name();
 
         if !state_event {
-            let sender = self.get(&sender_id);
+            let sender = self.get(&sender_id).await;
 
             // Display the event message
             let message = match (&sender, &target) {
@@ -317,37 +301,31 @@ impl Members {
 }
 
 impl WeechatRoomMember {
-    pub fn new(
-        user_id: &UserId,
-        nick: String,
-        display_name: Option<String>,
-        ambigous: bool,
-        own_user: bool,
-    ) -> Self {
-        let color = if own_user {
-            "weechat.color.chat_nick_self".to_owned()
-        } else {
-            Weechat::info_get("nick_color_name", user_id.as_str())
-                .expect("Couldn't get the nick color name")
-        };
-
-        WeechatRoomMember {
-            user_id: Rc::new(user_id.clone()),
-            nick: Rc::new(RefCell::new(nick)),
-            display_name: Rc::new(display_name),
-            prefix: Rc::new(None),
-            color: color.into(),
-            ambiguous_nick: Rc::new(RefCell::new(ambigous.into())),
-        }
+    pub fn user_id(&self) -> &UserId {
+        self.inner.user_id()
     }
 
-    fn update_nick(&self, new_nick: String, ambiguous: bool) {
-        *self.nick.borrow_mut() = new_nick;
-        *self.ambiguous_nick.borrow_mut() = ambiguous;
+    pub fn display_name(&self) -> Option<&str> {
+        self.inner.display_name()
+    }
+
+    fn color(&self) -> String {
+        if self.own_user {
+            "weechat.color.chat_nick_self".to_owned()
+        } else {
+            Weechat::info_get("nick_color_name", self.user_id().as_str())
+                .expect("Couldn't get the nick color name")
+        }
     }
 
     fn set_ambiguous(&self, ambiguous: bool) {
         *self.ambiguous_nick.borrow_mut() = ambiguous;
+    }
+
+    fn nick_raw(&self) -> &str {
+        self.inner
+            .display_name()
+            .unwrap_or_else(|| self.user_id().as_str())
     }
 
     pub fn nick_colored(&self) -> String {
@@ -355,16 +333,16 @@ impl WeechatRoomMember {
             // TODO this should color the parenthesis differently.
             format!(
                 "{}{}{} ({})",
-                Weechat::color(&self.color),
-                self.nick.borrow(),
+                Weechat::color(&self.color()),
+                self.nick_raw(),
                 Weechat::color("reset"),
-                self.user_id,
+                self.user_id(),
             )
         } else {
             format!(
                 "{}{}{}",
-                Weechat::color(&self.color),
-                self.nick.borrow(),
+                Weechat::color(&self.color()),
+                self.nick_raw(),
                 Weechat::color("reset")
             )
         }
@@ -372,9 +350,9 @@ impl WeechatRoomMember {
 
     pub fn nick(&self) -> String {
         if *self.ambiguous_nick.borrow() {
-            format!("{} ({})", self.nick.borrow(), self.user_id)
+            format!("{} ({})", self.nick_raw(), self.user_id())
         } else {
-            self.nick.borrow().to_owned()
+            self.nick_raw().to_string()
         }
     }
 }

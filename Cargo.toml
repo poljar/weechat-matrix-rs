@@ -10,25 +10,26 @@ name = "matrix"
 crate-type = ["cdylib"]
 
 [dependencies]
-url = "2.1.1"
-futures = "0.3.6"
+url = "2.2.0"
+futures = "0.3.8"
 tokio = { version = "0.2.22", features = [ "rt-threaded", "sync" ] }
-tracing = "0.1.21"
-tracing-subscriber = "0.2.13"
-async-std = { version = "1.6.5", features = [ "unstable" ] }
+dashmap = "3.11.10"
+tracing = "0.1.22"
+tracing-subscriber = "0.2.15"
+async-std = { version = "1.7.0", features = [ "unstable" ] }
 clap = "2.33.3"
-async-trait = "0.1.41"
+async-trait = "0.1.42"
 uuid = { version = "0.8.1", features = ["v4"] }
 indoc = "1.0.3"
-unicode-segmentation = "1.6.0"
+unicode-segmentation = "1.7.1"
 strum = "0.19.5"
 chrono = "0.4.19"
-serde_json = "1.0.59"
+serde_json = "1.0.60"
 
 [dependencies.weechat]
 git = "https://github.com/poljar/rust-weechat"
 features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
-path = "/home/poljar/werk/matrix/nio-rust/matrix_sdk"
+path = "/home/poljar/werk/priv/nio-rust/matrix_sdk"
 branch = "crypto-improvements"

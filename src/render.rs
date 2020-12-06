@@ -112,7 +112,7 @@ pub trait Render {
             .unwrap_or_default()
             .as_secs();
 
-        let tags = self.event_tags(event_id, &sender.user_id);
+        let tags = self.event_tags(event_id, &sender.user_id());
 
         for line in &mut content.lines {
             line.tags = tags.clone();
@@ -469,17 +469,17 @@ pub fn render_membership(
     };
 
     fn formatted_name(member: &WeechatRoomMember) -> String {
-        match &*member.display_name {
+        match member.display_name() {
             Some(display_name) => {
                 format!(
                     "{name} {color_delim}({color_reset}{user_id}{color_delim}){color_reset}",
                     name = display_name,
-                    user_id = &member.user_id,
+                    user_id = member.user_id(),
                     color_delim = Weechat::color("chat_delimiters"),
                     color_reset = Weechat::color("reset"))
             }
 
-            Option::None => member.user_id.as_ref().to_string(),
+            Option::None => member.user_id().to_string(),
         }
     }
 

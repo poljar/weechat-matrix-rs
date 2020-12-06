@@ -328,7 +328,7 @@ impl MatrixRoom {
         }
     }
 
-    fn redact_event(&self, event: &SyncRedactionEvent) {
+    async fn redact_event(&self, event: &SyncRedactionEvent) {
         let buffer_handle = self.buffer_handle();
 
         let buffer = if let Ok(b) = buffer_handle.upgrade() {
@@ -338,7 +338,7 @@ impl MatrixRoom {
         };
 
         // TODO remove this unwrap.
-        let redacter = self.members.get(&event.sender).unwrap();
+        let redacter = self.members.get(&event.sender).await.unwrap();
 
         let event_id_tag =
             Cow::from(format!("{}_id_{}", PLUGIN_NAME, event.redacts));
@@ -492,6 +492,7 @@ impl MatrixRoom {
         let sender = self
             .members
             .get(event.sender())
+            .await
             .expect("Rendering a message but the sender isn't in the nicklist");
 
         let send_time = event.origin_server_ts();
@@ -504,7 +505,7 @@ impl MatrixRoom {
         .await
         .map(|r| {
             // TODO the tags are different if the room is a DM.
-            if sender.user_id == self.own_user_id {
+            if sender.user_id() == &*self.own_user_id {
                 r.add_self_tags()
             } else {
                 r.add_msg_tags()
@@ -514,7 +515,7 @@ impl MatrixRoom {
 
     // Add the content of the message to our outgoing messag queue and print out
     // a local echo line if local echo is enabled.
-    fn queue_outgoing_message(
+    async fn queue_outgoing_message(
         &self,
         uuid: Uuid,
         content: &MessageEventContent,
@@ -522,7 +523,7 @@ impl MatrixRoom {
         if self.config.borrow().look().local_echo() {
             if let MessageEventContent::Text(c) = content {
                 let sender =
-                    self.members.get(&self.own_user_id).unwrap_or_else(|| {
+                    self.members.get(&self.own_user_id).await.unwrap_or_else(|| {
                         panic!("No own member {}", self.own_user_id)
                     });
 
@@ -562,7 +563,7 @@ impl MatrixRoom {
         let uuid = Uuid::new_v4();
 
         if let Some(c) = &*self.connection.borrow() {
-            self.queue_outgoing_message(uuid, &content);
+            self.queue_outgoing_message(uuid, &content).await;
             match c
                 .send_message(
                     &self.room_id,
@@ -849,23 +850,23 @@ impl MatrixRoom {
         }
 
         if let AnySyncMessageEvent::RoomRedaction(r) = event {
-            self.redact_event(r);
+            self.redact_event(r).await;
         } else if let Some(rendered) = self.render_sync_message(event).await {
             self.print_rendered_event(rendered);
         }
     }
 
-    fn handle_redacted_events(&self, event: &AnyRedactedSyncMessageEvent) {
+    async fn handle_redacted_events(&self, event: &AnyRedactedSyncMessageEvent) {
         use AnyRedactedSyncMessageEvent::*;
 
         if let RoomMessage(e) = event {
             // TODO remove those expects and unwraps.
             let redacter =
                 &e.unsigned.redacted_because.as_ref().unwrap().sender;
-            let redacter = self.members.get(redacter).expect(
+            let redacter = self.members.get(redacter).await.expect(
                 "Rendering a message but the sender isn't in the nicklist",
             );
-            let sender = self.members.get(&e.sender).expect(
+            let sender = self.members.get(&e.sender).await.expect(
                 "Rendering a message but the sender isn't in the nicklist",
             );
             let rendered = e.render_with_prefix(
@@ -895,7 +896,7 @@ impl MatrixRoom {
                 self.handle_room_message(message).await
             }
             AnySyncRoomEvent::RedactedMessage(e) => {
-                self.handle_redacted_events(e)
+                self.handle_redacted_events(e).await
             }
             // We don't print out redacted state events for now.
             AnySyncRoomEvent::RedactedState(_) => (),
@@ -908,7 +909,7 @@ impl MatrixRoom {
     pub async fn handle_room_event(&self, event: &AnyRoomEvent) {
         match &event {
             AnyRoomEvent::Message(event) => {
-                let sender = self.members.get(event.sender()).expect(
+                let sender = self.members.get(event.sender()).await.expect(
                     "Rendering a message but the sender isn't in the nicklist",
                 );
 
