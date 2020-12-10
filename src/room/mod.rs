@@ -224,7 +224,42 @@ impl RoomHandle {
             .upgrade()
             .expect("Can't upgrade newly created buffer");
 
+        buffer
+            .add_nicklist_group(
+                "000|o",
+                "weechat.color.nicklist_group",
+                true,
+                None,
+            )
+            .expect("Can't create nicklist group");
+        buffer
+            .add_nicklist_group(
+                "001|h",
+                "weechat.color.nicklist_group",
+                true,
+                None,
+            )
+            .expect("Can't create nicklist group");
+        buffer
+            .add_nicklist_group(
+                "002|v",
+                "weechat.color.nicklist_group",
+                true,
+                None,
+            )
+            .expect("Can't create nicklist group");
+        buffer
+            .add_nicklist_group(
+                "999|...",
+                "weechat.color.nicklist_group",
+                true,
+                None,
+            )
+            .expect("Can't create nicklist group");
+
         buffer.enable_nicklist();
+        buffer.disable_nicklist_groups();
+        buffer.set_localvar("server", server_name);
 
         // This is fine since we're only given the room to the buffer input and
         // the callback can only run once we yield controll back to Weechat.
@@ -489,11 +524,10 @@ impl MatrixRoom {
         event: &AnySyncMessageEvent,
     ) -> Option<RenderedEvent> {
         // TODO remove this expect.
-        let sender = self
-            .members
-            .get(event.sender())
-            .await
-            .expect("Rendering a message but the sender isn't in the nicklist");
+        let sender =
+            self.members.get(event.sender()).await.expect(
+                "Rendering a message but the sender isn't in the nicklist",
+            );
 
         let send_time = event.origin_server_ts();
         self.render_message_content(
@@ -523,9 +557,9 @@ impl MatrixRoom {
         if self.config.borrow().look().local_echo() {
             if let MessageEventContent::Text(c) = content {
                 let sender =
-                    self.members.get(&self.own_user_id).await.unwrap_or_else(|| {
-                        panic!("No own member {}", self.own_user_id)
-                    });
+                    self.members.get(&self.own_user_id).await.unwrap_or_else(
+                        || panic!("No own member {}", self.own_user_id),
+                    );
 
                 let local_echo = c
                     .render_with_prefix_for_echo(&sender, uuid, &())
@@ -856,7 +890,10 @@ impl MatrixRoom {
         }
     }
 
-    async fn handle_redacted_events(&self, event: &AnyRedactedSyncMessageEvent) {
+    async fn handle_redacted_events(
+        &self,
+        event: &AnyRedactedSyncMessageEvent,
+    ) {
         use AnyRedactedSyncMessageEvent::*;
 
         if let RoomMessage(e) = event {

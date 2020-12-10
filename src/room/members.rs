@@ -112,12 +112,19 @@ impl Members {
 
     fn add_nick(&self, buffer: &Buffer, member: &WeechatRoomMember) {
         let nick = member.nick();
-        let color = member.color();
-        let nick_settings = NickSettings::new(&nick).set_color(&color);
+
+        let group = buffer
+            .search_nicklist_group(member.nicklist_group_name())
+            .expect("No group found when adding member");
+
+        let nick_settings = NickSettings::new(&nick)
+            .set_color(member.color())
+            .set_prefix(member.prefix())
+            .set_prefix_color(member.prefix_color());
 
         info!("Inserting nick {} for room {}", nick, buffer.short_name());
 
-        if let Err(_) = buffer.add_nick(nick_settings) {
+        if let Err(_) = group.add_nick(nick_settings) {
             error!(
                 "Error adding nick {} to room {}, already addded.",
                 nick,
@@ -189,7 +196,8 @@ impl Members {
             "weechat.color.chat_nick_self".into()
         } else {
             Weechat::info_get("nick_color_name", user_id.as_str())
-                .expect("Couldn't get the nick color name").into()
+                .expect("Couldn't get the nick color name")
+                .into()
         };
 
         self.room
@@ -340,6 +348,37 @@ impl WeechatRoomMember {
         self.inner
             .display_name()
             .unwrap_or_else(|| self.user_id().as_str())
+    }
+
+    fn nicklist_group_name(&self) -> &str {
+        match self.inner.power_level() {
+            p if p >= 100 => "000|o",
+            p if p >= 50 => "001|h",
+            p if p > 0 => "002|v",
+            _ => "999|...",
+        }
+    }
+
+    fn nicklist_prefix(&self) -> &str {
+        match self.inner.power_level() {
+            p if p >= 100 => "&",
+            p if p >= 50 => "@",
+            p if p > 0 => "+",
+            _ => " ",
+        }
+    }
+
+    fn prefix(&self) -> &str {
+        self.nicklist_prefix().trim()
+    }
+
+    fn prefix_color(&self) -> &str {
+        match self.prefix() {
+            "&" => "lightgreen",
+            "@" => "lightmagenta",
+            "+" => "yellow",
+            _ => "default",
+        }
     }
 
     pub fn nick_colored(&self) -> String {
