@@ -7,10 +7,11 @@ use std::{
     time::Duration,
 };
 
-use async_std::sync::{channel as async_channel, Receiver, Sender};
+use async_std::channel::{bounded as channel, Receiver, Sender};
 use serde_json::json;
 use tokio::runtime::Runtime;
 
+use tracing::error;
 use uuid::Uuid;
 
 use matrix_sdk::{
@@ -118,7 +119,7 @@ impl Connection {
     }
 
     pub fn new(server: &MatrixServer, client: &Client) -> Self {
-        let (tx, rx) = async_channel(1000);
+        let (tx, rx) = channel(10_000);
 
         let server_name = server.name();
 
@@ -290,24 +291,11 @@ impl Connection {
         receiver: Receiver<Result<ClientMessage, String>>,
         server: Weak<RefCell<InnerServer>>,
     ) {
-        loop {
-            let ret = receiver.recv().await;
-
+        while let Ok(message) = receiver.recv().await {
             let server_cell = server
                 .upgrade()
                 .expect("Can't upgrade server in sync receiver");
             let mut server = server_cell.borrow_mut();
-
-            let message = match ret {
-                Ok(m) => m,
-                Err(e) => {
-                    server.print_error(&format!(
-                        "Error receiving message: {:?}",
-                        e
-                    ));
-                    return;
-                }
-            };
 
             match message {
                 Ok(message) => match message {
@@ -363,7 +351,9 @@ impl Connection {
 
             let device_id = match device_id {
                 Err(e) => {
-                    channel
+                    // TODO do we want to do something with channel.send()
+                    // errors?
+                    let _ = channel
                         .send(Err(format!(
                         "Error while reading the device id for server {}: {:?}",
                         server_name, e
@@ -392,7 +382,7 @@ impl Connection {
                         server_path.clone(),
                         &response,
                     ) {
-                        channel
+                        let _ = channel
                             .send(Err(format!(
                             "Error while writing the device id for server {}: {:?}",
                             server_name, e
@@ -400,12 +390,16 @@ impl Connection {
                         return;
                     }
 
-                    channel
+                    if channel
                         .send(Ok(ClientMessage::LoginMessage(response)))
                         .await
+                        .is_err()
+                    {
+                        return;
+                    }
                 }
                 Err(e) => {
-                    channel
+                    let _ = channel
                         .send(Err(format!("Failed to log in: {:?}", e)))
                         .await;
                     return;
@@ -446,20 +440,24 @@ impl Connection {
             .sync_with_callback(sync_settings, |response| async move {
                 for (room_id, room) in response.rooms.join {
                     for event in room.state.events {
-                        sync_channel
+                        if sync_channel
                             .send(Ok(ClientMessage::SyncState(
                                 room_id.clone(),
                                 event,
                             )))
-                            .await;
+                            .await.is_err() {
+                                return LoopCtrl::Break;
+                            }
                     }
                     for event in room.timeline.events {
-                        sync_channel
+                        if sync_channel
                             .send(Ok(ClientMessage::SyncEvent(
                                 room_id.clone(),
                                 event,
                             )))
-                            .await;
+                            .await.is_err() {
+                                return LoopCtrl::Break;
+                            }
                     }
 
                     if let Some(r) = client_ref.get_joined_room(&room_id) {
@@ -472,12 +470,14 @@ impl Connection {
                                 if let Ok(members) =
                                     client.room_members(&room_id).await
                                 {
-                                    channel
+                                    if let Err(e) = channel
                                         .send(Ok(ClientMessage::Members(
                                             room_id.clone(),
                                             members,
                                         )))
-                                        .await;
+                                        .await {
+                                            error!("Failed to send room members response {:?}", e)
+                                        }
                                 }
                             });
                         }
