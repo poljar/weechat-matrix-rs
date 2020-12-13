@@ -4,7 +4,7 @@ use weechat::{
     Weechat,
 };
 
-use crate::Servers;
+use crate::{BufferOwner, Servers};
 
 pub(super) struct Status {
     servers: Servers,
@@ -13,35 +13,25 @@ pub(super) struct Status {
 impl Status {
     pub(super) fn create(servers: Servers) -> Result<BarItem, ()> {
         let status = Status { servers };
-        BarItem::new("matrix_modes", status)
+        BarItem::new("buffer_modes", status)
     }
 }
 
 impl BarItemCallback for Status {
     fn callback(&mut self, _: &Weechat, buffer: &Buffer) -> String {
-        let servers = self.servers.borrow();
-
         let mut signs = Vec::new();
 
-        for server in servers.values() {
-            let server = server.inner();
+        if let BufferOwner::Room(server, room) =
+            self.servers.buffer_owner(buffer)
+        {
+            if room.is_encrypted() {
+                signs.push(
+                    server.config().borrow().look().encrypted_room_sign(),
+                );
+            }
 
-            for room in server.rooms().values() {
-                if let Ok(b) = room.buffer_handle().upgrade() {
-                    if buffer == &b {
-                        if room.is_encrypted() {
-                            signs.push(
-                                server.config().look().encrypted_room_sign(),
-                            );
-                        }
-
-                        if room.is_busy() {
-                            signs.push("⏳".to_owned());
-                        }
-
-                        break;
-                    }
-                }
+            if room.is_busy() {
+                signs.push("⏳".to_owned());
             }
         }
 

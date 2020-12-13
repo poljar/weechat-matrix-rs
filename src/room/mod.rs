@@ -970,6 +970,10 @@ impl MatrixRoom {
         }
     }
 
+    pub fn room(&self) -> &Room {
+        &self.room
+    }
+
     pub async fn handle_sync_state_event(
         &self,
         event: &AnySyncStateEvent,

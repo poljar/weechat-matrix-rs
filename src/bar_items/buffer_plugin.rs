@@ -30,9 +30,7 @@ impl BarItemCallback for BufferPlugin {
                 )
             }
 
-            BufferOwner::None => {
-                "".to_owned()
-            }
+            BufferOwner::None => "".to_owned(),
         }
     }
 }

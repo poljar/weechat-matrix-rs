@@ -146,7 +146,13 @@ impl Members {
             None
         };
 
-        let member = self.get(user_id).await.expect("Couldn't find member");
+        let member = self.get(user_id).await.unwrap_or_else(|| {
+            panic!(
+                "Couldn't find member {} in {}",
+                user_id,
+                buffer.short_name()
+            )
+        });
 
         let new_nick = member.nick_raw();
         let ambigous = self

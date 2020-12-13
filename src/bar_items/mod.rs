@@ -5,8 +5,8 @@ mod status;
 use weechat::hooks::BarItem;
 
 use crate::Servers;
-use buffer_plugin::BufferPlugin;
 use buffer_name::BufferName;
+use buffer_plugin::BufferPlugin;
 use status::Status;
 
 pub struct BarItems {

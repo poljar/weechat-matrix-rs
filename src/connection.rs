@@ -102,6 +102,10 @@ pub struct Connection {
 }
 
 impl Connection {
+    pub fn client(&self) -> Client {
+        self.client.clone()
+    }
+
     pub async fn spawn<F>(&self, future: F) -> F::Output
     where
         F: Future + Send + 'static,

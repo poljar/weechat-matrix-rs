@@ -192,6 +192,10 @@ impl MatrixServer {
         self.inner.borrow()
     }
 
+    pub fn config(&self) -> ConfigHandle {
+        self.inner().config.clone()
+    }
+
     pub fn clone_inner_weak(&self) -> Weak<RefCell<InnerServer>> {
         Rc::downgrade(&self.inner)
     }
