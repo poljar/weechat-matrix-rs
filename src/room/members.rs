@@ -342,7 +342,7 @@ impl WeechatRoomMember {
         self.inner.display_name()
     }
 
-    fn color(&self) -> &str {
+    pub fn color(&self) -> &str {
         &self.color
     }
 

@@ -83,12 +83,22 @@ pub trait Render {
         Self::TAGS.iter().map(|t| t.to_string()).collect()
     }
 
-    fn event_tags(&self, event_id: &EventId, sender: &UserId) -> Vec<String> {
+    fn event_tags(
+        &self,
+        event_id: &EventId,
+        sender: &UserId,
+        nick: &str,
+        color_name: &str,
+    ) -> Vec<String> {
         let mut tags = self.tags();
         let event_tag = format!("matrix_id_{}", event_id.as_str());
         let sender_tag = format!("matrix_sender_{}", sender.as_str());
+        let nick_tag = format!("nick_{}", nick);
+        let color = format!("prefix_nick_{}", color_name);
         tags.push(event_tag);
         tags.push(sender_tag);
+        tags.push(nick_tag);
+        tags.push(color);
 
         tags
     }
@@ -112,7 +122,12 @@ pub trait Render {
             .unwrap_or_default()
             .as_secs();
 
-        let tags = self.event_tags(event_id, &sender.user_id());
+        let tags = self.event_tags(
+            event_id,
+            &sender.user_id(),
+            &sender.nick(),
+            sender.color(),
+        );
 
         for line in &mut content.lines {
             line.tags = tags.clone();
