@@ -737,6 +737,7 @@ impl MatrixRoom {
             return;
         };
 
+        Weechat::bar_item_update("buffer_modes");
         Weechat::bar_item_update("matrix_modes");
 
         if let Some(connection) = connection {
@@ -762,6 +763,7 @@ impl MatrixRoom {
 
         drop(guard);
 
+        Weechat::bar_item_update("buffer_modes");
         Weechat::bar_item_update("matrix_modes");
     }
 
