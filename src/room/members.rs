@@ -10,7 +10,7 @@ use matrix_sdk::{
         SyncStateEvent,
     },
     identifiers::UserId,
-    Room, RoomMember,
+    JoinedRoom, RoomMember,
 };
 
 use weechat::{
@@ -23,7 +23,7 @@ use crate::render::render_membership;
 
 #[derive(Clone)]
 pub struct Members {
-    room: Room,
+    room: JoinedRoom,
     display_names: Rc<DashMap<String, Rc<DashSet<UserId>>>>,
     nicks: Rc<DashMap<UserId, String>>,
     pub(super) buffer: Rc<Option<BufferHandle>>,
@@ -37,7 +37,7 @@ pub struct WeechatRoomMember {
 }
 
 impl Members {
-    pub fn new(room: Room) -> Self {
+    pub fn new(room: JoinedRoom) -> Self {
         Self {
             room,
             nicks: DashMap::new().into(),
@@ -225,7 +225,7 @@ impl Members {
             })
     }
 
-    fn room(&self) -> &Room {
+    fn room(&self) -> &JoinedRoom {
         &self.room
     }
 

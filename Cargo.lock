@@ -1531,7 +1531,6 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tracing",
- "url",
  "zeroize",
 ]
 

@@ -61,7 +61,7 @@ use matrix_sdk::{
     },
     identifiers::{EventId, RoomId, UserId},
     uuid::Uuid,
-    Room,
+    JoinedRoom,
 };
 
 use weechat::{
@@ -138,7 +138,7 @@ pub struct MatrixRoom {
     homeserver: Rc<Url>,
     room_id: Rc<RoomId>,
     own_user_id: Rc<UserId>,
-    room: Room,
+    room: JoinedRoom,
     buffer: Rc<Option<BufferHandle>>,
 
     config: Rc<RefCell<Config>>,
@@ -185,7 +185,7 @@ impl RoomHandle {
         server_name: &str,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
-        room: Room,
+        room: JoinedRoom,
         homeserver: &Url,
         room_id: RoomId,
         own_user_id: &UserId,
@@ -275,7 +275,7 @@ impl RoomHandle {
     }
 
     pub async fn restore(
-        _room: Room,
+        _room: JoinedRoom,
         _connection: &Rc<RefCell<Option<Connection>>>,
         _config: Rc<RefCell<Config>>,
         _homeserver: &Url,
@@ -972,7 +972,7 @@ impl MatrixRoom {
         }
     }
 
-    pub fn room(&self) -> &Room {
+    pub fn room(&self) -> &JoinedRoom {
         &self.room
     }
 

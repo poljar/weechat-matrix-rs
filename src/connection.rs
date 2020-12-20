@@ -38,7 +38,7 @@ use matrix_sdk::{
     },
     events::{AnyMessageEventContent, AnySyncRoomEvent, AnySyncStateEvent},
     identifiers::{DeviceIdBox, RoomId},
-    Client, LoopCtrl, Result as MatrixResult, Room, SyncSettings,
+    Client, LoopCtrl, Result as MatrixResult, JoinedRoom, SyncSettings,
 };
 
 use weechat::{Task, Weechat};
@@ -82,7 +82,7 @@ pub enum ClientMessage {
     SyncState(RoomId, AnySyncStateEvent),
     SyncEvent(RoomId, AnySyncRoomEvent),
     Members(RoomId, MembersResponse),
-    RestoredRoom(Room),
+    RestoredRoom(JoinedRoom),
 }
 
 /// Struc representing an active connection to the homeserver.

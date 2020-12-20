@@ -73,7 +73,7 @@ use matrix_sdk::{
     },
     events::{AnySyncRoomEvent, AnySyncStateEvent},
     identifiers::{DeviceIdBox, RoomId, UserId},
-    Client, ClientConfig, Room,
+    Client, ClientConfig, JoinedRoom,
 };
 
 use weechat::{
@@ -744,7 +744,7 @@ impl InnerServer {
         self.config.borrow()
     }
 
-    pub async fn restore_room(&mut self, _room: Room) {
+    pub async fn restore_room(&mut self, _room: JoinedRoom) {
         // let homeserver = self
         //     .settings
         //     .homeserver
