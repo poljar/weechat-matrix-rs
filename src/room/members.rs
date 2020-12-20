@@ -119,7 +119,7 @@ impl Members {
 
         let nick_settings = NickSettings::new(&nick)
             .set_color(member.color())
-            .set_prefix(member.prefix())
+            .set_prefix(member.nicklist_prefix())
             .set_prefix_color(member.prefix_color());
 
         info!("Inserting nick {} for room {}", nick, buffer.short_name());
