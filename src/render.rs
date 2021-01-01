@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::{convert::TryInto, time::SystemTime};
 use url::Url;
 
 use matrix_sdk::{
@@ -27,7 +27,7 @@ use crate::room::WeechatRoomMember;
 /// The rendered version of an event.
 pub struct RenderedEvent {
     /// The UNIX timestamp of the event.
-    pub message_timestamp: u64,
+    pub message_timestamp: i64,
     pub prefix: String,
     pub content: RenderedContent,
 }
@@ -54,6 +54,7 @@ impl RenderedEvent {
     }
 }
 
+#[derive(Debug)]
 pub struct RenderedLine {
     /// The tags of the line.
     pub tags: Vec<String>,
@@ -61,6 +62,7 @@ pub struct RenderedLine {
     pub message: String,
 }
 
+#[derive(Debug)]
 pub struct RenderedContent {
     /// The collection of lines that the event has.
     pub lines: Vec<RenderedLine>,
@@ -117,10 +119,12 @@ pub trait Render {
     ) -> RenderedEvent {
         let prefix = self.prefix(sender);
         let mut content = self.render(context);
-        let timestamp: u64 = timestamp
+        let timestamp: i64 = timestamp
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs();
+            .as_secs()
+            .try_into()
+            .unwrap_or_default();
 
         let tags = self.event_tags(
             event_id,
