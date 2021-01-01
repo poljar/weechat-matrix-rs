@@ -235,10 +235,9 @@ impl Members {
 
         if room_name == "#" {
             "##".to_owned()
-        } else if room_name.starts_with('#') {
+        } else if room_name.starts_with('#') || room.is_direct() {
             room_name
         } else {
-            // TODO: only do this for non-direct chats
             format!("#{}", room_name)
         }
     }
