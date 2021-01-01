@@ -282,10 +282,10 @@ impl Members {
         // create a new one.
         //
         // For leaves and bans we just need to remove the member.
-        let target = match event.content.membership {
-            Invite | Join => Some(self.add_or_modify(&target_id).await),
+        match event.content.membership {
+            Invite | Join => self.add_or_modify(&target_id).await,
             Leave | Ban => self.remove(&target_id).await,
-            Knock | _ => None,
+            Knock | _ => (),
         };
 
         // Names of rooms without display names can get affected by the
@@ -294,6 +294,7 @@ impl Members {
 
         if !state_event {
             let sender = self.get(&sender_id).await;
+            let target = self.get(&target_id).await;
 
             // Display the event message
             let message = match (&sender, &target) {
