@@ -34,7 +34,6 @@ pub const BUFFER_CLOSED_ERROR: &str =
 use std::{
     borrow::Cow,
     cell::RefCell,
-    cmp::Reverse,
     collections::HashMap,
     ops::Deref,
     rc::Rc,
@@ -781,7 +780,7 @@ impl MatrixRoom {
         if let Ok(buffer) = self.buffer_handle().upgrade() {
             let mut lines: Vec<LineCopy> =
                 buffer.lines().map(|l| l.into()).collect();
-            lines.sort_by_key(|l| Reverse(l.date));
+            lines.sort_by_key(|l| l.date);
 
             for (line, new) in buffer.lines().zip(lines.drain(..)) {
                 let tags =
