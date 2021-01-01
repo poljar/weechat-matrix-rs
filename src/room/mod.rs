@@ -346,7 +346,11 @@ impl MatrixRoom {
                 let message = format!("{}{}", &rendered.prefix, &line.message);
                 let tags: Vec<&str> =
                     line.tags.iter().map(|t| t.as_str()).collect();
-                buffer.print_date_tags(0, &tags, &message)
+                buffer.print_date_tags(
+                    rendered.message_timestamp,
+                    &tags,
+                    &message,
+                )
             }
         }
     }
