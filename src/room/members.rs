@@ -356,7 +356,7 @@ impl WeechatRoomMember {
     }
 
     fn nicklist_group_name(&self) -> &str {
-        match self.inner.power_level() {
+        match self.inner.normalized_power_level() {
             p if p >= 100 => "000|o",
             p if p >= 50 => "001|h",
             p if p > 0 => "002|v",
@@ -365,7 +365,7 @@ impl WeechatRoomMember {
     }
 
     fn nicklist_prefix(&self) -> &str {
-        match self.inner.power_level() {
+        match self.inner.normalized_power_level() {
             p if p >= 100 => "&",
             p if p >= 50 => "@",
             p if p > 0 => "+",
