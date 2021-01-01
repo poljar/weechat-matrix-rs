@@ -399,8 +399,10 @@ impl WeechatRoomMember {
             )
         } else {
             format!(
-                "{}{}{}",
-                Weechat::color(&self.color()),
+                "{}{}{}{}{}",
+                Weechat::color(self.prefix_color()),
+                self.prefix(),
+                Weechat::color(self.color()),
                 self.nick_raw(),
                 Weechat::color("reset")
             )

@@ -744,23 +744,24 @@ impl InnerServer {
         self.config.borrow()
     }
 
-    pub async fn restore_room(&mut self, _room: JoinedRoom) {
-        // let homeserver = self
-        //     .settings
-        //     .homeserver
-        //     .as_ref()
-        //     .expect("Creating room buffer while no homeserver");
+    pub async fn restore_room(&mut self, room: JoinedRoom) {
+        let homeserver = self
+            .settings
+            .homeserver
+            .as_ref()
+            .expect("Creating room buffer while no homeserver");
 
-        // let buffer = RoomHandle::restore(
-        //     room,
-        //     &self.connection,
-        //     self.config.inner.clone(),
-        //     homeserver,
-        // )
-        // .await;
-        // let room_id = buffer.room_id().to_owned();
+        let buffer = RoomHandle::restore(
+            &self.server_name,
+            room,
+            &self.connection,
+            self.config.inner.clone(),
+            homeserver,
+        )
+        .await;
+        let room_id = buffer.room_id().to_owned();
 
-        // self.rooms.insert(room_id, buffer);
+        self.rooms.insert(room_id, buffer);
     }
 
     fn create_server_buffer(&self) -> BufferHandle {

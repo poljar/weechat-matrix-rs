@@ -38,7 +38,7 @@ use matrix_sdk::{
     },
     events::{AnyMessageEventContent, AnySyncRoomEvent, AnySyncStateEvent},
     identifiers::{DeviceIdBox, RoomId},
-    Client, LoopCtrl, Result as MatrixResult, JoinedRoom, SyncSettings,
+    Client, JoinedRoom, LoopCtrl, Result as MatrixResult, SyncSettings,
 };
 
 use weechat::{Task, Weechat};
@@ -364,7 +364,7 @@ impl Connection {
                 Ok(d) => d,
             };
 
-            let _first_login = device_id.is_none();
+            let first_login = device_id.is_none();
 
             let ret = client
                 .login(
@@ -406,14 +406,14 @@ impl Connection {
                 }
             }
 
-            // if !first_login {
-            //     let joined_rooms = client.joined_rooms();
-            //     for room in joined_rooms.read().await.values() {
-            //         channel
-            //             .send(Ok(ClientMessage::RestoredRoom(room.clone())))
-            //             .await
-            //     }
-            // }
+            if !first_login {
+                for room in client.joined_rooms() {
+                    channel
+                        .send(Ok(ClientMessage::RestoredRoom(room)))
+                        .await
+                        .unwrap();
+                }
+            }
         }
 
         let filter = client

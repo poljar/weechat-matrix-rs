@@ -26,6 +26,7 @@ mod members;
 
 use members::Members;
 pub use members::WeechatRoomMember;
+use tracing::{debug, trace};
 
 pub const BUFFER_CLOSED_ERROR: &str =
     "Buffer got closed but Room is still lingering around";
@@ -43,6 +44,8 @@ use std::{
     },
     time::{Instant, SystemTime},
 };
+
+use futures::StreamExt;
 
 use async_trait::async_trait;
 use unicode_segmentation::UnicodeSegmentation;
@@ -275,52 +278,38 @@ impl RoomHandle {
     }
 
     pub async fn restore(
-        _room: JoinedRoom,
-        _connection: &Rc<RefCell<Option<Connection>>>,
-        _config: Rc<RefCell<Config>>,
-        _homeserver: &Url,
+        server_name: &str,
+        room: JoinedRoom,
+        connection: &Rc<RefCell<Option<Connection>>>,
+        config: Rc<RefCell<Config>>,
+        homeserver: &Url,
     ) -> Self {
-        todo!();
-        // let room_clone = room.clone();
-        // let room_id = room_lock.room_id.to_owned();
-        // let own_user_id = &room_lock.own_user_id;
+        let room_clone = room.clone();
+        let room_id = room.room_id();
+        let own_user_id = room.own_user_id();
 
-        // let room_buffer = Self::new(
-        //     connection,
-        //     config,
-        //     room_clone,
-        //     homeserver,
-        //     room_id,
-        //     own_user_id,
-        // );
+        let room_buffer = Self::new(
+            server_name,
+            connection,
+            config,
+            room_clone,
+            homeserver,
+            room_id.clone(),
+            own_user_id,
+        );
 
-        // debug!("Restoring room {}", room_lock.room_id);
+        debug!("Restoring room {}", room.room_id());
 
-        // let matrix_members = room_lock
-        //     .joined_members
-        //     .values()
-        //     .chain(room_lock.invited_members.values());
+        let mut matrix_members = room.get_joined_user_ids().await;
 
-        // for member in matrix_members {
-        //     let display_name = room_lock
-        //         .get_member(&member.user_id)
-        //         .unwrap()
-        //         .display_name
-        //         .clone();
+        while let Some(user_id) = matrix_members.next().await {
+            trace!("Restoring member {}", user_id);
+            room_buffer.members.add_or_modify(&user_id).await;
+        }
 
-        //     trace!("Restoring member {}", member.user_id);
-        //     let member = WeechatRoomMember::new(
-        //         &member.user_id,
-        //         member.disambiguated_name(),
-        //         display_name,
-        //     );
+        room_buffer.update_buffer_name();
 
-        //     room_buffer.members.add(member);
-        // }
-
-        // room_buffer.update_buffer_name();
-
-        // room_buffer
+        room_buffer
     }
 }
 
