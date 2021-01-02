@@ -87,6 +87,12 @@ pub struct RoomHandle {
     buffer_handle: BufferHandle,
 }
 
+#[derive(Debug, Clone)]
+pub enum PrevBatch {
+    Forward(String),
+    Backwards(String),
+}
+
 impl Deref for RoomHandle {
     type Target = MatrixRoom;
 
@@ -150,7 +156,7 @@ pub struct MatrixRoom {
     typing_in_flight: Rc<Mutex<()>>,
 
     messages_in_flight: IntMutex,
-    prev_batch: Rc<RefCell<Option<String>>>,
+    prev_batch: Rc<RefCell<Option<PrevBatch>>>,
 
     outgoing_messages: MessageQueue,
 
@@ -201,7 +207,9 @@ impl RoomHandle {
             typing_notice_time: Rc::new(RefCell::new(None)),
             typing_in_flight: Rc::new(Mutex::new(())),
             config,
-            prev_batch: Rc::new(RefCell::new(room.last_prev_batch())),
+            prev_batch: Rc::new(RefCell::new(
+                room.last_prev_batch().map(PrevBatch::Backwards),
+            )),
             own_user_id: Rc::new(own_user_id.to_owned()),
             members: members.clone(),
             buffer: members.buffer,
@@ -286,6 +294,7 @@ impl RoomHandle {
         let room_clone = room.clone();
         let room_id = room.room_id();
         let own_user_id = room.own_user_id();
+        let prev_batch = room.last_prev_batch();
 
         let room_buffer = Self::new(
             server_name,
@@ -305,6 +314,9 @@ impl RoomHandle {
             trace!("Restoring member {}", user_id);
             room_buffer.members.add_or_modify(&user_id).await;
         }
+
+        *room_buffer.prev_batch.borrow_mut() =
+            prev_batch.map(PrevBatch::Forward);
 
         room_buffer.update_buffer_name();
 
@@ -739,11 +751,18 @@ impl MatrixRoom {
                     self.handle_room_event(&event).await;
                 }
 
-                if r.chunk.is_empty() {
-                    *self.prev_batch.borrow_mut() = None;
-                } else {
-                    *self.prev_batch.borrow_mut() = r.end;
+                let mut prev_batch = self.prev_batch.borrow_mut();
+
+                if let Some(PrevBatch::Forward(t)) = prev_batch.as_ref() {
+                    *prev_batch = Some(PrevBatch::Backwards(t.to_owned()));
                     self.sort_messages();
+                } else {
+                    if r.chunk.is_empty() {
+                        *prev_batch = None;
+                    } else {
+                        *prev_batch = r.end.map(PrevBatch::Backwards);
+                        self.sort_messages();
+                    }
                 }
             }
         }
@@ -916,7 +935,18 @@ impl MatrixRoom {
             .await
     }
 
+    fn set_prev_batch(&self) {
+        if let Ok(buffer) = self.buffer_handle().upgrade() {
+            if buffer.num_lines() == 0 {
+                *self.prev_batch.borrow_mut() =
+                    self.room.last_prev_batch().map(PrevBatch::Backwards);
+            }
+        }
+    }
+
     pub async fn handle_sync_room_event(&self, event: AnySyncRoomEvent) {
+        self.set_prev_batch();
+
         match &event {
             AnySyncRoomEvent::Message(message) => {
                 self.handle_room_message(message).await
