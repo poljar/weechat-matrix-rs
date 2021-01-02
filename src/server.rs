@@ -713,10 +713,12 @@ impl InnerServer {
                 .expect("Receiving events without a client")
                 .get_joined_room(room_id);
 
-            let room = room.unwrap_or_else(|| panic!(
-                "Receiving events for a room while no room found {}",
-                room_id
-            ));
+            let room = room.unwrap_or_else(|| {
+                panic!(
+                    "Receiving events for a room while no room found {}",
+                    room_id
+                )
+            });
             let buffer = RoomHandle::new(
                 &self.server_name,
                 &self.connection,

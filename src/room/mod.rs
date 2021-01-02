@@ -734,8 +734,7 @@ impl MatrixRoom {
 
         if let Some(connection) = connection {
             if let Ok(r) = connection.room_messages(room_id, prev_batch).await {
-                for event in
-                    r.chunk.iter().filter_map(|e| e.deserialize().ok())
+                for event in r.chunk.iter().filter_map(|e| e.deserialize().ok())
                 {
                     self.handle_room_event(&event).await;
                 }
