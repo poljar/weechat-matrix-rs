@@ -318,6 +318,7 @@ impl Connection {
         }
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     fn sync_filter() -> FilterDefinition<'static> {
         let mut filter = FilterDefinition::default();
         let mut room_filter = RoomFilter::default();

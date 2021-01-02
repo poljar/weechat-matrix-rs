@@ -32,6 +32,7 @@ const PLUGIN_NAME: &str = "matrix";
 #[derive(Clone, Debug)]
 pub struct Servers(Rc<RefCell<HashMap<String, MatrixServer>>>);
 
+#[allow(clippy::large_enum_variant)]
 pub enum BufferOwner {
     Server(MatrixServer),
     Room(MatrixServer, RoomHandle),
@@ -117,11 +118,9 @@ impl SignalCallback for Servers {
         _signal_name: &str,
         data: Option<SignalData>,
     ) -> ReturnCode {
-        if let Some(data) = data {
-            if let SignalData::Buffer(buffer) = data {
-                if let Some(room) = self.find_room(&buffer) {
-                    room.update_typing_notice();
-                }
+        if let Some(SignalData::Buffer(buffer)) = data {
+            if let Some(room) = self.find_room(&buffer) {
+                room.update_typing_notice();
             }
         }
         ReturnCode::Ok

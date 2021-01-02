@@ -208,7 +208,7 @@ impl Render for EmoteMessageEventContent {
     type RenderContext = WeechatRoomMember;
 
     fn prefix(&self, _: &WeechatRoomMember) -> String {
-        Weechat::prefix(Prefix::Action).to_owned()
+        Weechat::prefix(Prefix::Action)
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
@@ -230,7 +230,7 @@ impl Render for LocationMessageEventContent {
     type RenderContext = WeechatRoomMember;
 
     fn prefix(&self, _: &WeechatRoomMember) -> String {
-        Weechat::prefix(Prefix::Action).to_owned()
+        Weechat::prefix(Prefix::Action)
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
@@ -258,7 +258,7 @@ impl Render for NoticeMessageEventContent {
     type RenderContext = WeechatRoomMember;
 
     fn prefix(&self, _: &WeechatRoomMember) -> String {
-        Weechat::prefix(Prefix::Network).to_owned()
+        Weechat::prefix(Prefix::Network)
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
@@ -287,7 +287,7 @@ impl Render for ServerNoticeMessageEventContent {
     type RenderContext = WeechatRoomMember;
 
     fn prefix(&self, _: &WeechatRoomMember) -> String {
-        Weechat::prefix(Prefix::Network).to_owned()
+        Weechat::prefix(Prefix::Network)
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
@@ -605,7 +605,7 @@ pub fn render_membership(
             op = operation,
             sender = sender_name
         ),
-        None | Error | Joined | Left | InvitationRejected | _ => format!(
+        _ => format!(
             "{prefix}{target} {op}",
             prefix = Weechat::prefix(prefix),
             target = target_name,

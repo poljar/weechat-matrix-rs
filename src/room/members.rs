@@ -125,7 +125,7 @@ impl Members {
 
         info!("Inserting nick {} for room {}", nick, buffer.short_name());
 
-        if let Err(_) = group.add_nick(nick_settings) {
+        if group.add_nick(nick_settings).is_err() {
             error!(
                 "Error adding nick {} ({}) to room {}, already addded.",
                 nick,
@@ -204,7 +204,6 @@ impl Members {
         } else {
             Weechat::info_get("nick_color_name", user_id.as_str())
                 .expect("Couldn't get the nick color name")
-                .into()
         };
 
         self.room
@@ -285,7 +284,7 @@ impl Members {
         match event.content.membership {
             Invite | Join => self.add_or_modify(&target_id).await,
             Leave | Ban => self.remove(&target_id).await,
-            Knock | _ => (),
+            _ => (),
         };
 
         // Names of rooms without display names can get affected by the

@@ -433,7 +433,7 @@ impl MatrixRoom {
 
             line.set_message(&new_message);
             line.set_tags(&tags);
-        };
+        }
 
         let mut lines = buffer.lines();
         let first_line = lines.rfind(predicate);
@@ -733,23 +733,19 @@ impl MatrixRoom {
         Weechat::bar_item_update("matrix_modes");
 
         if let Some(connection) = connection {
-            match connection.room_messages(room_id, prev_batch).await {
-                Ok(r) => {
-                    for event in
-                        r.chunk.iter().filter_map(|e| e.deserialize().ok())
-                    {
-                        self.handle_room_event(&event).await;
-                    }
-
-                    if r.chunk.is_empty() {
-                        *self.prev_batch.borrow_mut() = None;
-                    } else {
-                        *self.prev_batch.borrow_mut() = r.end;
-                        self.sort_messages();
-                    }
+            if let Ok(r) = connection.room_messages(room_id, prev_batch).await {
+                for event in
+                    r.chunk.iter().filter_map(|e| e.deserialize().ok())
+                {
+                    self.handle_room_event(&event).await;
                 }
-                // TODO print out the error.
-                Err(_) => (),
+
+                if r.chunk.is_empty() {
+                    *self.prev_batch.borrow_mut() = None;
+                } else {
+                    *self.prev_batch.borrow_mut() = r.end;
+                    self.sort_messages();
+                }
             }
         }
 
