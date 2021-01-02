@@ -44,7 +44,7 @@ use std::{
     time::{Instant, SystemTime},
 };
 
-use futures::StreamExt;
+use futures::{executor::block_on, StreamExt};
 
 use async_trait::async_trait;
 use unicode_segmentation::UnicodeSegmentation;
@@ -200,6 +200,10 @@ impl RoomHandle {
     ) -> Self {
         let members = Members::new(room.clone());
 
+        let own_nick = block_on(room.get_member(own_user_id))
+            .map(|m| m.name().to_owned())
+            .unwrap_or_else(|| own_user_id.localpart().to_owned());
+
         let mut room = MatrixRoom {
             homeserver: Rc::new(homeserver.clone()),
             room_id: Rc::new(room_id.clone()),
@@ -270,6 +274,7 @@ impl RoomHandle {
         buffer.enable_nicklist();
         buffer.disable_nicklist_groups();
         buffer.set_localvar("server", server_name);
+        buffer.set_localvar("nick", &own_nick);
 
         // This is fine since we're only given the room to the buffer input and
         // the callback can only run once we yield controll back to Weechat.
