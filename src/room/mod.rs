@@ -273,8 +273,11 @@ impl RoomHandle {
 
         buffer.enable_nicklist();
         buffer.disable_nicklist_groups();
+
         buffer.set_localvar("server", server_name);
         buffer.set_localvar("nick", &own_nick);
+        buffer.set_localvar("domain", room.room_id().server_name().as_str());
+        buffer.set_localvar("room_id", room.room_id().as_str());
 
         // This is fine since we're only given the room to the buffer input and
         // the callback can only run once we yield controll back to Weechat.
