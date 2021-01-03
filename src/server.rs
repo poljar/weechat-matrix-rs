@@ -77,16 +77,16 @@ use matrix_sdk::{
 };
 
 use weechat::{
-    buffer::{BufferBuilder, BufferHandle},
+    buffer::{Buffer, BufferBuilder, BufferHandle},
     config::{BooleanOptionSettings, ConfigSection, StringOptionSettings},
     Prefix, Weechat,
 };
 
 use crate::{
-    config::Config,
+    config::{Config, ServerBuffer},
     connection::{Connection, InteractiveAuthInfo},
     room::RoomHandle,
-    ConfigHandle, PLUGIN_NAME,
+    ConfigHandle, Servers, PLUGIN_NAME,
 };
 
 #[derive(Debug)]
@@ -130,8 +130,7 @@ pub struct LoginInfo {
 
 #[derive(Clone)]
 pub struct MatrixServer {
-    #[allow(clippy::rc_buffer)]
-    server_name: Rc<String>,
+    server_name: Rc<str>,
     inner: Rc<RefCell<InnerServer>>,
 }
 
@@ -143,8 +142,8 @@ impl std::fmt::Debug for MatrixServer {
 }
 
 pub struct InnerServer {
-    #[allow(clippy::rc_buffer)]
-    server_name: Rc<String>,
+    servers: Servers,
+    server_name: Rc<str>,
     rooms: HashMap<RoomId, RoomHandle>,
     settings: ServerSettings,
     current_settings: ServerSettings,
@@ -160,10 +159,12 @@ impl MatrixServer {
         name: &str,
         config: &ConfigHandle,
         server_section: &mut ConfigSection,
+        servers: Servers,
     ) -> Self {
-        let server_name = Rc::new(name.to_owned());
+        let server_name: Rc<str> = name.to_string().into();
 
         let server = InnerServer {
+            servers,
             server_name: server_name.clone(),
             rooms: HashMap::new(),
             settings: ServerSettings::new(),
@@ -781,7 +782,39 @@ impl InnerServer {
         buffer.set_localvar("nick", &self.settings.username);
         buffer.set_localvar("server", &self.server_name);
 
+        self.merge_server_buffer(&buffer);
+
         buffer_handle
+    }
+
+    fn merge_server_buffer(&self, buffer: &Buffer) {
+        match self.config.borrow().look().server_buffer() {
+            ServerBuffer::MergeWithCore => {
+                buffer.unmerge();
+
+                let core_buffer = buffer.core_buffer();
+                buffer.merge(&core_buffer);
+            }
+            ServerBuffer::Independent => buffer.unmerge(),
+            ServerBuffer::MergeWithoutCore => {
+                buffer.unmerge();
+
+                for server in self.servers.borrow().values() {
+                    if server.name() == &*self.server_name {
+                        continue;
+                    }
+
+                    let inner = server.inner();
+
+                    if let Some(Ok(other_buffer)) =
+                        inner.server_buffer().as_ref().map(|b| b.upgrade())
+                    {
+                        buffer.merge(&other_buffer);
+                        break;
+                    };
+                }
+            }
+        }
     }
 
     fn get_client(&self) -> Option<Client> {

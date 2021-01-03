@@ -66,8 +66,24 @@ impl Servers {
         self.0.borrow()
     }
 
-    fn borrow_mut(&self) -> RefMut<'_, HashMap<String, MatrixServer>> {
-        self.0.borrow_mut()
+    pub fn is_empty(&self) -> bool {
+        self.0.borrow().is_empty()
+    }
+
+    pub fn contains(&self, server_name: &str) -> bool {
+        self.0.borrow().contains_key(server_name)
+    }
+
+    pub fn insert(&self, server: MatrixServer) {
+        self.0.borrow_mut().insert(server.name().to_string(), server);
+    }
+
+    pub fn get(&self, server_name: &str) -> Option<MatrixServer> {
+        self.0.borrow().get(server_name).cloned()
+    }
+
+    pub fn remove(&self, server_name: &str) -> Option<MatrixServer> {
+        self.0.borrow_mut().remove(server_name)
     }
 
     pub fn buffer_owner(&self, buffer: &Buffer) -> BufferOwner {
@@ -150,8 +166,8 @@ impl std::fmt::Debug for Matrix {
 }
 
 impl Matrix {
-    fn autoconnect(servers: &mut HashMap<String, MatrixServer>) {
-        for server in servers.values_mut() {
+    fn autoconnect(servers: &HashMap<String, MatrixServer>) {
+        for server in servers.values() {
             if server.autoconnect() {
                 match server.connect() {
                     Ok(_) => (),
@@ -162,7 +178,7 @@ impl Matrix {
     }
 
     fn create_default_server(
-        servers: &mut HashMap<String, MatrixServer>,
+        servers: Servers,
         config: &ConfigHandle,
     ) {
         // TODO change this to matrix.org.
@@ -173,8 +189,8 @@ impl Matrix {
             .search_section_mut("server")
             .expect("Can't get server section");
 
-        let server = MatrixServer::new(server_name, config, &mut section);
-        servers.insert(server_name.to_owned(), server);
+        let server = MatrixServer::new(server_name, config, &mut section, servers.clone());
+        servers.insert(server);
     }
 }
 
@@ -199,11 +215,8 @@ impl Plugin for Matrix {
             }
         }
 
-        {
-            let mut servers_borrow = servers.borrow_mut();
-            if servers_borrow.is_empty() {
-                Matrix::create_default_server(&mut servers_borrow, &config)
-            }
+        if servers.is_empty() {
+            Matrix::create_default_server(servers.clone(), &config)
         }
 
         let typing = SignalHook::new("input_text_changed", servers.clone())
@@ -220,8 +233,8 @@ impl Plugin for Matrix {
         };
 
         Weechat::spawn(async move {
-            let mut servers = servers.borrow_mut();
-            Matrix::autoconnect(&mut servers);
+            let servers = servers.borrow();
+            Matrix::autoconnect(&servers);
         })
         .detach();
 
@@ -231,7 +244,7 @@ impl Plugin for Matrix {
 
 impl Drop for Matrix {
     fn drop(&mut self) {
-        let mut servers = self.servers.borrow_mut();
+        let servers = self.servers.borrow();
 
         // Buffer close callbacks get called after this, so disconnect here so
         // we don't leave all our rooms.
@@ -239,7 +252,7 @@ impl Drop for Matrix {
         // TODO set a flag on the server as well so we don't even try to leave
         // the rooms, once leaving the rooms is implemented when the buffer gets
         // closed.
-        for server in servers.values_mut() {
+        for server in servers.values() {
             server.disconnect();
         }
     }

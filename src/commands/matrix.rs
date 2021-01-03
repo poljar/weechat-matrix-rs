@@ -83,10 +83,14 @@ Use /matrix [command] help to find out more.\n",
             .search_section_mut("server")
             .expect("Can't get server section");
 
-        let server = MatrixServer::new(server_name, &self.config, &mut section);
+        let server = MatrixServer::new(
+            server_name,
+            &self.config,
+            &mut section,
+            self.servers.clone(),
+        );
 
-        let mut servers = self.servers.borrow_mut();
-        servers.insert(server_name.to_owned(), server);
+        self.servers.insert(server);
 
         let homeserver_option = section
             .search_option(&format!("{}.homeserver", server_name))
@@ -107,12 +111,8 @@ Use /matrix [command] help to find out more.\n",
             .value_of("name")
             .expect("Server name not set but was required");
 
-        let mut servers = self.servers.borrow_mut();
-
         let connected = {
-            let server = servers.get(server_name);
-
-            if let Some(s) = server {
+            if let Some(s) = self.servers.get(server_name) {
                 s.connected()
             } else {
                 Weechat::print(&format!(
@@ -137,7 +137,7 @@ Use /matrix [command] help to find out more.\n",
             return;
         }
 
-        let server = servers.remove(server_name).unwrap();
+        let server = self.servers.remove(server_name).unwrap();
 
         drop(server);
 
@@ -189,11 +189,8 @@ Use /matrix [command] help to find out more.\n",
             .values_of("name")
             .expect("Server names not set but were required");
 
-        let mut servers = self.servers.borrow_mut();
-
         for server_name in server_names {
-            let server = servers.get_mut(server_name);
-            if let Some(s) = server {
+            if let Some(s) = self.servers.get(server_name) {
                 match s.connect() {
                     Ok(_) => (),
                     Err(e) => Weechat::print(&format!("{:?}", e)),
@@ -205,15 +202,11 @@ Use /matrix [command] help to find out more.\n",
     }
 
     fn disconnect_command(&self, args: &ArgMatches) {
-        let mut servers = self.servers.borrow_mut();
-
         let server_name = args
             .value_of("name")
             .expect("Server name not set but was required");
 
-        let server = servers.get_mut(server_name);
-
-        if let Some(s) = server {
+        if let Some(s) = self.servers.get(server_name) {
             s.disconnect();
         } else {
             self.server_not_found(server_name)

@@ -57,6 +57,31 @@ impl From<i32> for RedactionStyle {
     }
 }
 
+#[derive(EnumVariantNames)]
+#[strum(serialize_all = "kebab_case")]
+pub enum ServerBuffer {
+    MergeWithCore,
+    MergeWithoutCore,
+    Independent,
+}
+
+impl Default for ServerBuffer {
+    fn default() -> Self {
+        ServerBuffer::MergeWithCore
+    }
+}
+
+impl From<i32> for ServerBuffer {
+    fn from(value: i32) -> Self {
+        match value {
+            0 => ServerBuffer::MergeWithCore,
+            1 => ServerBuffer::MergeWithoutCore,
+            2 => ServerBuffer::Independent,
+            _ => unreachable!(),
+        }
+    }
+}
+
 config!(
     "matrix-rust",
     Section look {
@@ -80,6 +105,13 @@ config!(
             "The style that should be used when a message needs to be redacted",
             RedactionStyle,
         },
+
+        server_buffer: Enum {
+            // Description
+            "Should the server buffer be merged with other buffers or independent",
+            ServerBuffer,
+        },
+
     },
     Section network {
         debug_buffer: bool {
@@ -165,16 +197,17 @@ impl SectionReadCallback for ConfigHandle {
 
         let server_name = option_args[0];
 
-        {
-            let mut servers_borrow = self.servers.borrow_mut();
-
-            // We are reading the config, if the server doesn't yet exists
-            // we need to create it before setting the option and running
-            // the option change callback.
-            if !servers_borrow.contains_key(server_name) {
-                let server = MatrixServer::new(server_name, &self, section);
-                servers_borrow.insert(server_name.to_owned(), server);
-            }
+        // We are reading the config, if the server doesn't yet exists
+        // we need to create it before setting the option and running
+        // the option change callback.
+        if !self.servers.contains(server_name) {
+            let server = MatrixServer::new(
+                server_name,
+                &self,
+                section,
+                self.servers.clone(),
+            );
+            self.servers.insert(server);
         }
 
         let option = section.search_option(option_name);
