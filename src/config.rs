@@ -92,6 +92,14 @@ config!(
             "🔒",
         },
 
+        busy_sign: String {
+            // Description.
+            "A sign that is used to show that the client is busy, \
+                e.g. when room history is being fetched",
+            // Default value.
+            "⏳",
+        },
+
         local_echo: bool {
             // Description
             "Should the sending message be printed out before the server \
