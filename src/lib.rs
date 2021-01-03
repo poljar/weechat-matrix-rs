@@ -11,7 +11,7 @@ mod room;
 mod server;
 
 use std::{
-    cell::{Ref, RefCell, RefMut},
+    cell::{Ref, RefCell},
     collections::HashMap,
     rc::Rc,
 };

@@ -764,13 +764,11 @@ impl MatrixRoom {
                 if let Some(PrevBatch::Forward(t)) = prev_batch.as_ref() {
                     *prev_batch = Some(PrevBatch::Backwards(t.to_owned()));
                     self.sort_messages();
+                } else if r.chunk.is_empty() {
+                    *prev_batch = None;
                 } else {
-                    if r.chunk.is_empty() {
-                        *prev_batch = None;
-                    } else {
-                        *prev_batch = r.end.map(PrevBatch::Backwards);
-                        self.sort_messages();
-                    }
+                    *prev_batch = r.end.map(PrevBatch::Backwards);
+                    self.sort_messages();
                 }
             }
         }
