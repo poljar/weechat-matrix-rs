@@ -43,7 +43,10 @@ use matrix_sdk::{
 
 use weechat::{Task, Weechat};
 
-use crate::{room::PrevBatch, server::{InnerServer, MatrixServer}};
+use crate::{
+    room::PrevBatch,
+    server::{InnerServer, MatrixServer},
+};
 
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 pub const TYPING_NOTICE_TIMEOUT: Duration = Duration::from_secs(4);
@@ -209,7 +212,9 @@ impl Connection {
 
         self.spawn(async move {
             let request = match &prev_batch {
-                PrevBatch::Backwards(t) => MessagesRequest::backward(&room_id, &t),
+                PrevBatch::Backwards(t) => {
+                    MessagesRequest::backward(&room_id, &t)
+                }
                 PrevBatch::Forward(t) => MessagesRequest::forward(&room_id, &t),
             };
 

@@ -31,9 +31,7 @@ impl BarItemCallback for Status {
             }
 
             if room.is_busy() {
-                signs.push(
-                    server.config().borrow().look().busy_sign(),
-                );
+                signs.push(server.config().borrow().look().busy_sign());
             }
         }
 

@@ -75,7 +75,9 @@ impl Servers {
     }
 
     pub fn insert(&self, server: MatrixServer) {
-        self.0.borrow_mut().insert(server.name().to_string(), server);
+        self.0
+            .borrow_mut()
+            .insert(server.name().to_string(), server);
     }
 
     pub fn get(&self, server_name: &str) -> Option<MatrixServer> {
@@ -177,10 +179,7 @@ impl Matrix {
         }
     }
 
-    fn create_default_server(
-        servers: Servers,
-        config: &ConfigHandle,
-    ) {
+    fn create_default_server(servers: Servers, config: &ConfigHandle) {
         // TODO change this to matrix.org.
         let server_name = "localhost";
 
@@ -189,7 +188,12 @@ impl Matrix {
             .search_section_mut("server")
             .expect("Can't get server section");
 
-        let server = MatrixServer::new(server_name, config, &mut section, servers.clone());
+        let server = MatrixServer::new(
+            server_name,
+            config,
+            &mut section,
+            servers.clone(),
+        );
         servers.insert(server);
     }
 }
