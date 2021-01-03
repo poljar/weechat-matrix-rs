@@ -748,16 +748,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dashmap"
-version = "4.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b937cd1fbd1f194ac842196bd2529f21618088ee6d8bff6a46ece611451c96b"
-dependencies = [
- "cfg-if 1.0.0",
- "num_cpus",
-]
-
-[[package]]
 name = "digest"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1520,10 +1510,10 @@ checksum = "7ffc5c5338469d4d3ea17d269fa8ea3512ad247247c30bd2df69e68309ed0a08"
 [[package]]
 name = "matrix-sdk"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#0edef38eb70e3aa66fa6d6f52ae00b67d0228d46"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#74998c8dd80330def131739ce595a2af5bc512e6"
 dependencies = [
  "async-trait",
- "dashmap 3.11.10",
+ "dashmap",
  "futures",
  "futures-timer",
  "http",
@@ -1544,10 +1534,10 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-base"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#0edef38eb70e3aa66fa6d6f52ae00b67d0228d46"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#74998c8dd80330def131739ce595a2af5bc512e6"
 dependencies = [
  "async-trait",
- "dashmap 4.0.1",
+ "dashmap",
  "futures",
  "matrix-sdk-common",
  "matrix-sdk-common-macros",
@@ -1564,7 +1554,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-common"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#0edef38eb70e3aa66fa6d6f52ae00b67d0228d46"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#74998c8dd80330def131739ce595a2af5bc512e6"
 dependencies = [
  "assign",
  "futures-locks",
@@ -1578,7 +1568,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-common-macros"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#0edef38eb70e3aa66fa6d6f52ae00b67d0228d46"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#74998c8dd80330def131739ce595a2af5bc512e6"
 dependencies = [
  "quote",
  "syn",
@@ -1587,7 +1577,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-crypto"
 version = "0.1.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#0edef38eb70e3aa66fa6d6f52ae00b67d0228d46"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#74998c8dd80330def131739ce595a2af5bc512e6"
 dependencies = [
  "aes-ctr",
  "aes-gcm",
@@ -1595,7 +1585,7 @@ dependencies = [
  "atomic",
  "base64",
  "byteorder",
- "dashmap 3.11.10",
+ "dashmap",
  "getrandom 0.2.0",
  "hmac",
  "matrix-sdk-common",
@@ -3586,7 +3576,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "clap",
- "dashmap 3.11.10",
+ "dashmap",
  "futures",
  "indoc",
  "matrix-sdk",

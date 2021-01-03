@@ -327,6 +327,7 @@ impl RoomHandle {
             prev_batch.map(PrevBatch::Forward);
 
         room_buffer.update_buffer_name();
+        room_buffer.set_topic();
 
         room_buffer
     }
@@ -872,9 +873,9 @@ impl MatrixRoom {
         }
     }
 
-    fn set_topic(&self, topic: &str) {
+    fn set_topic(&self) {
         if let Ok(buffer) = self.buffer_handle().upgrade() {
-            buffer.set_title(topic);
+            buffer.set_title(&self.room().topic().unwrap_or_default());
         }
     }
 
@@ -1009,7 +1010,7 @@ impl MatrixRoom {
                 self.handle_membership_event(e, state_event).await
             }
             AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
-            AnySyncStateEvent::RoomTopic(t) => self.set_topic(&t.content.topic),
+            AnySyncStateEvent::RoomTopic(_) => self.set_topic(),
             _ => (),
         }
     }
