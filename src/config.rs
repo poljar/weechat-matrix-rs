@@ -24,8 +24,8 @@ use strum_macros::EnumVariantNames;
 use weechat::{
     config,
     config::{
-        Conf, ConfigSection, ConfigSectionSettings, OptionChanged,
-        SectionReadCallback,
+        Conf, ConfigOption, ConfigSection, ConfigSectionSettings,
+        IntegerOptionSettings, OptionChanged, SectionReadCallback,
     },
     Weechat,
 };
@@ -120,13 +120,6 @@ config!(
             "The style that should be used when a message needs to be redacted",
             RedactionStyle,
         },
-
-        server_buffer: Enum {
-            // Description
-            "Should the server buffer be merged with other buffers or independent",
-            ServerBuffer,
-        },
-
     },
     Section network {
         debug_buffer: bool {
@@ -177,6 +170,29 @@ impl ConfigHandle {
             config_borrow
                 .new_section(server_section_options)
                 .expect("Can't create server section");
+
+            let mut look_section = config_borrow.look_mut();
+
+            let servers = servers.clone();
+
+            let settings = IntegerOptionSettings::new("server_buffer")
+                .description("Should the server buffer be merged with other buffers or independent")
+                .set_change_callback(move |_, _| {
+                    for server in servers.borrow().values() {
+                        server.merge_server_buffers();
+                    }
+                })
+                .default_value(ServerBuffer::default() as i32)
+                .string_values(
+                    ServerBuffer::VARIANTS
+                        .iter()
+                        .map(|v| v.to_string())
+                        .collect::<Vec<String>>(),
+                );
+
+            look_section
+                .new_integer_option(settings)
+                .expect("Can't create server buffers option");
         }
 
         config
@@ -188,6 +204,18 @@ impl ConfigHandle {
 
     pub fn borrow_mut(&self) -> RefMut<'_, Config> {
         self.inner.borrow_mut()
+    }
+}
+
+impl<'a> LookSection<'a> {
+    pub fn server_buffer(&self) -> ServerBuffer {
+        if let ConfigOption::Integer(o) =
+            self.search_option("server_buffer").unwrap()
+        {
+            ServerBuffer::from(o.value())
+        } else {
+            panic!("Server buffer option has the wrong type");
+        }
     }
 }
 

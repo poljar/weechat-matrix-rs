@@ -197,6 +197,18 @@ impl MatrixServer {
         self.inner().config.clone()
     }
 
+    pub fn merge_server_buffers(&self) {
+        let inner = self.inner();
+
+        let server_buffer = inner.server_buffer.borrow_mut();
+
+        if let Some(buffer) =
+            server_buffer.as_ref().map(|b| b.upgrade().ok()).flatten()
+        {
+            inner.merge_server_buffer(&buffer);
+        }
+    }
+
     pub fn clone_inner_weak(&self) -> Weak<RefCell<InnerServer>> {
         Rc::downgrade(&self.inner)
     }
@@ -802,20 +814,26 @@ impl InnerServer {
             }
             ServerBuffer::Independent => buffer.unmerge(),
             ServerBuffer::MergeWithoutCore => {
-                buffer.unmerge();
+                let servers = self.servers.borrow();
 
-                for server in self.servers.borrow().values() {
-                    if server.name() == &*self.server_name {
-                        continue;
-                    }
+                let server = if let Some(server) = servers.values().next() {
+                    server
+                } else {
+                    return;
+                };
 
+                if server.name() == &*self.server_name {
+                    buffer.unmerge();
+                } else {
                     let inner = server.inner();
 
                     if let Some(Ok(other_buffer)) =
                         inner.server_buffer().as_ref().map(|b| b.upgrade())
                     {
+                        let core_buffer = buffer.core_buffer();
+
+                        buffer.unmerge_to((core_buffer.number() + 1) as u16);
                         buffer.merge(&other_buffer);
-                        break;
                     };
                 }
             }
