@@ -92,6 +92,13 @@ config!(
             "🔒",
         },
 
+        public_room_sign: String {
+            // Description.
+            "A sign indicating that the current room is public",
+            // Default value.
+            "🌍",
+        },
+
         busy_sign: String {
             // Description.
             "A sign that is used to show that the client is busy, \

@@ -30,6 +30,12 @@ impl BarItemCallback for Status {
                 );
             }
 
+            if room.is_public() {
+                signs.push(
+                    server.config().borrow().look().public_room_sign(),
+                );
+            }
+
             if room.is_busy() {
                 signs.push(server.config().borrow().look().busy_sign());
             }

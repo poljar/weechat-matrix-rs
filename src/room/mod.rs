@@ -316,7 +316,7 @@ impl RoomHandle {
 
         debug!("Restoring room {}", room.room_id());
 
-        let mut matrix_members = room.get_joined_user_ids().await;
+        let mut matrix_members = room.joined_user_ids().await;
 
         while let Some(user_id) = matrix_members.next().await {
             trace!("Restoring member {}", user_id);
@@ -346,6 +346,10 @@ impl BufferInputCallbackAsync for MatrixRoom {
 impl MatrixRoom {
     pub fn is_encrypted(&self) -> bool {
         self.room.is_encrypted()
+    }
+
+    pub fn is_public(&self) -> bool {
+        self.room.is_public()
     }
 
     pub fn room_id(&self) -> &RoomId {
