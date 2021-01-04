@@ -682,9 +682,14 @@ impl Drop for InnerServer {
             .search_section_mut("server")
             .expect("Can't get server section");
 
-        for option_name in
-            &["homeserver", "autoconnect", "password", "proxy", "username"]
-        {
+        for option_name in &[
+            "autoconnect",
+            "homeserver",
+            "password",
+            "proxy",
+            "ssl_verify",
+            "username",
+        ] {
             let option_name = &format!("{}.{}", self.server_name, option_name);
             section.free_option(option_name).unwrap_or_else(|_| {
                 panic!(format!("Can't free option {}", option_name))
