@@ -61,7 +61,7 @@ use matrix_sdk::{
         AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
         SyncMessageEvent, SyncStateEvent,
     },
-    identifiers::{EventId, RoomId, UserId},
+    identifiers::{EventId, RoomAliasId, RoomId, UserId},
     uuid::Uuid,
     JoinedRoom,
 };
@@ -279,6 +279,10 @@ impl RoomHandle {
         buffer.set_localvar("domain", room.room_id().server_name().as_str());
         buffer.set_localvar("room_id", room.room_id().as_str());
 
+        if let Some(alias) = room.alias() {
+            buffer.set_localvar("alias", alias.as_str());
+        }
+
         // This is fine since we're only given the room to the buffer input and
         // the callback can only run once we yield controll back to Weechat.
         unsafe {
@@ -350,6 +354,10 @@ impl MatrixRoom {
 
     pub fn is_public(&self) -> bool {
         self.room.is_public()
+    }
+
+    pub fn alias(&self) -> Option<RoomAliasId> {
+        self.room.canonical_alias()
     }
 
     pub fn room_id(&self) -> &RoomId {
@@ -883,6 +891,14 @@ impl MatrixRoom {
         }
     }
 
+    fn set_alias(&self) {
+        if let Some(alias) = self.alias() {
+            if let Ok(b) = self.buffer_handle().upgrade() {
+                b.set_localvar("alias", alias.as_str());
+            }
+        }
+    }
+
     fn update_buffer_name(&self) {
         let name = self.members.calculate_buffer_name();
 
@@ -1015,6 +1031,7 @@ impl MatrixRoom {
             }
             AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
             AnySyncStateEvent::RoomTopic(_) => self.set_topic(),
+            AnySyncStateEvent::RoomCanonicalAlias(_) => self.set_alias(),
             _ => (),
         }
     }
