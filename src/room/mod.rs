@@ -46,7 +46,6 @@ use std::{
 
 use futures::{executor::block_on, StreamExt};
 
-use async_trait::async_trait;
 use unicode_segmentation::UnicodeSegmentation;
 use url::Url;
 
@@ -63,7 +62,7 @@ use matrix_sdk::{
     },
     identifiers::{EventId, RoomAliasId, RoomId, UserId},
     uuid::Uuid,
-    JoinedRoom,
+    JoinedRoom, async_trait
 };
 
 use weechat::{

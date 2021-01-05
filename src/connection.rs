@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use async_std::channel::{bounded as channel, Receiver, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use serde_json::json;
 use tokio::runtime::Runtime;
 
@@ -297,10 +297,10 @@ impl Connection {
     /// This runs on the main Weechat thread and listens for responses coming
     /// from the client running in the tokio executor.
     pub async fn response_receiver(
-        receiver: Receiver<Result<ClientMessage, String>>,
+        mut receiver: Receiver<Result<ClientMessage, String>>,
         server: Weak<RefCell<InnerServer>>,
     ) {
-        while let Ok(message) = receiver.recv().await {
+        while let Some(message) = receiver.recv().await {
             let server_cell = server
                 .upgrade()
                 .expect("Can't upgrade server in sync receiver");
@@ -418,10 +418,11 @@ impl Connection {
 
             if !first_login {
                 for room in client.joined_rooms() {
-                    channel
+                    if channel
                         .send(Ok(ClientMessage::RestoredRoom(room)))
-                        .await
-                        .unwrap();
+                        .await.is_err() {
+                            return;
+                        }
                 }
             }
         }
@@ -480,13 +481,13 @@ impl Connection {
                                 if let Ok(members) =
                                     client.room_members(&room_id).await
                                 {
-                                    if let Err(e) = channel
+                                    if channel
                                         .send(Ok(ClientMessage::Members(
                                             room_id.clone(),
                                             members,
                                         )))
-                                        .await {
-                                            error!("Failed to send room members response {:?}", e)
+                                        .await.is_err() {
+                                            error!("Failed to send room members response")
                                         }
                                 }
                             });
