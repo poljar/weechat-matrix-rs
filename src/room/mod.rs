@@ -50,6 +50,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use url::Url;
 
 use matrix_sdk::{
+    async_trait,
     events::{
         room::{
             member::MemberEventContent,
@@ -62,7 +63,7 @@ use matrix_sdk::{
     },
     identifiers::{EventId, RoomAliasId, RoomId, UserId},
     uuid::Uuid,
-    JoinedRoom, async_trait
+    JoinedRoom,
 };
 
 use weechat::{

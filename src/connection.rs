@@ -7,9 +7,11 @@ use std::{
     time::Duration,
 };
 
-use tokio::sync::mpsc::{channel, Receiver, Sender};
 use serde_json::json;
-use tokio::runtime::Runtime;
+use tokio::{
+    runtime::Runtime,
+    sync::mpsc::{channel, Receiver, Sender},
+};
 
 use tracing::error;
 use uuid::Uuid;
@@ -420,9 +422,11 @@ impl Connection {
                 for room in client.joined_rooms() {
                     if channel
                         .send(Ok(ClientMessage::RestoredRoom(room)))
-                        .await.is_err() {
-                            return;
-                        }
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
                 }
             }
         }
