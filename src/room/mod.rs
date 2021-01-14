@@ -78,6 +78,7 @@ use crate::{
     config::{Config, RedactionStyle},
     connection::{Connection, TYPING_NOTICE_TIMEOUT},
     render::{Render, RenderedEvent},
+    utils::Edit,
     PLUGIN_NAME,
 };
 
@@ -907,6 +908,81 @@ impl MatrixRoom {
         }
     }
 
+    async fn replace_event(&self, event_id: &EventId, event: RenderedEvent) {
+        if let Ok(buffer) = self.buffer_handle().upgrade() {
+            let event_id_tag = Cow::from(format!("matrix_id_{}", event_id));
+            let lines: Vec<BufferLine> = buffer
+                .lines()
+                .filter(|l| l.tags().contains(&event_id_tag))
+                .collect();
+
+            let date = lines.get(0).map(|l| l.date()).unwrap_or_default();
+
+            for (line, new) in lines.iter().zip(event.content.lines.iter()) {
+                let tags: Vec<&str> = new.tags.iter().map(|t| t.as_str()).collect();
+                let data = LineData {
+                    prefix: Some(&event.prefix),
+                    message: Some(&new.message),
+                    tags: Some(&tags),
+                    ..Default::default()
+                };
+
+                line.update(data);
+            }
+
+            if lines.len() > event.content.lines.len() {
+                for line in &lines[event.content.lines.len()..]  {
+                    line.set_message("");
+                }
+            } else if lines.len() < event.content.lines.len() {
+                for line in &event.content.lines[lines.len()..] {
+                    let message = format!("{}{}", &event.prefix, &line.message);
+                    let tags: Vec<&str> =
+                        line.tags.iter().map(|t| t.as_str()).collect();
+                    buffer.print_date_tags(
+                        date,
+                        &tags,
+                        &message,
+                    )
+                }
+
+                self.sort_messages()
+            }
+        }
+    }
+
+    async fn handle_edits(&self, event: &AnySyncMessageEvent) {
+        // TODO remove this expect.
+        let sender =
+            self.members.get(event.sender()).await.expect(
+                "Rendering a message but the sender isn't in the nicklist",
+            );
+
+        if let Some((event_id, content)) = event.get_edit() {
+            let send_time = event.origin_server_ts();
+
+            if let Some(rendered) = self
+                .render_message_content(
+                    event_id,
+                    send_time,
+                    &sender,
+                    &AnyMessageEventContent::RoomMessage(content.clone()),
+                )
+                .await
+                .map(|r| {
+                    // TODO the tags are different if the room is a DM.
+                    if sender.user_id() == &*self.own_user_id {
+                        r.add_self_tags()
+                    } else {
+                        r.add_msg_tags()
+                    }
+                })
+            {
+                self.replace_event(event_id, rendered).await;
+            }
+        }
+    }
+
     async fn handle_room_message(&self, event: &AnySyncMessageEvent) {
         // If the event has a transaction id it's an event that we sent out
         // ourselves, the content will be in the outgoing message queue and it
@@ -920,6 +996,8 @@ impl MatrixRoom {
 
         if let AnySyncMessageEvent::RoomRedaction(r) = event {
             self.redact_event(r).await;
+        } else if event.is_edit() {
+            self.handle_edits(event).await;
         } else if let Some(rendered) = self.render_sync_message(event).await {
             self.print_rendered_event(rendered);
         }
@@ -992,21 +1070,25 @@ impl MatrixRoom {
     pub async fn handle_room_event(&self, event: &AnyRoomEvent) {
         match &event {
             AnyRoomEvent::Message(event) => {
-                let sender = self.members.get(event.sender()).await.expect(
-                    "Rendering a message but the sender isn't in the nicklist",
-                );
+                // Only print out historical events if they aren't edits of
+                // other events.
+                if !event.is_edit() {
+                    let sender = self.members.get(event.sender()).await.expect(
+                        "Rendering a message but the sender isn't in the nicklist",
+                    );
 
-                let send_time = event.origin_server_ts();
-                if let Some(rendered) = self
-                    .render_message_content(
-                        event.event_id(),
-                        send_time,
-                        &sender,
-                        &event.content(),
-                    )
-                    .await
-                {
-                    self.print_rendered_event(rendered);
+                    let send_time = event.origin_server_ts();
+                    if let Some(rendered) = self
+                        .render_message_content(
+                            event.event_id(),
+                            send_time,
+                            &sender,
+                            &event.content(),
+                        )
+                        .await
+                    {
+                        self.print_rendered_event(rendered);
+                    }
                 }
             }
             // TODO print out redacted messages.

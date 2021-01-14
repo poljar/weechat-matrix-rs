@@ -9,6 +9,7 @@ mod debug;
 mod render;
 mod room;
 mod server;
+mod utils;
 
 use std::{
     cell::{Ref, RefCell},
