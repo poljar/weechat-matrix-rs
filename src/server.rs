@@ -808,7 +808,7 @@ impl InnerServer {
                 .homeserver
                 .as_ref()
                 .map(|u| u.to_string())
-                .unwrap_or(self.server_name.to_string()),
+                .unwrap_or_else(|| self.server_name.to_string()),
         ));
         buffer.set_short_name(&self.server_name);
         buffer.set_localvar("type", "server");

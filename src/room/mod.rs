@@ -908,6 +908,8 @@ impl MatrixRoom {
     }
 
     async fn replace_event(&self, event_id: &EventId, event: RenderedEvent) {
+        use std::cmp::Ordering;
+
         if let Ok(buffer) = self.buffer_handle().upgrade() {
             let event_id_tag = Cow::from(format!("matrix_id_{}", event_id));
             let lines: Vec<BufferLine> = buffer
@@ -930,19 +932,24 @@ impl MatrixRoom {
                 line.update(data);
             }
 
-            if lines.len() > event.content.lines.len() {
-                for line in &lines[event.content.lines.len()..] {
-                    line.set_message("");
+            match lines.len().cmp(&event.content.lines.len()) {
+                Ordering::Greater => {
+                    for line in &lines[event.content.lines.len()..] {
+                        line.set_message("");
+                    }
                 }
-            } else if lines.len() < event.content.lines.len() {
-                for line in &event.content.lines[lines.len()..] {
-                    let message = format!("{}{}", &event.prefix, &line.message);
-                    let tags: Vec<&str> =
-                        line.tags.iter().map(|t| t.as_str()).collect();
-                    buffer.print_date_tags(date, &tags, &message)
-                }
+                Ordering::Less => {
+                    for line in &event.content.lines[lines.len()..] {
+                        let message =
+                            format!("{}{}", &event.prefix, &line.message);
+                        let tags: Vec<&str> =
+                            line.tags.iter().map(|t| t.as_str()).collect();
+                        buffer.print_date_tags(date, &tags, &message)
+                    }
 
-                self.sort_messages()
+                    self.sort_messages()
+                }
+                _ => (),
             }
         }
     }
