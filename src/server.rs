@@ -387,7 +387,7 @@ impl MatrixServer {
                 .collect();
 
             let line = lines.join("\n");
-            self.print_network(&line);
+            self.print(&line);
         };
     }
 
