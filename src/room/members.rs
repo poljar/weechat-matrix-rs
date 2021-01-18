@@ -10,12 +10,12 @@ use matrix_sdk::{
         SyncStateEvent,
     },
     identifiers::UserId,
-    JoinedRoom, RoomMember,
+    JoinedRoom, RoomMember, StoreError,
 };
 
 use weechat::{
     buffer::{Buffer, BufferHandle, NickSettings},
-    Weechat,
+    Prefix, Weechat,
 };
 
 use super::BUFFER_CLOSED_ERROR;
@@ -206,10 +206,8 @@ impl Members {
                 .expect("Couldn't get the nick color name")
         };
 
-        self.room
-            .get_member(user_id)
-            .await
-            .map(|m| WeechatRoomMember {
+        match self.room.get_member(user_id).await {
+            Ok(m) => m.map(|m| WeechatRoomMember {
                 color: Rc::new(color),
                 ambiguous_nick: Rc::new(RefCell::new(
                     self.display_names
@@ -218,30 +216,51 @@ impl Members {
                         .unwrap_or(false),
                 )),
                 inner: m,
-            })
+            }),
+            Err(e) => {
+                Weechat::print(&format!(
+                    "{}: Error fetching a room member from the store: {}",
+                    Weechat::prefix(Prefix::Error),
+                    e.to_string(),
+                ));
+                None
+            }
+        }
     }
 
     fn room(&self) -> &JoinedRoom {
         &self.room
     }
 
-    pub fn calculate_buffer_name(&self) -> String {
+    pub fn calculate_buffer_name(&self) -> Result<String, StoreError> {
         let room = self.room();
-        let room_name = block_on(room.display_name());
+        let room_name = block_on(room.display_name())?;
 
-        if room_name == "#" {
+        let room_name = if room_name == "#" {
             "##".to_owned()
         } else if room_name.starts_with('#') || room.is_direct() {
             room_name
         } else {
             format!("#{}", room_name)
-        }
+        };
+
+        Ok(room_name)
     }
 
-    fn update_buffer_name(&self) {
-        let name = self.calculate_buffer_name();
-        let buffer = self.buffer();
-        buffer.set_short_name(&name)
+    pub fn update_buffer_name(&self) {
+        match self.calculate_buffer_name() {
+            Ok(name) => {
+                let buffer = self.buffer();
+                buffer.set_short_name(&name)
+            }
+            Err(e) => {
+                Weechat::print(&format!(
+                    "{}: Error fetching the room name from the store: {}",
+                    Weechat::prefix(Prefix::Error),
+                    e.to_string(),
+                ));
+            }
+        }
     }
 
     pub async fn handle_membership_event(

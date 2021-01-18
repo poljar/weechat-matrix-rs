@@ -63,7 +63,7 @@ use matrix_sdk::{
     },
     identifiers::{EventId, RoomAliasId, RoomId, UserId},
     uuid::Uuid,
-    JoinedRoom,
+    JoinedRoom, StoreError,
 };
 
 use weechat::{
@@ -202,6 +202,8 @@ impl RoomHandle {
         let members = Members::new(room.clone());
 
         let own_nick = block_on(room.get_member(own_user_id))
+            .ok()
+            .flatten()
             .map(|m| m.name().to_owned())
             .unwrap_or_else(|| own_user_id.localpart().to_owned());
 
@@ -303,7 +305,7 @@ impl RoomHandle {
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
         homeserver: &Url,
-    ) -> Self {
+    ) -> Result<Self, StoreError> {
         let room_clone = room.clone();
         let room_id = room.room_id();
         let own_user_id = room.own_user_id();
@@ -324,6 +326,7 @@ impl RoomHandle {
         let mut matrix_members = room.joined_user_ids().await;
 
         while let Some(user_id) = matrix_members.next().await {
+            let user_id = user_id?;
             trace!("Restoring member {}", user_id);
             room_buffer.members.add_or_modify(&user_id).await;
         }
@@ -334,7 +337,7 @@ impl RoomHandle {
         room_buffer.update_buffer_name();
         room_buffer.set_topic();
 
-        room_buffer
+        Ok(room_buffer)
     }
 }
 
@@ -901,11 +904,7 @@ impl MatrixRoom {
     }
 
     fn update_buffer_name(&self) {
-        let name = self.members.calculate_buffer_name();
-
-        if let Ok(b) = self.buffer_handle().upgrade() {
-            b.set_short_name(&name)
-        }
+        self.members.update_buffer_name();
     }
 
     async fn replace_event(&self, event_id: &EventId, event: RenderedEvent) {
@@ -919,7 +918,8 @@ impl MatrixRoom {
             let date = lines.get(0).map(|l| l.date()).unwrap_or_default();
 
             for (line, new) in lines.iter().zip(event.content.lines.iter()) {
-                let tags: Vec<&str> = new.tags.iter().map(|t| t.as_str()).collect();
+                let tags: Vec<&str> =
+                    new.tags.iter().map(|t| t.as_str()).collect();
                 let data = LineData {
                     prefix: Some(&event.prefix),
                     message: Some(&new.message),
@@ -931,7 +931,7 @@ impl MatrixRoom {
             }
 
             if lines.len() > event.content.lines.len() {
-                for line in &lines[event.content.lines.len()..]  {
+                for line in &lines[event.content.lines.len()..] {
                     line.set_message("");
                 }
             } else if lines.len() < event.content.lines.len() {
@@ -939,11 +939,7 @@ impl MatrixRoom {
                     let message = format!("{}{}", &event.prefix, &line.message);
                     let tags: Vec<&str> =
                         line.tags.iter().map(|t| t.as_str()).collect();
-                    buffer.print_date_tags(
-                        date,
-                        &tags,
-                        &message,
-                    )
+                    buffer.print_date_tags(date, &tags, &message)
                 }
 
                 self.sort_messages()

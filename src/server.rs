@@ -771,17 +771,25 @@ impl InnerServer {
             .as_ref()
             .expect("Creating room buffer while no homeserver");
 
-        let buffer = RoomHandle::restore(
+        match RoomHandle::restore(
             &self.server_name,
             room,
             &self.connection,
             self.config.inner.clone(),
             homeserver,
         )
-        .await;
-        let room_id = buffer.room_id().to_owned();
+        .await
+        {
+            Ok(buffer) => {
+                let room_id = buffer.room_id().to_owned();
 
-        self.rooms.insert(room_id, buffer);
+                self.rooms.insert(room_id, buffer);
+            }
+            Err(e) => self.print_error(&format!(
+                "Error restoring room: {}",
+                e.to_string()
+            )),
+        }
     }
 
     fn create_server_buffer(&self) -> BufferHandle {
@@ -794,8 +802,8 @@ impl InnerServer {
             .upgrade()
             .expect("Can't upgrade newly created server buffer");
 
-        buffer.set_title(
-            &format!("Matrix: {}",
+        buffer.set_title(&format!(
+            "Matrix: {}",
             self.settings()
                 .homeserver
                 .as_ref()
