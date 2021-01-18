@@ -794,6 +794,14 @@ impl InnerServer {
             .upgrade()
             .expect("Can't upgrade newly created server buffer");
 
+        buffer.set_title(
+            &format!("Matrix: {}",
+            self.settings()
+                .homeserver
+                .as_ref()
+                .map(|u| u.to_string())
+                .unwrap_or(self.server_name.to_string()),
+        ));
         buffer.set_short_name(&self.server_name);
         buffer.set_localvar("type", "server");
         buffer.set_localvar("nick", &self.settings.username);
