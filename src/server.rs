@@ -999,8 +999,9 @@ impl InnerServer {
             ))
         })?;
 
-        let mut client_config =
-            ClientConfig::new().store_path(self.get_server_path());
+        let mut client_config = ClientConfig::new()
+            .store_path(self.get_server_path())
+            .passphrase("DEFAULT_PASSPHRASE".to_string());
 
         if let Some(proxy) = settings.proxy.as_ref() {
             client_config = client_config.proxy(proxy.as_str()).unwrap();

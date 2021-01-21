@@ -44,7 +44,7 @@ use std::{
     time::{Instant, SystemTime},
 };
 
-use futures::{executor::block_on, StreamExt};
+use futures::executor::block_on;
 
 use unicode_segmentation::UnicodeSegmentation;
 use url::Url;
@@ -323,10 +323,9 @@ impl RoomHandle {
 
         debug!("Restoring room {}", room.room_id());
 
-        let mut matrix_members = room.joined_user_ids().await;
+        let matrix_members = room.joined_user_ids().await?;
 
-        while let Some(user_id) = matrix_members.next().await {
-            let user_id = user_id?;
+        for user_id in matrix_members {
             trace!("Restoring member {}", user_id);
             room_buffer.members.add_or_modify(&user_id).await;
         }
