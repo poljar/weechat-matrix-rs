@@ -108,8 +108,8 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn client(&self) -> Client {
-        self.client.clone()
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     pub async fn spawn<F>(&self, future: F) -> F::Output

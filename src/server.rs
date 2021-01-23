@@ -58,6 +58,7 @@ use chrono::{offset::Utc, DateTime};
 use indoc::indoc;
 use std::{
     cell::{Ref, RefCell, RefMut},
+    cmp::Reverse,
     collections::HashMap,
     path::PathBuf,
     rc::{Rc, Weak},
@@ -325,7 +326,7 @@ impl MatrixServer {
 
     pub async fn devices(&self) {
         if let Some(c) = self.connection() {
-            let response = match c.devices().await {
+            let mut response = match c.devices().await {
                 Ok(r) => r,
                 Err(e) => {
                     self.print_error(&format!(
@@ -353,6 +354,9 @@ impl MatrixServer {
                 Weechat::color("reset")
             ));
 
+            response.devices.sort_by_key(|d| Reverse(d.last_seen_ts));
+            let own_device_id = c.client().device_id().await;
+
             let lines: Vec<String> = response
                 .devices
                 .iter()
@@ -375,11 +379,22 @@ impl MatrixServer {
                         last_seen_date
                     );
 
+                    let (bold, color) = if own_device_id
+                        .as_ref()
+                        .map(|o| o == &d.device_id)
+                        .unwrap_or(false)
+                    {
+                        (Weechat::color("bold"), format!("*{}", device_color))
+                    } else {
+                        ("", device_color)
+                    };
+
                     format!(
-                        "  {}{:<15}{}{:<30}{:<}",
-                        Weechat::color(&device_color),
+                        "  {}{:<15}{}{}{:<30}{:<}",
+                        Weechat::color(&color),
                         d.device_id.as_str(),
                         Weechat::color("reset"),
+                        bold,
                         d.display_name.as_deref().unwrap_or(""),
                         last_seen,
                     )
