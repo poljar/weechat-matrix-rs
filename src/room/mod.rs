@@ -51,6 +51,7 @@ use url::Url;
 
 use matrix_sdk::{
     async_trait,
+    deserialized_responses::AmbiguityChange,
     events::{
         room::{
             member::MemberEventContent,
@@ -328,7 +329,7 @@ impl RoomHandle {
 
         for user_id in matrix_members {
             trace!("Restoring member {}", user_id);
-            room_buffer.members.add_or_modify(&user_id).await;
+            room_buffer.members.restore_member(&user_id).await;
         }
 
         *room_buffer.prev_batch.borrow_mut() =
@@ -1041,9 +1042,10 @@ impl MatrixRoom {
         &self,
         event: &SyncStateEvent<MemberEventContent>,
         state_event: bool,
+        ambiguity_change: Option<&AmbiguityChange>,
     ) {
         self.members
-            .handle_membership_event(event, state_event)
+            .handle_membership_event(event, state_event, ambiguity_change)
             .await
     }
 
@@ -1112,12 +1114,9 @@ impl MatrixRoom {
     pub async fn handle_sync_state_event(
         &self,
         event: &AnySyncStateEvent,
-        state_event: bool,
+        _state_event: bool,
     ) {
         match event {
-            AnySyncStateEvent::RoomMember(e) => {
-                self.handle_membership_event(e, state_event).await
-            }
             AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
             AnySyncStateEvent::RoomTopic(_) => self.set_topic(),
             AnySyncStateEvent::RoomCanonicalAlias(_) => self.set_alias(),

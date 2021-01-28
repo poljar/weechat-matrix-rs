@@ -68,11 +68,12 @@ use url::Url;
 
 use matrix_sdk::{
     self,
-    api::r0::{
-        membership::get_member_events::Response as MembersResponse,
-        session::login::Response as LoginResponse,
+    api::r0::session::login::Response as LoginResponse,
+    deserialized_responses::{AmbiguityChange, MembersResponse},
+    events::{
+        room::member::MemberEventContent, AnySyncRoomEvent, AnySyncStateEvent,
+        SyncStateEvent,
     },
-    events::{AnySyncRoomEvent, AnySyncStateEvent},
     identifiers::{DeviceIdBox, RoomId, UserId},
     Client, ClientConfig, JoinedRoom,
 };
@@ -945,19 +946,39 @@ impl InnerServer {
         self.connection.borrow().is_some()
     }
 
+    pub async fn receive_member(
+        &self,
+        room_id: RoomId,
+        member: SyncStateEvent<MemberEventContent>,
+        is_state: bool,
+        ambiguity_change: Option<AmbiguityChange>,
+    ) {
+        if let Some(room) = self.rooms.get(&room_id) {
+            room.handle_membership_event(
+                &member.into(),
+                is_state,
+                ambiguity_change.as_ref(),
+            )
+            .await;
+        } else {
+            error!("Room with id {} not found.", room_id);
+        }
+    }
+
     pub async fn receive_members(
         &self,
         room_id: &RoomId,
         members: MembersResponse,
     ) {
         if let Some(room) = self.rooms.get(room_id) {
-            for event in members.chunk {
-                if let Ok(member) = event.deserialize() {
-                    room.handle_membership_event(&member.into(), true).await;
-                }
+            let changes = members.ambiguity_changes.changes.get(room_id);
+            for member in members.chunk {
+                let change = changes.and_then(|c| c.get(&member.event_id));
+                room.handle_membership_event(&member.into(), true, change)
+                    .await;
             }
         } else {
-            error!("ROOM WITH ID {} NOT FOUND", room_id);
+            error!("Room with id {} not found.", room_id);
         }
     }
 

@@ -1,10 +1,11 @@
-use std::{cell::RefCell, convert::TryFrom, rc::Rc};
+use std::{convert::TryFrom, rc::Rc};
 
-use dashmap::{DashMap, DashSet};
+use dashmap::DashMap;
 use futures::executor::block_on;
 use tracing::{error, info};
 
 use matrix_sdk::{
+    deserialized_responses::AmbiguityChange,
     events::{
         room::member::{MemberEventContent, MembershipState},
         SyncStateEvent,
@@ -24,8 +25,8 @@ use crate::render::render_membership;
 #[derive(Clone)]
 pub struct Members {
     room: JoinedRoom,
-    display_names: Rc<DashMap<String, Rc<DashSet<UserId>>>>,
-    nicks: Rc<DashMap<UserId, (String, String)>>,
+    ambiguity_map: Rc<DashMap<UserId, bool>>,
+    nicks: Rc<DashMap<UserId, String>>,
     pub(super) buffer: Rc<Option<BufferHandle>>,
 }
 
@@ -33,7 +34,7 @@ pub struct Members {
 pub struct WeechatRoomMember {
     inner: RoomMember,
     color: Rc<String>,
-    ambiguous_nick: Rc<RefCell<bool>>,
+    ambiguous_nick: Rc<bool>,
 }
 
 impl Members {
@@ -41,7 +42,7 @@ impl Members {
         Self {
             room,
             nicks: DashMap::new().into(),
-            display_names: DashMap::new().into(),
+            ambiguity_map: DashMap::new().into(),
             buffer: None.into(),
         }
     }
@@ -53,62 +54,6 @@ impl Members {
             .expect("Members struct wasn't initialized properly")
             .upgrade()
             .expect(BUFFER_CLOSED_ERROR)
-    }
-
-    pub async fn disambiguate_nicks(
-        &self,
-        user_id: &UserId,
-        current_nick: Option<&str>,
-        new_nick: Option<&str>,
-    ) -> bool {
-        let buffer = self.buffer();
-
-        if let Some(nick) = current_nick {
-            let used_names = self
-                .display_names
-                .entry(nick.to_owned())
-                .or_insert_with(|| Rc::new(DashSet::new()))
-                .clone();
-
-            used_names.remove(user_id);
-
-            if used_names.len() == 1 {
-                for user in used_names.iter() {
-                    let member = self.get(&user).await.expect(
-                        "Used display names and memeber list out of sync",
-                    );
-                    member.set_ambiguous(false);
-                    self.remove_only(&user).await;
-                    self.add_nick(&buffer, &member);
-                }
-            }
-        }
-
-        if let Some(nick) = new_nick {
-            let used_names = self
-                .display_names
-                .entry(nick.to_owned())
-                .or_insert_with(|| Rc::new(DashSet::new()))
-                .clone();
-
-            used_names.insert(user_id.to_owned());
-
-            if used_names.len() == 2 {
-                for user in used_names.iter().filter(|u| u.as_ref() != user_id)
-                {
-                    let member = self.get(&user).await.expect(
-                        "Used display names and memeber list out of sync",
-                    );
-                    member.set_ambiguous(true);
-                    self.remove_only(&user).await;
-                    self.add_nick(&buffer, &member);
-                }
-            }
-
-            used_names.len() > 1
-        } else {
-            false
-        }
     }
 
     fn add_nick(&self, buffer: &Buffer, member: &WeechatRoomMember) {
@@ -134,24 +79,41 @@ impl Members {
             );
         };
 
-        self.nicks.insert(
-            member.user_id().to_owned(),
-            (member.nick_raw().to_string(), nick),
-        );
+        self.nicks.insert(member.user_id().to_owned(), nick);
     }
 
-    /// Add a new Weechat room member.
-    pub async fn add_or_modify(&self, user_id: &UserId) {
+    pub async fn restore_member(&self, user_id: &UserId) {
         let buffer = self.buffer();
 
-        let prev_nick = if let Some((_, (display_name, nick))) =
-            self.nicks.remove(user_id)
-        {
+        match self.room().get_member(user_id).await {
+            Ok(Some(member)) => {
+                self.ambiguity_map
+                    .insert(user_id.clone(), member.name_ambiguous());
+                self.update_member(user_id).await;
+            }
+            Ok(None) => {
+                panic!(
+                    "Couldn't find member {} in {}",
+                    user_id,
+                    buffer.short_name()
+                )
+            }
+            Err(e) => {
+                Weechat::print(&format!(
+                    "{}: Error fetching a room member from the store: {}",
+                    Weechat::prefix(Prefix::Error),
+                    e.to_string(),
+                ));
+            }
+        }
+    }
+
+    pub async fn update_member(&self, user_id: &UserId) {
+        let buffer = self.buffer();
+
+        if let Some(nick) = self.nicks.get(user_id) {
             buffer.remove_nick(&nick);
-            Some(display_name)
-        } else {
-            None
-        };
+        }
 
         let member = self.get(user_id).await.unwrap_or_else(|| {
             panic!(
@@ -161,39 +123,60 @@ impl Members {
             )
         });
 
-        let new_nick = member.nick_raw();
-
-        let ambigous = self
-            .disambiguate_nicks(
-                member.user_id(),
-                prev_nick.as_deref(),
-                Some(&new_nick),
-            )
-            .await;
-        member.set_ambiguous(ambigous);
-
         self.add_nick(&buffer, &member);
     }
 
-    async fn remove_only(&self, user_id: &UserId) {
-        let buffer = self.buffer();
+    /// Add a new Weechat room member.
+    pub async fn add_or_modify(
+        &self,
+        user_id: &UserId,
+        ambiguity_change: Option<&AmbiguityChange>,
+    ) {
+        if let Some(change) = ambiguity_change {
+            self.ambiguity_map
+                .insert(user_id.clone(), change.member_ambiguous);
 
-        if let Some((_, (_, nick))) = self.nicks.remove(user_id) {
-            buffer.remove_nick(&nick);
+            if let Some(disambiguated) = &change.disambiguated_member {
+                self.ambiguity_map.insert(disambiguated.clone(), false);
+                self.update_member(disambiguated).await;
+            }
+
+            if let Some(ambiguated) = &change.ambiguated_member {
+                self.ambiguity_map.insert(ambiguated.clone(), true);
+                self.update_member(ambiguated).await;
+            }
         }
+
+        self.update_member(user_id).await;
     }
 
     /// Remove a Weechat room member by user ID.
     ///
     /// Returns either the removed Weechat room member, or an error if the
     /// member does not exist.
-    async fn remove(&self, user_id: &UserId) {
+    async fn remove(
+        &self,
+        user_id: &UserId,
+        ambiguity_change: Option<&AmbiguityChange>,
+    ) {
+        self.ambiguity_map.remove(user_id);
+
+        if let Some(change) = ambiguity_change {
+            if let Some(disambiguated) = &change.disambiguated_member {
+                self.ambiguity_map.insert(disambiguated.clone(), false);
+                self.update_member(disambiguated).await;
+            }
+
+            if let Some(ambiguated) = &change.ambiguated_member {
+                self.ambiguity_map.insert(ambiguated.clone(), true);
+                self.update_member(ambiguated).await;
+            }
+        }
+
         let buffer = self.buffer();
 
-        if let Some((_, (display_name, nick))) = self.nicks.remove(user_id) {
+        if let Some((_, nick)) = self.nicks.remove(user_id) {
             buffer.remove_nick(&nick);
-            self.disambiguate_nicks(user_id, Some(&display_name), None)
-                .await;
         }
     }
 
@@ -209,12 +192,12 @@ impl Members {
         match self.room.get_member(user_id).await {
             Ok(m) => m.map(|m| WeechatRoomMember {
                 color: Rc::new(color),
-                ambiguous_nick: Rc::new(RefCell::new(
-                    self.display_names
-                        .get(m.name())
-                        .map(|u| u.len() > 1)
+                ambiguous_nick: Rc::new(
+                    self.ambiguity_map
+                        .get(m.user_id())
+                        .map(|a| *a)
                         .unwrap_or(false),
-                )),
+                ),
                 inner: m,
             }),
             Err(e) => {
@@ -267,6 +250,7 @@ impl Members {
         &self,
         event: &SyncStateEvent<MemberEventContent>,
         state_event: bool,
+        ambiguity_change: Option<&AmbiguityChange>,
     ) {
         let buffer = self.buffer();
 
@@ -301,8 +285,10 @@ impl Members {
         //
         // For leaves and bans we just need to remove the member.
         match event.content.membership {
-            Invite | Join => self.add_or_modify(&target_id).await,
-            Leave | Ban => self.remove(&target_id).await,
+            Invite | Join => {
+                self.add_or_modify(&target_id, ambiguity_change).await
+            }
+            Leave | Ban => self.remove(&target_id, ambiguity_change).await,
             _ => (),
         };
 
@@ -361,10 +347,6 @@ impl WeechatRoomMember {
         &self.color
     }
 
-    fn set_ambiguous(&self, ambiguous: bool) {
-        *self.ambiguous_nick.borrow_mut() = ambiguous;
-    }
-
     fn nick_raw(&self) -> &str {
         self.inner.name()
     }
@@ -401,7 +383,7 @@ impl WeechatRoomMember {
     }
 
     pub fn nick_colored(&self) -> String {
-        if *self.ambiguous_nick.borrow() {
+        if *self.ambiguous_nick {
             // TODO this should color the parenthesis differently.
             format!(
                 "{}{}{} ({})",
@@ -423,7 +405,7 @@ impl WeechatRoomMember {
     }
 
     pub fn nick(&self) -> String {
-        if *self.ambiguous_nick.borrow() {
+        if *self.ambiguous_nick {
             format!("{} ({})", self.nick_raw(), self.user_id())
         } else {
             self.nick_raw().to_string()

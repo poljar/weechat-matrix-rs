@@ -26,7 +26,6 @@ use matrix_sdk::{
         filter::{
             FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
         },
-        membership::get_member_events::Response as MembersResponse,
         message::{
             get_message_events::{
                 Request as MessagesRequest, Response as MessagesResponse,
@@ -38,7 +37,11 @@ use matrix_sdk::{
         typing::create_typing_event::{Response as TypingResponse, Typing},
         uiaa::AuthData,
     },
-    events::{AnyMessageEventContent, AnySyncRoomEvent, AnySyncStateEvent},
+    deserialized_responses::{AmbiguityChange, MembersResponse},
+    events::{
+        room::member::MemberEventContent, AnyMessageEventContent,
+        AnySyncRoomEvent, AnySyncStateEvent, SyncStateEvent,
+    },
     identifiers::{DeviceIdBox, RoomId},
     Client, JoinedRoom, LoopCtrl, Result as MatrixResult, SyncSettings,
 };
@@ -86,6 +89,12 @@ pub enum ClientMessage {
     LoginMessage(LoginResponse),
     SyncState(RoomId, AnySyncStateEvent),
     SyncEvent(RoomId, AnySyncRoomEvent),
+    MemberEvent(
+        RoomId,
+        SyncStateEvent<MemberEventContent>,
+        bool,
+        Option<AmbiguityChange>,
+    ),
     Members(RoomId, MembersResponse),
     RestoredRoom(JoinedRoom),
 }
@@ -323,6 +332,16 @@ impl Connection {
                     ClientMessage::Members(room, e) => {
                         server.receive_members(&room, e).await
                     }
+                    ClientMessage::MemberEvent(
+                        room_id,
+                        e,
+                        is_state,
+                        change,
+                    ) => {
+                        server
+                            .receive_member(room_id, e, is_state, change)
+                            .await
+                    }
                 },
                 Err(e) => server.print_error(&format!("Ruma error {}", e)),
             };
@@ -455,24 +474,52 @@ impl Connection {
             .sync_with_callback(sync_settings, |response| async move {
                 for (room_id, room) in response.rooms.join {
                     for event in room.state.events {
-                        if sync_channel
-                            .send(Ok(ClientMessage::SyncState(
-                                room_id.clone(),
-                                event,
-                            )))
-                            .await.is_err() {
-                                return LoopCtrl::Break;
-                            }
+                        if let AnySyncStateEvent::RoomMember(m) = event {
+                            let change = response
+                                .ambiguity_changes
+                                .changes.get(&room_id)
+                                .and_then(|c| c.get(&m.event_id))
+                                .cloned();
+
+                            if sync_channel
+                                .send(Ok(ClientMessage::MemberEvent(room_id.clone(), m, true, change)))
+                                .await.is_err() {
+                                    return LoopCtrl::Break;
+                                }
+                        } else {
+                            if sync_channel
+                                .send(Ok(ClientMessage::SyncState(
+                                    room_id.clone(),
+                                    event,
+                                )))
+                                .await.is_err() {
+                                    return LoopCtrl::Break;
+                                }
+                        }
                     }
                     for event in room.timeline.events {
-                        if sync_channel
-                            .send(Ok(ClientMessage::SyncEvent(
-                                room_id.clone(),
-                                event,
-                            )))
-                            .await.is_err() {
-                                return LoopCtrl::Break;
-                            }
+                        if let AnySyncRoomEvent::State(AnySyncStateEvent::RoomMember(m)) = event {
+                            let change = response
+                                .ambiguity_changes
+                                .changes.get(&room_id)
+                                .and_then(|c| c.get(&m.event_id))
+                                .cloned();
+
+                            if sync_channel
+                                .send(Ok(ClientMessage::MemberEvent(room_id.clone(), m, false, change)))
+                                .await.is_err() {
+                                    return LoopCtrl::Break;
+                                }
+                        } else {
+                            if sync_channel
+                                .send(Ok(ClientMessage::SyncEvent(
+                                    room_id.clone(),
+                                    event,
+                                )))
+                                .await.is_err() {
+                                    return LoopCtrl::Break;
+                                }
+                        }
                     }
 
                     if let Some(r) = client_ref.get_joined_room(&room_id) {

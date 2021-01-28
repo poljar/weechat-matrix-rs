@@ -1036,7 +1036,7 @@ checksum = "7ffc5c5338469d4d3ea17d269fa8ea3512ad247247c30bd2df69e68309ed0a08"
 [[package]]
 name = "matrix-sdk"
 version = "0.2.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#44974982e12bb9da79062db84e1e5f882fb9873f"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#b66c666997cbcf32071d24ffe2484a215de8d0e4"
 dependencies = [
  "dashmap",
  "futures",
@@ -1058,7 +1058,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-base"
 version = "0.2.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#44974982e12bb9da79062db84e1e5f882fb9873f"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#b66c666997cbcf32071d24ffe2484a215de8d0e4"
 dependencies = [
  "chacha20poly1305",
  "dashmap",
@@ -1081,7 +1081,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-common"
 version = "0.2.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#44974982e12bb9da79062db84e1e5f882fb9873f"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#b66c666997cbcf32071d24ffe2484a215de8d0e4"
 dependencies = [
  "async-trait",
  "futures-locks",
@@ -1095,7 +1095,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-crypto"
 version = "0.2.0"
-source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#44974982e12bb9da79062db84e1e5f882fb9873f"
+source = "git+https://github.com/matrix-org/matrix-rust-sdk/?branch=new-state-store#b66c666997cbcf32071d24ffe2484a215de8d0e4"
 dependencies = [
  "aes-ctr",
  "aes-gcm",
@@ -1954,18 +1954,18 @@ checksum = "f638d531eccd6e23b980caf34876660d38e265409d8e99b397ab71eb3612fad0"
 
 [[package]]
 name = "serde"
-version = "1.0.121"
+version = "1.0.122"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6159e3c76cab06f6bc466244d43b35e77e9500cd685da87620addadc2a4c40b1"
+checksum = "974ef1bd2ad8a507599b336595454081ff68a9599b4890af7643c0c0ed73a62c"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.121"
+version = "1.0.122"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3fcab8778dc651bc65cfab2e4eb64996f3c912b74002fb379c94517e1f27c46"
+checksum = "8dee1f300f838c8ac340ecb0112b3ac472464fa67e87292bdb3dfc9c49128e17"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2158,9 +2158,9 @@ checksum = "1e81da0851ada1f3e9d4312c704aa4f8806f0f9d69faaf8df2f3464b4a9437c2"
 
 [[package]]
 name = "syn"
-version = "1.0.59"
+version = "1.0.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07cb8b1b4ebf86a89ee88cbd201b022b94138c623644d035185c84d3f41b7e66"
+checksum = "c700597eca8a5a762beb35753ef6b94df201c81cca676604f547495a0d7f0081"
 dependencies = [
  "proc-macro2",
  "quote",
