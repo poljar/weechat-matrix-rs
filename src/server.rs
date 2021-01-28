@@ -955,7 +955,7 @@ impl InnerServer {
     ) {
         if let Some(room) = self.rooms.get(&room_id) {
             room.handle_membership_event(
-                &member.into(),
+                &member,
                 is_state,
                 ambiguity_change.as_ref(),
             )

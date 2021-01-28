@@ -486,17 +486,13 @@ impl Connection {
                                 .await.is_err() {
                                     return LoopCtrl::Break;
                                 }
-                        } else {
-                            if sync_channel
-                                .send(Ok(ClientMessage::SyncState(
-                                    room_id.clone(),
-                                    event,
-                                )))
-                                .await.is_err() {
-                                    return LoopCtrl::Break;
-                                }
+                        } else if sync_channel
+                            .send(Ok(ClientMessage::SyncState(room_id.clone(), event)))
+                            .await.is_err() {
+                                return LoopCtrl::Break;
                         }
                     }
+
                     for event in room.timeline.events {
                         if let AnySyncRoomEvent::State(AnySyncStateEvent::RoomMember(m)) = event {
                             let change = response
@@ -510,15 +506,13 @@ impl Connection {
                                 .await.is_err() {
                                     return LoopCtrl::Break;
                                 }
-                        } else {
-                            if sync_channel
-                                .send(Ok(ClientMessage::SyncEvent(
-                                    room_id.clone(),
-                                    event,
-                                )))
-                                .await.is_err() {
-                                    return LoopCtrl::Break;
-                                }
+                        } else if sync_channel
+                            .send(Ok(ClientMessage::SyncEvent(
+                                room_id.clone(),
+                                event,
+                            )))
+                            .await.is_err() {
+                                return LoopCtrl::Break;
                         }
                     }
 
