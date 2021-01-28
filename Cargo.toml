@@ -33,4 +33,3 @@ features = ["async", "config_macro"]
 [dependencies.matrix-sdk]
 git = "https://github.com/matrix-org/matrix-rust-sdk/"
 features = ["markdown"]
-branch = "new-state-store"
