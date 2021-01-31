@@ -1,5 +1,3 @@
-#![feature(get_mut_unchecked)]
-
 mod bar_items;
 mod commands;
 mod completions;

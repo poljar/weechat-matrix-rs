@@ -28,9 +28,6 @@ use members::Members;
 pub use members::WeechatRoomMember;
 use tracing::{debug, trace};
 
-pub const BUFFER_CLOSED_ERROR: &str =
-    "Buffer got closed but Room is still lingering around";
-
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -149,7 +146,7 @@ pub struct MatrixRoom {
     room_id: Rc<RoomId>,
     own_user_id: Rc<UserId>,
     room: JoinedRoom,
-    buffer: Rc<Option<BufferHandle>>,
+    buffer: Rc<RefCell<Option<BufferHandle>>>,
 
     config: Rc<RefCell<Config>>,
     connection: Rc<RefCell<Option<Connection>>>,
@@ -208,7 +205,7 @@ impl RoomHandle {
             .map(|m| m.name().to_owned())
             .unwrap_or_else(|| own_user_id.localpart().to_owned());
 
-        let mut room = MatrixRoom {
+        let room = MatrixRoom {
             homeserver: Rc::new(homeserver.clone()),
             room_id: Rc::new(room_id.clone()),
             connection: connection.clone(),
@@ -288,12 +285,7 @@ impl RoomHandle {
             buffer.set_localvar("alias", alias.as_str());
         }
 
-        // This is fine since we're only given the room to the buffer input and
-        // the callback can only run once we yield controll back to Weechat.
-        unsafe {
-            *Rc::get_mut_unchecked(&mut room.members.buffer) =
-                Some(buffer_handle.clone());
-        }
+        *room.members.buffer.borrow_mut() = Some(buffer_handle.clone());
 
         Self {
             inner: room,
@@ -370,7 +362,8 @@ impl MatrixRoom {
     }
 
     pub fn buffer_handle(&self) -> BufferHandle {
-        (&*self.buffer)
+        self.buffer
+            .borrow()
             .as_ref()
             .expect("Room struct wasn't initialized properly")
             .clone()

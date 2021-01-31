@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, rc::Rc};
+use std::{cell::RefCell, convert::TryFrom, rc::Rc};
 
 use dashmap::DashMap;
 use futures::executor::block_on;
@@ -19,7 +19,6 @@ use weechat::{
     Prefix, Weechat,
 };
 
-use super::BUFFER_CLOSED_ERROR;
 use crate::render::render_membership;
 
 #[derive(Clone)]
@@ -27,7 +26,7 @@ pub struct Members {
     room: JoinedRoom,
     ambiguity_map: Rc<DashMap<UserId, bool>>,
     nicks: Rc<DashMap<UserId, String>>,
-    pub(super) buffer: Rc<Option<BufferHandle>>,
+    pub(super) buffer: Rc<RefCell<Option<BufferHandle>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -43,17 +42,15 @@ impl Members {
             room,
             nicks: DashMap::new().into(),
             ambiguity_map: DashMap::new().into(),
-            buffer: None.into(),
+            buffer: RefCell::new(None).into(),
         }
     }
 
-    fn buffer(&self) -> Buffer<'_> {
+    fn buffer(&self) -> BufferHandle {
         self.buffer
-            .as_ref()
-            .as_ref()
+            .borrow()
+            .clone()
             .expect("Members struct wasn't initialized properly")
-            .upgrade()
-            .expect(BUFFER_CLOSED_ERROR)
     }
 
     fn add_nick(&self, buffer: &Buffer, member: &WeechatRoomMember) {
@@ -85,6 +82,12 @@ impl Members {
     pub async fn restore_member(&self, user_id: &UserId) {
         let buffer = self.buffer();
 
+        let buffer = if let Ok(b) = buffer.upgrade() {
+            b
+        } else {
+            return;
+        };
+
         match self.room().get_member(user_id).await {
             Ok(Some(member)) => {
                 self.ambiguity_map
@@ -110,6 +113,12 @@ impl Members {
 
     pub async fn update_member(&self, user_id: &UserId) {
         let buffer = self.buffer();
+
+        let buffer = if let Ok(b) = buffer.upgrade() {
+            b
+        } else {
+            return;
+        };
 
         if let Some(nick) = self.nicks.get(user_id) {
             buffer.remove_nick(&nick);
@@ -175,6 +184,12 @@ impl Members {
 
         let buffer = self.buffer();
 
+        let buffer = if let Ok(b) = buffer.upgrade() {
+            b
+        } else {
+            return;
+        };
+
         if let Some((_, nick)) = self.nicks.remove(user_id) {
             buffer.remove_nick(&nick);
         }
@@ -231,11 +246,16 @@ impl Members {
     }
 
     pub fn update_buffer_name(&self) {
+        let buffer = self.buffer();
+
+        let buffer = if let Ok(b) = buffer.upgrade() {
+            b
+        } else {
+            return;
+        };
+
         match self.calculate_buffer_name() {
-            Ok(name) => {
-                let buffer = self.buffer();
-                buffer.set_short_name(&name)
-            }
+            Ok(name) => buffer.set_short_name(&name),
             Err(e) => {
                 Weechat::print(&format!(
                     "{}: Error fetching the room name from the store: {}",
@@ -253,6 +273,11 @@ impl Members {
         ambiguity_change: Option<&AmbiguityChange>,
     ) {
         let buffer = self.buffer();
+        let buffer = if let Ok(b) = buffer.upgrade() {
+            b
+        } else {
+            return;
+        };
 
         info!(
             "Handling membership event for room {} {} {:?}",
