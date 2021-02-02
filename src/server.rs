@@ -439,6 +439,14 @@ impl MatrixServer {
         }
     }
 
+    fn set_connection(&self, connection: Connection) {
+        *self.inner.borrow_mut().connection.borrow_mut() = Some(connection);
+    }
+
+    fn get_or_create_client(&self) -> Result<Client, ServerError> {
+        self.inner.borrow_mut().get_or_create_client()
+    }
+
     /// Check if the provided value is a valid URL.
     fn is_url_valid(value: &str) -> bool {
         if value.is_empty() {
@@ -605,10 +613,9 @@ impl MatrixServer {
             return Ok(());
         }
 
-        let client = self.inner.borrow_mut().get_or_create_client()?;
+        let client = self.get_or_create_client()?;
         let connection = Connection::new(&self, &client);
-
-        *self.inner.borrow_mut().connection.borrow_mut() = Some(connection);
+        self.set_connection(connection);
 
         self.print_network(&format!(
             "Connected to {}{}{}",
