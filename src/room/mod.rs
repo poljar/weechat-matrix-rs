@@ -619,7 +619,9 @@ impl MatrixRoom {
     pub async fn send_message(&self, content: MessageEventContent) {
         let uuid = Uuid::new_v4();
 
-        if let Some(c) = &*self.connection.borrow() {
+        let connection = self.connection.borrow().clone();
+
+        if let Some(c) = connection {
             self.queue_outgoing_message(uuid, &content).await;
             match c
                 .send_message(
@@ -686,7 +688,9 @@ impl MatrixRoom {
                 }
             };
 
-            if let Some(connection) = &*connection.borrow() {
+            let connection = connection.borrow().clone();
+
+            if let Some(connection) = connection {
                 let response =
                     connection.send_typing_notice(&*room_id, typing).await;
 
