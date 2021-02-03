@@ -1,5 +1,4 @@
 language: rust
-rust: nightly
 
 jobs:
   allow_failures:
