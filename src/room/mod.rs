@@ -676,11 +676,14 @@ impl MatrixRoom {
         let room_id = self.room_id.clone();
         let typing_notice_time = self.typing_notice_time.clone();
 
+        #[allow(clippy::await_holding_lock)]
         let send = |typing: bool| async move {
             let typing_time = typing_notice_time;
 
             // We're in the process of sending out a typing notice, so don't
-            // make the same request twice.
+            // make the same request twice. It's fine to hold on to this lock
+            // accross the await point since we're not going to try to lock it
+            // anywhere else.
             let guard = match typing_in_flight.try_lock() {
                 Ok(guard) => guard,
                 Err(_) => {
