@@ -69,7 +69,7 @@ use url::Url;
 use matrix_sdk::{
     self,
     api::r0::session::login::Response as LoginResponse,
-    deserialized_responses::{AmbiguityChange, MembersResponse},
+    deserialized_responses::AmbiguityChange,
     events::{
         room::member::MemberEventContent, AnySyncRoomEvent, AnySyncStateEvent,
         SyncStateEvent,
@@ -967,23 +967,6 @@ impl InnerServer {
                 ambiguity_change.as_ref(),
             )
             .await;
-        } else {
-            error!("Room with id {} not found.", room_id);
-        }
-    }
-
-    pub async fn receive_members(
-        &self,
-        room_id: &RoomId,
-        members: MembersResponse,
-    ) {
-        if let Some(room) = self.rooms.get(room_id) {
-            let changes = members.ambiguity_changes.changes.get(room_id);
-            for member in members.chunk {
-                let change = changes.and_then(|c| c.get(&member.event_id));
-                room.handle_membership_event(&member.into(), true, change)
-                    .await;
-            }
         } else {
             error!("Room with id {} not found.", room_id);
         }

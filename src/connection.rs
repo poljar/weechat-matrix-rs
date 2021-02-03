@@ -37,7 +37,7 @@ use matrix_sdk::{
         typing::create_typing_event::{Response as TypingResponse, Typing},
         uiaa::AuthData,
     },
-    deserialized_responses::{AmbiguityChange, MembersResponse},
+    deserialized_responses::AmbiguityChange,
     events::{
         room::member::MemberEventContent, AnyMessageEventContent,
         AnySyncRoomEvent, AnySyncStateEvent, SyncStateEvent,
@@ -95,7 +95,6 @@ pub enum ClientMessage {
         bool,
         Option<AmbiguityChange>,
     ),
-    Members(RoomId, MembersResponse),
     RestoredRoom(JoinedRoom),
 }
 
@@ -329,9 +328,6 @@ impl Connection {
                     ClientMessage::RestoredRoom(room) => {
                         server.restore_room(room).await
                     }
-                    ClientMessage::Members(room, e) => {
-                        server.receive_members(&room, e).await
-                    }
                     ClientMessage::MemberEvent(
                         room_id,
                         e,
@@ -477,42 +473,68 @@ impl Connection {
                         if let AnySyncStateEvent::RoomMember(m) = event {
                             let change = response
                                 .ambiguity_changes
-                                .changes.get(&room_id)
+                                .changes
+                                .get(&room_id)
                                 .and_then(|c| c.get(&m.event_id))
                                 .cloned();
 
                             if sync_channel
-                                .send(Ok(ClientMessage::MemberEvent(room_id.clone(), m, true, change)))
-                                .await.is_err() {
-                                    return LoopCtrl::Break;
-                                }
-                        } else if sync_channel
-                            .send(Ok(ClientMessage::SyncState(room_id.clone(), event)))
-                            .await.is_err() {
+                                .send(Ok(ClientMessage::MemberEvent(
+                                    room_id.clone(),
+                                    m,
+                                    true,
+                                    change,
+                                )))
+                                .await
+                                .is_err()
+                            {
                                 return LoopCtrl::Break;
+                            }
+                        } else if sync_channel
+                            .send(Ok(ClientMessage::SyncState(
+                                room_id.clone(),
+                                event,
+                            )))
+                            .await
+                            .is_err()
+                        {
+                            return LoopCtrl::Break;
                         }
                     }
 
                     for event in room.timeline.events {
-                        if let AnySyncRoomEvent::State(AnySyncStateEvent::RoomMember(m)) = event {
+                        if let AnySyncRoomEvent::State(
+                            AnySyncStateEvent::RoomMember(m),
+                        ) = event
+                        {
                             let change = response
                                 .ambiguity_changes
-                                .changes.get(&room_id)
+                                .changes
+                                .get(&room_id)
                                 .and_then(|c| c.get(&m.event_id))
                                 .cloned();
 
                             if sync_channel
-                                .send(Ok(ClientMessage::MemberEvent(room_id.clone(), m, false, change)))
-                                .await.is_err() {
-                                    return LoopCtrl::Break;
-                                }
+                                .send(Ok(ClientMessage::MemberEvent(
+                                    room_id.clone(),
+                                    m,
+                                    false,
+                                    change,
+                                )))
+                                .await
+                                .is_err()
+                            {
+                                return LoopCtrl::Break;
+                            }
                         } else if sync_channel
                             .send(Ok(ClientMessage::SyncEvent(
                                 room_id.clone(),
                                 event,
                             )))
-                            .await.is_err() {
-                                return LoopCtrl::Break;
+                            .await
+                            .is_err()
+                        {
+                            return LoopCtrl::Break;
                         }
                     }
 
@@ -526,14 +548,33 @@ impl Connection {
                                 if let Ok(members) =
                                     client.room_members(&room_id).await
                                 {
-                                    if channel
-                                        .send(Ok(ClientMessage::Members(
-                                            room_id.clone(),
-                                            members,
-                                        )))
-                                        .await.is_err() {
-                                            error!("Failed to send room members response")
+                                    for member in members.chunk {
+                                        let change = members
+                                            .ambiguity_changes
+                                            .changes
+                                            .get(&room_id)
+                                            .and_then(|c| {
+                                                c.get(&member.event_id)
+                                            })
+                                            .cloned();
+
+                                        if let Err(e) = channel
+                                            .send(Ok(
+                                                ClientMessage::MemberEvent(
+                                                    room_id.clone(),
+                                                    member.into(),
+                                                    true,
+                                                    change,
+                                                ),
+                                            ))
+                                            .await
+                                        {
+                                            error!(
+                                                "Failed to send room member {}",
+                                                e
+                                            );
                                         }
+                                    }
                                 }
                             });
                         }
