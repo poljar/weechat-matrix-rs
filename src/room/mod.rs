@@ -29,8 +29,8 @@ pub use members::WeechatRoomMember;
 use tracing::{debug, trace};
 
 use std::{
-    borrow::Cow,
     cell::RefCell,
+    borrow::Cow,
     collections::HashMap,
     ops::Deref,
     rc::Rc,
@@ -193,7 +193,7 @@ impl RoomHandle {
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
         room: JoinedRoom,
-        homeserver: &Url,
+        homeserver: Url,
         room_id: RoomId,
         own_user_id: &UserId,
     ) -> Self {
@@ -206,7 +206,7 @@ impl RoomHandle {
             .unwrap_or_else(|| own_user_id.localpart().to_owned());
 
         let room = MatrixRoom {
-            homeserver: Rc::new(homeserver.clone()),
+            homeserver: Rc::new(homeserver),
             room_id: Rc::new(room_id.clone()),
             connection: connection.clone(),
             typing_notice_time: Rc::new(RefCell::new(None)),
@@ -298,7 +298,7 @@ impl RoomHandle {
         room: JoinedRoom,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
-        homeserver: &Url,
+        homeserver: Url,
     ) -> Result<Self, StoreError> {
         let room_clone = room.clone();
         let room_id = room.room_id();

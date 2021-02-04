@@ -73,6 +73,10 @@ impl Servers {
         self.0.borrow().contains_key(server_name)
     }
 
+    pub fn clear(&self) {
+        self.0.borrow_mut().clear();
+    }
+
     pub fn insert(&self, server: MatrixServer) {
         self.0
             .borrow_mut()
@@ -91,18 +95,18 @@ impl Servers {
         let servers = self.borrow();
 
         for server in servers.values() {
-            if let Some(b) = &*server.inner().server_buffer() {
+            if let Some(b) = &*server.server_buffer() {
                 if b.upgrade().map_or(false, |b| &b == buffer) {
                     return BufferOwner::Server(server.clone());
                 }
             }
 
-            for room in server.inner().rooms().values() {
+            for room in server.rooms() {
                 let buffer_handle = room.buffer_handle();
 
                 if let Ok(b) = buffer_handle.upgrade() {
                     if buffer == &b {
-                        return BufferOwner::Room(server.clone(), room.clone());
+                        return BufferOwner::Room(server.clone(), room);
                     }
                 }
             }
@@ -258,6 +262,10 @@ impl Drop for Matrix {
         for server in servers.values() {
             server.disconnect();
         }
+
+        drop(servers);
+
+        self.servers.clear();
     }
 }
 

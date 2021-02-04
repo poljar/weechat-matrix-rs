@@ -1,5 +1,4 @@
 use std::{
-    cell::RefCell,
     collections::BTreeMap,
     future::Future,
     path::PathBuf,
@@ -109,7 +108,6 @@ pub enum ClientMessage {
 /// loop drop the object.
 #[derive(Debug, Clone)]
 pub struct Connection {
-    #[used]
     receiver_task: Rc<Task<()>>,
     client: Client,
     pub runtime: Rc<Runtime>,
@@ -138,28 +136,24 @@ impl Connection {
 
         let receiver_task = Weechat::spawn(Connection::response_receiver(
             rx,
-            server.clone_inner_weak(),
+            server.clone_weak(),
         ));
 
-        let server = server.inner();
-
         let runtime = Runtime::new().unwrap();
-
-        let settings = server.settings();
 
         runtime.spawn(Connection::sync_loop(
             client.clone(),
             tx,
-            settings.username.to_string(),
-            settings.password.to_string(),
+            server.user_name(),
+            server.password(),
             server_name.to_string(),
             server.get_server_path(),
         ));
 
         Self {
             client: client.clone(),
-            runtime: Rc::new(runtime),
-            receiver_task: Rc::new(receiver_task),
+            runtime: runtime.into(),
+            receiver_task: receiver_task.into(),
         }
     }
 
@@ -308,13 +302,14 @@ impl Connection {
     /// from the client running in the tokio executor.
     pub async fn response_receiver(
         mut receiver: Receiver<Result<ClientMessage, String>>,
-        server: Weak<RefCell<InnerServer>>,
+        server: Weak<InnerServer>,
     ) {
         while let Some(message) = receiver.recv().await {
-            let server_cell = server
-                .upgrade()
-                .expect("Can't upgrade server in sync receiver");
-            let mut server = server_cell.borrow_mut();
+            let server = if let Some(s) = server.upgrade() {
+                s
+            } else {
+                return;
+            };
 
             match message {
                 Ok(message) => match message {

@@ -57,7 +57,7 @@
 use chrono::{offset::Utc, DateTime};
 use indoc::indoc;
 use std::{
-    cell::{Ref, RefCell, RefMut},
+    cell::{RefCell, RefMut, Ref},
     cmp::Reverse,
     collections::HashMap,
     path::PathBuf,
@@ -85,7 +85,7 @@ use weechat::{
 };
 
 use crate::{
-    config::{Config, ServerBuffer},
+    config::ServerBuffer,
     connection::{Connection, InteractiveAuthInfo},
     room::RoomHandle,
     ConfigHandle, Servers, PLUGIN_NAME,
@@ -132,8 +132,15 @@ pub struct LoginInfo {
 
 #[derive(Clone)]
 pub struct MatrixServer {
-    server_name: Rc<str>,
-    inner: Rc<RefCell<InnerServer>>,
+    inner: Rc<InnerServer>,
+}
+
+impl std::ops::Deref for MatrixServer {
+    type Target = InnerServer;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 impl std::fmt::Debug for MatrixServer {
@@ -146,12 +153,12 @@ impl std::fmt::Debug for MatrixServer {
 pub struct InnerServer {
     servers: Servers,
     server_name: Rc<str>,
-    rooms: HashMap<RoomId, RoomHandle>,
-    settings: ServerSettings,
-    current_settings: ServerSettings,
+    rooms: Rc<RefCell<HashMap<RoomId, RoomHandle>>>,
+    settings: Rc<RefCell<ServerSettings>>,
+    current_settings: Rc<RefCell<ServerSettings>>,
     config: ConfigHandle,
-    client: Option<Client>,
-    login_state: Option<LoginInfo>,
+    client: Rc<RefCell<Option<Client>>>,
+    login_state: Rc<RefCell<Option<LoginInfo>>>,
     connection: Rc<RefCell<Option<Connection>>>,
     server_buffer: Rc<RefCell<Option<BufferHandle>>>,
 }
@@ -168,55 +175,589 @@ impl MatrixServer {
         let server = InnerServer {
             servers,
             server_name: server_name.clone(),
-            rooms: HashMap::new(),
-            settings: ServerSettings::new(),
-            current_settings: ServerSettings::new(),
+            rooms: Rc::new(RefCell::new(HashMap::new())),
+            settings: Rc::new(RefCell::new(ServerSettings::new())),
+            current_settings: Rc::new(RefCell::new(ServerSettings::new())),
             config: config.clone(),
-            client: None,
-            login_state: None,
+            client: Rc::new(RefCell::new(None)),
+            login_state: Rc::new(RefCell::new(None)),
             connection: Rc::new(RefCell::new(None)),
             server_buffer: Rc::new(RefCell::new(None)),
         };
 
-        let server = Rc::new(RefCell::new(server));
+        let server = server.into();
+
         MatrixServer::create_server_conf(&server_name, server_section, &server);
 
-        MatrixServer {
-            server_name,
-            inner: server,
+        MatrixServer { inner: server }
+    }
+
+    pub fn clone_weak(&self) -> Weak<InnerServer> {
+        Rc::downgrade(&self.inner)
+    }
+
+    pub fn connect(&self) -> Result<(), ServerError> {
+        if self.connected() {
+            self.print_error(&format!(
+                "Already connected to {}{}{}",
+                Weechat::color("chat_server"),
+                self.name(),
+                Weechat::color("reset")
+            ));
+
+            return Ok(());
         }
+
+        let client = self.get_or_create_client()?;
+        let connection = Connection::new(&self, &client);
+        self.set_connection(connection);
+
+        self.print_network(&format!(
+            "Connected to {}{}{}",
+            Weechat::color("chat_server"),
+            self.name(),
+            Weechat::color("reset")
+        ));
+
+        Ok(())
     }
 
-    pub fn name(&self) -> &str {
-        &self.server_name
-    }
-
-    pub fn inner(&self) -> Ref<'_, InnerServer> {
-        self.inner.borrow()
-    }
-
-    pub fn config(&self) -> ConfigHandle {
-        self.inner().config.clone()
+    fn inner(&self) -> Rc<InnerServer> {
+        self.inner.clone()
     }
 
     pub fn merge_server_buffers(&self) {
-        let inner = self.inner();
-
-        let server_buffer = inner.server_buffer.borrow_mut();
+        let server_buffer = self.inner.server_buffer.borrow_mut();
 
         if let Some(buffer) =
             server_buffer.as_ref().map(|b| b.upgrade().ok()).flatten()
         {
-            inner.merge_server_buffer(&buffer);
+            self.inner.merge_server_buffer(&buffer);
         }
     }
 
-    pub fn clone_inner_weak(&self) -> Weak<RefCell<InnerServer>> {
-        Rc::downgrade(&self.inner)
+    /// Parse an URL returning a None if the string is empty.
+    ///
+    /// # Panics
+    ///
+    /// This panics if the string can't be parsed as an URL.
+    fn parse_url_unchecked(value: &str) -> Option<Url> {
+        if value.is_empty() {
+            None
+        } else {
+            Some(
+                Url::parse(value)
+                    .expect("Can't parse URL, did the check callback fail?"),
+            )
+        }
+    }
+
+    /// Parse an URL returning an error if the parse step fails.
+    pub fn parse_url(value: String) -> Result<(), String> {
+        let url = Url::parse(&value);
+
+        match url {
+            Ok(u) => {
+                if u.cannot_be_a_base() {
+                    Err(String::from("The Homeserver URL is missing a schema"))
+                } else {
+                    Ok(())
+                }
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// Check if the provided value is a valid URL.
+    fn is_url_valid(value: &str) -> bool {
+        if value.is_empty() {
+            true
+        } else {
+            MatrixServer::parse_url(value.to_string()).is_ok()
+        }
+    }
+
+    fn create_server_conf(
+        server_name: &str,
+        server_section: &mut ConfigSection,
+        server_ref: &Rc<InnerServer>,
+    ) {
+        let server = Rc::downgrade(server_ref);
+        let server_copy = server.clone();
+        let autoconnect =
+            BooleanOptionSettings::new(format!("{}.autoconnect", server_name))
+                .set_change_callback(move |_, option| {
+                    let value = option.value();
+
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
+
+                    server_ref.settings.borrow_mut().autoconnect = value;
+                });
+
+        server_section
+            .new_boolean_option(autoconnect)
+            .expect("Can't create autoconnect option");
+
+        let server = server_copy;
+        let server_copy = server.clone();
+
+        let homeserver =
+            StringOptionSettings::new(format!("{}.homeserver", server_name))
+                .set_check_callback(|_, _, value| {
+                    MatrixServer::is_url_valid(&value)
+                })
+                .set_change_callback(move |_, option| {
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
+
+                    server_ref.settings.borrow_mut().homeserver =
+                        MatrixServer::parse_url_unchecked(&option.value());
+                });
+
+        server_section
+            .new_string_option(homeserver)
+            .expect("Can't create homeserver option");
+
+        let server = server_copy;
+        let server_copy = server.clone();
+
+        let proxy = StringOptionSettings::new(format!("{}.proxy", server_name))
+            .set_check_callback(|_, _, value| {
+                MatrixServer::is_url_valid(&value)
+            })
+            .set_change_callback(move |_, option| {
+                let server_ref = server
+                    .upgrade()
+                    .expect("Server got deleted while server config is alive");
+
+                server_ref.settings.borrow_mut().proxy =
+                    MatrixServer::parse_url_unchecked(&option.value());
+            });
+
+        server_section
+            .new_string_option(proxy)
+            .expect("Can't create proxy option");
+
+        let server = server_copy;
+        let server_copy = server.clone();
+
+        let username =
+            StringOptionSettings::new(format!("{}.username", server_name))
+                .set_change_callback(move |_, option| {
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
+
+                    server_ref.settings.borrow_mut().username =
+                        option.value().to_string();
+                });
+
+        server_section
+            .new_string_option(username)
+            .expect("Can't create username option");
+
+        let server = server_copy;
+        let server_copy = server.clone();
+
+        let password =
+            StringOptionSettings::new(format!("{}.password", server_name))
+                .set_change_callback(move |_, option| {
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
+
+                    server_ref.settings.borrow_mut().password =
+                        option.value().to_string();
+                });
+
+        server_section
+            .new_string_option(password)
+            .expect("Can't create password option");
+
+        let server = server_copy;
+
+        let ssl_verify =
+            BooleanOptionSettings::new(format!("{}.ssl_verify", server_name))
+                .default_value(true)
+                .set_change_callback(move |_, option| {
+                    let value = option.value();
+
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
+
+                    server_ref.settings.borrow_mut().ssl_verify = value;
+                });
+
+        server_section
+            .new_boolean_option(ssl_verify)
+            .expect("Can't create autoconnect option");
+    }
+}
+
+impl Drop for MatrixServer {
+    fn drop(&mut self) {
+        // TODO close all the server buffers.
+        // Only free the server config if it's the only clone of the InnerServer
+        if Rc::strong_count(&self.inner) == 1 {
+            let config = &self.config;
+            let mut config_borrow = config.borrow_mut();
+
+            let mut section = config_borrow
+                .search_section_mut("server")
+                .expect("Can't get server section");
+
+            for option_name in &[
+                "autoconnect",
+                "homeserver",
+                "password",
+                "proxy",
+                "ssl_verify",
+                "username",
+            ] {
+                let option_name =
+                    &format!("{}.{}", self.server_name, option_name);
+                section.free_option(option_name).unwrap_or_else(|_| {
+                    panic!(format!("Can't free option {}", option_name))
+                });
+            }
+        }
+    }
+}
+
+impl InnerServer {
+    pub fn name(&self) -> &str {
+        &self.server_name
+    }
+
+    pub fn rooms(&self) -> Vec<RoomHandle> {
+        self.rooms.borrow().values().cloned().collect()
+    }
+
+    pub(crate) fn get_or_create_room(&self, room_id: &RoomId) -> RoomHandle {
+        if !self.rooms.borrow().contains_key(room_id) {
+            let homeserver = self
+                .settings
+                .borrow()
+                .homeserver
+                .clone()
+                .expect("Creating room buffer while no homeserver");
+            let login_state = self.login_state.borrow();
+            let login_state = login_state
+                .as_ref()
+                .expect("Receiving events while not being logged in");
+            let client = self.client.borrow();
+            let room = client
+                .as_ref()
+                .expect("Receiving events without a client")
+                .get_joined_room(room_id);
+
+            let room = room.unwrap_or_else(|| {
+                panic!(
+                    "Receiving events for a room while no room found {}",
+                    room_id
+                )
+            });
+            let buffer = RoomHandle::new(
+                &self.server_name,
+                &self.connection,
+                self.config.inner.clone(),
+                room,
+                homeserver,
+                room_id.clone(),
+                &login_state.user_id,
+            );
+            self.rooms.borrow_mut().insert(room_id.clone(), buffer);
+        }
+
+        self.rooms.borrow().get(room_id).cloned().unwrap()
+    }
+
+    pub fn config(&self) -> ConfigHandle {
+        self.config.clone()
+    }
+
+    pub fn user_name(&self) -> String {
+        self.settings.borrow().username.clone()
+    }
+
+    pub fn password(&self) -> String {
+        self.settings.borrow().password.clone()
+    }
+
+    pub async fn restore_room(&self, room: JoinedRoom) {
+        let homeserver = self
+            .settings
+            .borrow()
+            .homeserver
+            .clone()
+            .expect("Creating room buffer while no homeserver");
+
+        match RoomHandle::restore(
+            &self.server_name,
+            room,
+            &self.connection,
+            self.config.inner.clone(),
+            homeserver,
+        )
+        .await
+        {
+            Ok(buffer) => {
+                let room_id = buffer.room_id().to_owned();
+
+                self.rooms.borrow_mut().insert(room_id, buffer);
+            }
+            Err(e) => self.print_error(&format!(
+                "Error restoring room: {}",
+                e.to_string()
+            )),
+        }
+    }
+
+    fn create_server_buffer(&self) -> BufferHandle {
+        let buffer_handle =
+            BufferBuilder::new(&format!("server.{}", self.server_name))
+                .build()
+                .expect("Can't create Matrix debug buffer");
+
+        let buffer = buffer_handle
+            .upgrade()
+            .expect("Can't upgrade newly created server buffer");
+
+        let settings = self.settings.borrow();
+
+        buffer.set_title(&format!(
+            "Matrix: {}",
+            settings
+                .homeserver
+                .as_ref()
+                .map(|u| u.to_string())
+                .unwrap_or_else(|| self.server_name.to_string()),
+        ));
+        buffer.set_short_name(&self.server_name);
+        buffer.set_localvar("type", "server");
+        buffer.set_localvar("nick", &settings.username);
+        buffer.set_localvar("server", &self.server_name);
+
+        self.merge_server_buffer(&buffer);
+
+        buffer_handle
+    }
+
+    fn merge_server_buffer(&self, buffer: &Buffer) {
+        match self.config.borrow().look().server_buffer() {
+            ServerBuffer::MergeWithCore => {
+                buffer.unmerge();
+
+                let core_buffer = buffer.core_buffer();
+                buffer.merge(&core_buffer);
+            }
+            ServerBuffer::Independent => buffer.unmerge(),
+            ServerBuffer::MergeWithoutCore => {
+                let servers = self.servers.borrow();
+
+                let server = if let Some(server) = servers.values().next() {
+                    server
+                } else {
+                    return;
+                };
+
+                if server.name() == &*self.server_name {
+                    buffer.unmerge();
+                } else {
+                    let inner = server.inner();
+
+                    if let Some(Ok(other_buffer)) =
+                        inner.server_buffer().as_ref().map(|b| b.upgrade())
+                    {
+                        let core_buffer = buffer.core_buffer();
+
+                        buffer.unmerge_to((core_buffer.number() + 1) as u16);
+                        buffer.merge(&other_buffer);
+                    };
+                }
+            }
+        }
+    }
+
+    fn get_client(&self) -> Option<Client> {
+        self.client.borrow().clone()
+    }
+
+    fn get_or_create_client(&self) -> Result<Client, ServerError> {
+        let client = if let Some(c) = self.get_client() {
+            c
+        } else {
+            self.create_client()?
+        };
+
+        // Check if the homeserver setting changed and swap our client if it
+        // did.
+        if *self.current_settings.borrow() != *self.settings.borrow() {
+            // TODO if the homeserver changed close all the room buffers of the
+            // server here, they don't belong to our client anymore.
+            self.create_client()
+        } else {
+            Ok(client)
+        }
+    }
+
+    /// Borrow the server buffer handle.
+    pub fn server_buffer(&self) -> Ref<Option<BufferHandle>> {
+        self.server_buffer.borrow()
+    }
+
+    fn get_or_create_buffer<'a>(
+        &self,
+        server_buffer: &'a mut RefMut<Option<BufferHandle>>,
+    ) -> &'a BufferHandle {
+        if let Some(buffer) = server_buffer.as_ref() {
+            if buffer.upgrade().is_err() {
+                let buffer = self.create_server_buffer();
+                **server_buffer = Some(buffer);
+            }
+        } else {
+            let buffer = self.create_server_buffer();
+            **server_buffer = Some(buffer);
+        }
+
+        server_buffer.as_ref().unwrap()
+    }
+
+    /// Print a neutral message to the server buffer.
+    fn print(&self, message: &str) {
+        let mut server_buffer = self.server_buffer.borrow_mut();
+        let buffer = self
+            .get_or_create_buffer(&mut server_buffer)
+            .upgrade()
+            .unwrap();
+        buffer.print(message);
+    }
+
+    /// Print a message with a given prefix to the server buffer.
+    pub fn print_with_prefix(&self, prefix: &str, message: &str) {
+        self.print(&format!("{}{}: {}", prefix, PLUGIN_NAME, message));
+    }
+
+    /// Print an network message to the server buffer.
+    pub fn print_network(&self, message: &str) {
+        self.print_with_prefix(&Weechat::prefix(Prefix::Network), message);
+    }
+
+    /// Print an error message to the server buffer.
+    pub fn print_error(&self, message: &str) {
+        self.print_with_prefix(&Weechat::prefix(Prefix::Error), message);
+    }
+
+    /// Is the server connected.
+    pub fn connected(&self) -> bool {
+        self.connection.borrow().is_some()
+    }
+
+    pub async fn receive_member(
+        &self,
+        room_id: RoomId,
+        member: SyncStateEvent<MemberEventContent>,
+        is_state: bool,
+        ambiguity_change: Option<AmbiguityChange>,
+    ) {
+        let room = self.rooms.borrow().get(&room_id).cloned();
+
+        if let Some(room) = room {
+            room.handle_membership_event(
+                &member,
+                is_state,
+                ambiguity_change.as_ref(),
+            )
+            .await;
+        } else {
+            error!("Room with id {} not found.", room_id);
+        }
+    }
+
+    pub async fn receive_joined_state_event(
+        &self,
+        room_id: &RoomId,
+        event: AnySyncStateEvent,
+    ) {
+        let room = self.get_or_create_room(room_id);
+        room.handle_sync_state_event(&event, true).await
+    }
+
+    pub async fn receive_joined_timeline_event(
+        &self,
+        room_id: &RoomId,
+        event: AnySyncRoomEvent,
+    ) {
+        let room = self.get_or_create_room(room_id);
+        room.handle_sync_room_event(event).await
+    }
+
+    pub fn receive_login(&self, response: LoginResponse) {
+        let login_state = LoginInfo {
+            user_id: response.user_id,
+        };
+
+        *self.login_state.borrow_mut() = Some(login_state);
+    }
+
+    fn create_server_dir(&self) -> std::io::Result<()> {
+        let path = self.get_server_path();
+        std::fs::create_dir_all(path)
+    }
+
+    pub fn get_server_path(&self) -> PathBuf {
+        let mut path = Weechat::home_dir();
+        let server_name: &str = &self.server_name;
+        path.push("matrix-rust");
+        path.push(server_name);
+
+        path
     }
 
     pub fn connection(&self) -> Option<Connection> {
-        self.inner().connection.borrow().clone()
+        self.connection.borrow().clone()
+    }
+
+    fn set_connection(&self, connection: Connection) {
+        *self.connection.borrow_mut() = Some(connection);
+    }
+
+    pub fn create_client(&self) -> Result<Client, ServerError> {
+        let settings = self.settings.borrow();
+
+        let homeserver = settings.homeserver.as_ref().ok_or_else(|| {
+            ServerError::StartError("Homeserver not configured".to_owned())
+        })?;
+
+        self.create_server_dir().map_err(|e| {
+            ServerError::IoError(format!(
+                "Error creating the session dir: {}",
+                e
+            ))
+        })?;
+
+        let mut client_config = ClientConfig::new()
+            .store_path(self.get_server_path())
+            .passphrase("DEFAULT_PASSPHRASE".to_string());
+
+        if let Some(proxy) = settings.proxy.as_ref() {
+            client_config = client_config.proxy(proxy.as_str()).unwrap();
+        }
+
+        if !settings.ssl_verify {
+            client_config = client_config.disable_ssl_verification();
+        }
+
+        let client =
+            Client::new_with_config(homeserver.clone(), client_config).unwrap();
+        *self.current_settings.borrow_mut() = settings.clone();
+        *self.client.borrow_mut() = Some(client.clone());
+
+        Ok(client)
     }
 
     pub async fn delete_devices(&self, devices: Vec<DeviceIdBox>) {
@@ -245,10 +786,13 @@ impl MatrixServer {
                 Ok(_) => print_success(),
                 Err(e) => {
                     if let Some(info) = e.uiaa_response() {
-                        let auth_info = InteractiveAuthInfo {
-                            user: self.inner().settings().username.clone(),
-                            password: self.inner().settings().password.clone(),
-                            session: info.session.clone(),
+                        let auth_info = {
+                            let settings = self.settings.borrow();
+                            InteractiveAuthInfo {
+                                user: settings.username.clone(),
+                                password: settings.password.clone(),
+                                session: info.session.clone(),
+                            }
                         };
 
                         if let Err(e) = c
@@ -268,7 +812,7 @@ impl MatrixServer {
     }
 
     pub async fn export_keys(&self, file: PathBuf, passphrase: String) {
-        let client = self.inner().get_client().unwrap();
+        let client = self.get_client().unwrap();
 
         let export = async move {
             client.export_keys(file, &passphrase, |_| true).await
@@ -287,7 +831,7 @@ impl MatrixServer {
     }
 
     pub async fn import_keys(&self, file: PathBuf, passphrase: String) {
-        let client = self.inner().get_client().unwrap();
+        let client = self.get_client().unwrap();
 
         if let Some(c) = self.connection() {
             self.print_network(&format!(
@@ -407,240 +951,19 @@ impl MatrixServer {
         };
     }
 
-    /// Parse an URL returning a None if the string is empty.
-    ///
-    /// # Panics
-    ///
-    /// This panics if the string can't be parsed as an URL.
-    fn parse_url_unchecked(value: &str) -> Option<Url> {
-        if value.is_empty() {
-            None
-        } else {
-            Some(
-                Url::parse(value)
-                    .expect("Can't parse URL, did the check callback fail?"),
-            )
-        }
-    }
-
-    /// Parse an URL returning an error if the parse step fails.
-    pub fn parse_url(value: String) -> Result<(), String> {
-        let url = Url::parse(&value);
-
-        match url {
-            Ok(u) => {
-                if u.cannot_be_a_base() {
-                    Err(String::from("The Homeserver URL is missing a schema"))
-                } else {
-                    Ok(())
-                }
-            }
-            Err(e) => Err(e.to_string()),
-        }
-    }
-
-    fn set_connection(&self, connection: Connection) {
-        *self.inner.borrow_mut().connection.borrow_mut() = Some(connection);
-    }
-
-    fn get_or_create_client(&self) -> Result<Client, ServerError> {
-        self.inner.borrow_mut().get_or_create_client()
-    }
-
-    /// Check if the provided value is a valid URL.
-    fn is_url_valid(value: &str) -> bool {
-        if value.is_empty() {
-            true
-        } else {
-            MatrixServer::parse_url(value.to_string()).is_ok()
-        }
-    }
-
-    fn create_server_conf(
-        server_name: &str,
-        server_section: &mut ConfigSection,
-        server_ref: &Rc<RefCell<InnerServer>>,
-    ) {
-        let server = Rc::downgrade(server_ref);
-        let server_copy = server.clone();
-        let autoconnect =
-            BooleanOptionSettings::new(format!("{}.autoconnect", server_name))
-                .set_change_callback(move |_, option| {
-                    let value = option.value();
-
-                    let server_ref = server.upgrade().expect(
-                        "Server got deleted while server config is alive",
-                    );
-
-                    let mut server = server_ref.borrow_mut();
-                    server.settings.autoconnect = value;
-                });
-
-        server_section
-            .new_boolean_option(autoconnect)
-            .expect("Can't create autoconnect option");
-
-        let server = server_copy;
-        let server_copy = server.clone();
-
-        let homeserver =
-            StringOptionSettings::new(format!("{}.homeserver", server_name))
-                .set_check_callback(|_, _, value| {
-                    MatrixServer::is_url_valid(&value)
-                })
-                .set_change_callback(move |_, option| {
-                    let server_ref = server.upgrade().expect(
-                        "Server got deleted while server config is alive",
-                    );
-
-                    let mut server = server_ref.borrow_mut();
-
-                    server.settings.homeserver =
-                        MatrixServer::parse_url_unchecked(&option.value());
-                });
-
-        server_section
-            .new_string_option(homeserver)
-            .expect("Can't create homeserver option");
-
-        let server = server_copy;
-        let server_copy = server.clone();
-
-        let proxy = StringOptionSettings::new(format!("{}.proxy", server_name))
-            .set_check_callback(|_, _, value| {
-                MatrixServer::is_url_valid(&value)
-            })
-            .set_change_callback(move |_, option| {
-                let server_ref = server
-                    .upgrade()
-                    .expect("Server got deleted while server config is alive");
-
-                let mut server = server_ref.borrow_mut();
-                server.settings.proxy =
-                    MatrixServer::parse_url_unchecked(&option.value());
-            });
-
-        server_section
-            .new_string_option(proxy)
-            .expect("Can't create proxy option");
-
-        let server = server_copy;
-        let server_copy = server.clone();
-
-        let username =
-            StringOptionSettings::new(format!("{}.username", server_name))
-                .set_change_callback(move |_, option| {
-                    let server_ref = server.upgrade().expect(
-                        "Server got deleted while server config is alive",
-                    );
-
-                    let mut server = server_ref.borrow_mut();
-                    server.settings.username = option.value().to_string();
-                });
-
-        server_section
-            .new_string_option(username)
-            .expect("Can't create username option");
-
-        let server = server_copy;
-        let server_copy = server.clone();
-
-        let password =
-            StringOptionSettings::new(format!("{}.password", server_name))
-                .set_change_callback(move |_, option| {
-                    let server_ref = server.upgrade().expect(
-                        "Server got deleted while server config is alive",
-                    );
-
-                    let mut server = server_ref.borrow_mut();
-                    server.settings.password = option.value().to_string();
-                });
-
-        server_section
-            .new_string_option(password)
-            .expect("Can't create password option");
-
-        let server = server_copy;
-
-        let ssl_verify =
-            BooleanOptionSettings::new(format!("{}.ssl_verify", server_name))
-                .default_value(true)
-                .set_change_callback(move |_, option| {
-                    let value = option.value();
-
-                    let server_ref = server.upgrade().expect(
-                        "Server got deleted while server config is alive",
-                    );
-
-                    let mut server = server_ref.borrow_mut();
-                    server.settings.ssl_verify = value;
-                });
-
-        server_section
-            .new_boolean_option(ssl_verify)
-            .expect("Can't create autoconnect option");
-    }
-
-    pub fn connected(&self) -> bool {
-        self.inner.borrow().connected()
-    }
-
     pub fn autoconnect(&self) -> bool {
-        self.inner.borrow().settings.autoconnect
+        self.settings.borrow().autoconnect
     }
 
     pub fn is_connection_secure(&self) -> bool {
-        self.inner.borrow().current_settings.ssl_verify
-            && self
-                .inner
-                .borrow()
-                .current_settings
+        let settings = self.current_settings.borrow();
+
+        settings.ssl_verify
+            && settings
                 .homeserver
                 .as_ref()
                 .map(|u| u.scheme() == "https")
                 .unwrap_or(false)
-    }
-
-    pub fn connect(&self) -> Result<(), ServerError> {
-        if self.connected() {
-            self.print_error(&format!(
-                "Already connected to {}{}{}",
-                Weechat::color("chat_server"),
-                self.name(),
-                Weechat::color("reset")
-            ));
-
-            return Ok(());
-        }
-
-        let client = self.get_or_create_client()?;
-        let connection = Connection::new(&self, &client);
-        self.set_connection(connection);
-
-        self.print_network(&format!(
-            "Connected to {}{}{}",
-            Weechat::color("chat_server"),
-            self.name(),
-            Weechat::color("reset")
-        ));
-
-        Ok(())
-    }
-
-    pub fn print(&self, message: &str) {
-        self.inner().print(message)
-    }
-
-    pub fn print_with_prefix(&self, prefix: &str, message: &str) {
-        self.inner().print_with_prefix(prefix, message)
-    }
-
-    pub fn print_network(&self, message: &str) {
-        self.inner().print_network(message)
-    }
-
-    pub fn print_error(&self, message: &str) {
-        self.inner().print_error(message)
     }
 
     pub fn disconnect(&self) {
@@ -656,8 +979,7 @@ impl MatrixServer {
         }
 
         {
-            let server = self.inner();
-            let mut connection = server.connection.borrow_mut();
+            let mut connection = self.connection.borrow_mut();
             connection.take();
         }
 
@@ -686,7 +1008,7 @@ impl MatrixServer {
             return s;
         }
 
-        let settings = &self.inner.borrow().settings;
+        let settings = self.settings.borrow();
         s.push_str(&format!(
             "\n\
                  {:indent$}homeserver: {}\n\
@@ -704,344 +1026,5 @@ impl MatrixServer {
             indent = 8
         ));
         s
-    }
-}
-
-impl Drop for InnerServer {
-    fn drop(&mut self) {
-        // TODO close all the server buffers.
-        let config = &self.config;
-        let mut config_borrow = config.borrow_mut();
-
-        let mut section = config_borrow
-            .search_section_mut("server")
-            .expect("Can't get server section");
-
-        for option_name in &[
-            "autoconnect",
-            "homeserver",
-            "password",
-            "proxy",
-            "ssl_verify",
-            "username",
-        ] {
-            let option_name = &format!("{}.{}", self.server_name, option_name);
-            section.free_option(option_name).unwrap_or_else(|_| {
-                panic!(format!("Can't free option {}", option_name))
-            });
-        }
-    }
-}
-
-impl InnerServer {
-    pub(crate) fn get_or_create_room(
-        &mut self,
-        room_id: &RoomId,
-    ) -> &RoomHandle {
-        if !self.rooms.contains_key(room_id) {
-            let homeserver = self
-                .settings
-                .homeserver
-                .as_ref()
-                .expect("Creating room buffer while no homeserver");
-            let login_state = self
-                .login_state
-                .as_ref()
-                .expect("Receiving events while not being logged in");
-            let room = self
-                .client
-                .as_ref()
-                .expect("Receiving events without a client")
-                .get_joined_room(room_id);
-
-            let room = room.unwrap_or_else(|| {
-                panic!(
-                    "Receiving events for a room while no room found {}",
-                    room_id
-                )
-            });
-            let buffer = RoomHandle::new(
-                &self.server_name,
-                &self.connection,
-                self.config.inner.clone(),
-                room,
-                homeserver,
-                room_id.clone(),
-                &login_state.user_id,
-            );
-            self.rooms.insert(room_id.clone(), buffer);
-        }
-
-        self.rooms.get_mut(room_id).unwrap()
-    }
-
-    pub fn settings(&self) -> &ServerSettings {
-        &self.settings
-    }
-
-    pub fn rooms(&self) -> &HashMap<RoomId, RoomHandle> {
-        &self.rooms
-    }
-
-    pub fn config(&self) -> Ref<Config> {
-        self.config.borrow()
-    }
-
-    pub async fn restore_room(&mut self, room: JoinedRoom) {
-        let homeserver = self
-            .settings
-            .homeserver
-            .as_ref()
-            .expect("Creating room buffer while no homeserver");
-
-        match RoomHandle::restore(
-            &self.server_name,
-            room,
-            &self.connection,
-            self.config.inner.clone(),
-            homeserver,
-        )
-        .await
-        {
-            Ok(buffer) => {
-                let room_id = buffer.room_id().to_owned();
-
-                self.rooms.insert(room_id, buffer);
-            }
-            Err(e) => self.print_error(&format!(
-                "Error restoring room: {}",
-                e.to_string()
-            )),
-        }
-    }
-
-    fn create_server_buffer(&self) -> BufferHandle {
-        let buffer_handle =
-            BufferBuilder::new(&format!("server.{}", self.server_name))
-                .build()
-                .expect("Can't create Matrix debug buffer");
-
-        let buffer = buffer_handle
-            .upgrade()
-            .expect("Can't upgrade newly created server buffer");
-
-        buffer.set_title(&format!(
-            "Matrix: {}",
-            self.settings()
-                .homeserver
-                .as_ref()
-                .map(|u| u.to_string())
-                .unwrap_or_else(|| self.server_name.to_string()),
-        ));
-        buffer.set_short_name(&self.server_name);
-        buffer.set_localvar("type", "server");
-        buffer.set_localvar("nick", &self.settings.username);
-        buffer.set_localvar("server", &self.server_name);
-
-        self.merge_server_buffer(&buffer);
-
-        buffer_handle
-    }
-
-    fn merge_server_buffer(&self, buffer: &Buffer) {
-        match self.config.borrow().look().server_buffer() {
-            ServerBuffer::MergeWithCore => {
-                buffer.unmerge();
-
-                let core_buffer = buffer.core_buffer();
-                buffer.merge(&core_buffer);
-            }
-            ServerBuffer::Independent => buffer.unmerge(),
-            ServerBuffer::MergeWithoutCore => {
-                let servers = self.servers.borrow();
-
-                let server = if let Some(server) = servers.values().next() {
-                    server
-                } else {
-                    return;
-                };
-
-                if server.name() == &*self.server_name {
-                    buffer.unmerge();
-                } else {
-                    let inner = server.inner();
-
-                    if let Some(Ok(other_buffer)) =
-                        inner.server_buffer().as_ref().map(|b| b.upgrade())
-                    {
-                        let core_buffer = buffer.core_buffer();
-
-                        buffer.unmerge_to((core_buffer.number() + 1) as u16);
-                        buffer.merge(&other_buffer);
-                    };
-                }
-            }
-        }
-    }
-
-    fn get_client(&self) -> Option<Client> {
-        self.client.clone()
-    }
-
-    fn get_or_create_client(&mut self) -> Result<Client, ServerError> {
-        let client = if let Some(c) = self.client.as_ref() {
-            c.clone()
-        } else {
-            self.create_client()?
-        };
-
-        // Check if the homeserver setting changed and swap our client if it
-        // did.
-        if self.current_settings != self.settings {
-            // TODO if the homeserver changed close all the room buffers of the
-            // server here, they don't belong to our client anymore.
-            self.create_client()
-        } else {
-            Ok(client)
-        }
-    }
-
-    /// Borrow the server buffer handle.
-    pub fn server_buffer(&self) -> Ref<Option<BufferHandle>> {
-        self.server_buffer.borrow()
-    }
-
-    fn get_or_create_buffer<'a>(
-        &self,
-        server_buffer: &'a mut RefMut<Option<BufferHandle>>,
-    ) -> &'a BufferHandle {
-        if let Some(buffer) = server_buffer.as_ref() {
-            if buffer.upgrade().is_err() {
-                let buffer = self.create_server_buffer();
-                **server_buffer = Some(buffer);
-            }
-        } else {
-            let buffer = self.create_server_buffer();
-            **server_buffer = Some(buffer);
-        }
-
-        server_buffer.as_ref().unwrap()
-    }
-
-    /// Print a neutral message to the server buffer.
-    fn print(&self, message: &str) {
-        let mut server_buffer = self.server_buffer.borrow_mut();
-        let buffer = self
-            .get_or_create_buffer(&mut server_buffer)
-            .upgrade()
-            .unwrap();
-        buffer.print(message);
-    }
-
-    /// Print a message with a given prefix to the server buffer.
-    pub fn print_with_prefix(&self, prefix: &str, message: &str) {
-        self.print(&format!("{}{}: {}", prefix, PLUGIN_NAME, message));
-    }
-
-    /// Print an network message to the server buffer.
-    pub fn print_network(&self, message: &str) {
-        self.print_with_prefix(&Weechat::prefix(Prefix::Network), message);
-    }
-
-    /// Print an error message to the server buffer.
-    pub fn print_error(&self, message: &str) {
-        self.print_with_prefix(&Weechat::prefix(Prefix::Error), message);
-    }
-
-    /// Is the server connected.
-    pub fn connected(&self) -> bool {
-        self.connection.borrow().is_some()
-    }
-
-    pub async fn receive_member(
-        &self,
-        room_id: RoomId,
-        member: SyncStateEvent<MemberEventContent>,
-        is_state: bool,
-        ambiguity_change: Option<AmbiguityChange>,
-    ) {
-        if let Some(room) = self.rooms.get(&room_id) {
-            room.handle_membership_event(
-                &member,
-                is_state,
-                ambiguity_change.as_ref(),
-            )
-            .await;
-        } else {
-            error!("Room with id {} not found.", room_id);
-        }
-    }
-
-    pub async fn receive_joined_state_event(
-        &mut self,
-        room_id: &RoomId,
-        event: AnySyncStateEvent,
-    ) {
-        let room = self.get_or_create_room(room_id);
-        room.handle_sync_state_event(&event, true).await
-    }
-
-    pub async fn receive_joined_timeline_event(
-        &mut self,
-        room_id: &RoomId,
-        event: AnySyncRoomEvent,
-    ) {
-        let room = self.get_or_create_room(room_id);
-        room.handle_sync_room_event(event).await
-    }
-
-    pub fn receive_login(&mut self, response: LoginResponse) {
-        let login_state = LoginInfo {
-            user_id: response.user_id,
-        };
-        self.login_state = Some(login_state);
-    }
-
-    fn create_server_dir(&self) -> std::io::Result<()> {
-        let path = self.get_server_path();
-        std::fs::create_dir_all(path)
-    }
-
-    pub fn get_server_path(&self) -> PathBuf {
-        let mut path = Weechat::home_dir();
-        let server_name: &str = &self.server_name;
-        path.push("matrix-rust");
-        path.push(server_name);
-
-        path
-    }
-
-    pub fn create_client(&mut self) -> Result<Client, ServerError> {
-        let settings = self.settings.clone();
-
-        let homeserver = settings.homeserver.as_ref().ok_or_else(|| {
-            ServerError::StartError("Homeserver not configured".to_owned())
-        })?;
-
-        self.create_server_dir().map_err(|e| {
-            ServerError::IoError(format!(
-                "Error creating the session dir: {}",
-                e
-            ))
-        })?;
-
-        let mut client_config = ClientConfig::new()
-            .store_path(self.get_server_path())
-            .passphrase("DEFAULT_PASSPHRASE".to_string());
-
-        if let Some(proxy) = settings.proxy.as_ref() {
-            client_config = client_config.proxy(proxy.as_str()).unwrap();
-        }
-
-        if !settings.ssl_verify {
-            client_config = client_config.disable_ssl_verification();
-        }
-
-        let client =
-            Client::new_with_config(homeserver.clone(), client_config).unwrap();
-        self.current_settings = settings;
-        self.client = Some(client.clone());
-
-        Ok(client)
     }
 }
