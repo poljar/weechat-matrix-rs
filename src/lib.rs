@@ -210,10 +210,14 @@ impl Plugin for Matrix {
         let bar_items = BarItems::hook_all(servers.clone())?;
         let completions = Completions::hook_all(servers.clone())?;
 
-        tracing_subscriber::fmt()
+        let subscriber = tracing_subscriber::fmt()
             .with_writer(debug::Debug)
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .init();
+            .finish();
+
+        let _ = tracing::subscriber::set_global_default(subscriber).map_err(
+            |_err| Weechat::print("Unable to set global default subscriber"),
+        );
 
         {
             let config_borrow = config.borrow();
