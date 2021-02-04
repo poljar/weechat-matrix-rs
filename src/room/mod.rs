@@ -29,8 +29,8 @@ pub use members::WeechatRoomMember;
 use tracing::{debug, trace};
 
 use std::{
-    cell::RefCell,
     borrow::Cow,
+    cell::RefCell,
     collections::HashMap,
     ops::Deref,
     rc::Rc,
