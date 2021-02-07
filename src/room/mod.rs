@@ -337,9 +337,12 @@ impl RoomHandle {
 #[async_trait(?Send)]
 impl BufferInputCallbackAsync for MatrixRoom {
     async fn callback(&mut self, _: BufferHandle, input: String) {
-        // TODO parse the input here and produce a formatted body.
-        let content =
-            MessageEventContent::Text(TextMessageEventContent::markdown(input));
+        let content = if self.config.borrow().input().markdown_input() {
+            MessageEventContent::Text(TextMessageEventContent::markdown(input))
+        } else {
+            MessageEventContent::Text(TextMessageEventContent::plain(input))
+        };
+
         self.send_message(content).await;
     }
 }

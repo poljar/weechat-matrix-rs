@@ -84,6 +84,7 @@ impl From<i32> for ServerBuffer {
 
 config!(
     "matrix-rust",
+
     Section look {
         encrypted_room_sign: String {
             // Description.
@@ -121,12 +122,22 @@ config!(
             RedactionStyle,
         },
     },
+
     Section network {
         debug_buffer: bool {
             // Description
             "Use a separate buffer for debug logs",
             // Default value.
             false,
+        },
+    },
+
+    Section input {
+        markdown_input: bool {
+            // Description
+            "Should the input be parsed as markdown",
+            // Default value.
+            true,
         },
     }
 );
