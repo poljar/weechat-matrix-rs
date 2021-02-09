@@ -48,16 +48,20 @@ use url::Url;
 
 use matrix_sdk::{
     async_trait,
-    deserialized_responses::AmbiguityChange,
+    deserialized_responses::{
+        events::{
+            AnySyncMessageEvent, AnySyncRoomEvent, SyncMessageEvent,
+            SyncRedactionEvent,
+        },
+        AmbiguityChange,
+    },
     events::{
         room::{
             member::MemberEventContent,
             message::{MessageEventContent, TextMessageEventContent},
-            redaction::SyncRedactionEvent,
         },
         AnyMessageEventContent, AnyRedactedSyncMessageEvent, AnyRoomEvent,
-        AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
-        SyncMessageEvent, SyncStateEvent,
+        AnySyncStateEvent, SyncStateEvent,
     },
     identifiers::{EventId, RoomAliasId, RoomId, UserId},
     uuid::Uuid,
@@ -878,6 +882,9 @@ impl MatrixRoom {
                 event_id: event_id.clone(),
                 content,
                 unsigned: Default::default(),
+                // TODO this is our own message, we're trusting it, set a trust
+                // state if the room is encrypted.
+                encryption_info: None,
             };
 
             let event = AnySyncMessageEvent::RoomMessage(event);
@@ -1004,6 +1011,11 @@ impl MatrixRoom {
                 return;
             }
         }
+
+        Weechat::print(&format!(
+            "HELLO VERIFIED {:#?}",
+            event.encryption_info()
+        ));
 
         if let AnySyncMessageEvent::RoomRedaction(r) = event {
             self.redact_event(r).await;

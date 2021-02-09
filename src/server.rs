@@ -69,12 +69,11 @@ use url::Url;
 use matrix_sdk::{
     self,
     api::r0::session::login::Response as LoginResponse,
-    deserialized_responses::AmbiguityChange,
+    deserialized_responses::{events::AnySyncRoomEvent, AmbiguityChange},
     events::{
-        room::member::MemberEventContent, AnySyncRoomEvent, AnySyncStateEvent,
-        SyncStateEvent,
+        room::member::MemberEventContent, AnySyncStateEvent, SyncStateEvent,
     },
-    identifiers::{DeviceIdBox, RoomId, UserId},
+    identifiers::{DeviceIdBox, DeviceKeyAlgorithm, RoomId, UserId},
     Client, ClientConfig, JoinedRoom,
 };
 
@@ -901,52 +900,78 @@ impl InnerServer {
 
             response.devices.sort_by_key(|d| Reverse(d.last_seen_ts));
             let own_device_id = c.client().device_id().await;
+            let own_user_id = c.client().user_id().await.unwrap();
 
-            let lines: Vec<String> = response
-                .devices
-                .iter()
-                .map(|d| {
-                    let device_color = Weechat::info_get(
-                        "nick_color_name",
-                        d.device_id.as_str(),
-                    )
-                    .expect("Can't get device color");
+            let mut lines: Vec<String> = Vec::new();
 
-                    let last_seen_date =
-                        d.last_seen_ts.map_or("?".to_owned(), |d| {
-                            let date: DateTime<Utc> = d.into();
-                            date.format("%Y/%m/%d %H:%M").to_string()
-                        });
+            for device_info in response.devices {
+                let device_color = Weechat::info_get(
+                    "nick_color_name",
+                    device_info.device_id.as_str(),
+                )
+                .expect("Can't get device color");
 
-                    let last_seen = format!(
-                        "{} @ {}",
-                        d.last_seen_ip.as_deref().unwrap_or("-"),
-                        last_seen_date
-                    );
+                let last_seen_date =
+                    device_info.last_seen_ts.map_or("?".to_owned(), |d| {
+                        let date: DateTime<Utc> = d.into();
+                        date.format("%Y/%m/%d %H:%M").to_string()
+                    });
 
-                    let (bold, color) = if own_device_id
-                        .as_ref()
-                        .map(|o| o == &d.device_id)
-                        .unwrap_or(false)
-                    {
-                        (Weechat::color("bold"), format!("*{}", device_color))
-                    } else {
-                        ("", device_color)
-                    };
+                let last_seen = format!(
+                    "{} @ {}",
+                    device_info.last_seen_ip.as_deref().unwrap_or("-"),
+                    last_seen_date
+                );
 
-                    format!(
-                        "  {}{:<15}{}{}{:<30}{:<}",
-                        Weechat::color(&color),
-                        d.device_id.as_str(),
-                        Weechat::color("reset"),
-                        bold,
-                        d.display_name.as_deref().unwrap_or(""),
-                        last_seen,
-                    )
-                })
-                .collect();
+                let (bold, color) = if own_device_id
+                    .as_ref()
+                    .map(|o| o == &device_info.device_id)
+                    .unwrap_or(false)
+                {
+                    (Weechat::color("bold"), format!("*{}", device_color))
+                } else {
+                    ("", device_color)
+                };
 
-            let line = lines.join("\n");
+                let fingerprint = c
+                    .client()
+                    .get_device(&own_user_id, &device_info.device_id)
+                    .await
+                    .unwrap()
+                    .map(|d| d.get_key(DeviceKeyAlgorithm::Ed25519).cloned())
+                    .flatten()
+                    .unwrap_or("-".to_owned());
+
+                let info = format!(
+                    "Device: {}{}{}\n         \
+                              Name: {}{}\n  \
+                       Fingerprint: {}{}\n",
+                    Weechat::color(&color),
+                    device_info.device_id.as_str(),
+                    Weechat::color("reset"),
+                    bold,
+                    device_info.display_name.as_deref().unwrap_or(""),
+                    Weechat::color("magenta"),
+                    fingerprint,
+                );
+
+                // let info = format!(
+                //     "       Device: {}{:<15}{}{}{:<30}{:<}\n  \
+                //        Fingerprint: {}{}",
+                //     Weechat::color(&color),
+                //     device_info.device_id.as_str(),
+                //     Weechat::color("reset"),
+                //     bold,
+                //     device_info.display_name.as_deref().unwrap_or(""),
+                //     last_seen,
+                //     Weechat::color("magenta"),
+                //     fingerprint,
+                // );
+
+                lines.push(info);
+            }
+
+            let line = lines.join("\n\n");
             self.print(&line);
         };
     }

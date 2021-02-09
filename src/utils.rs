@@ -1,10 +1,11 @@
 use matrix_sdk::{
+    deserialized_responses::events::AnySyncMessageEvent,
     events::{
         room::message::{
             MessageEventContent, NoticeMessageEventContent, Relation,
             TextMessageEventContent,
         },
-        AnyMessageEvent, AnySyncMessageEvent,
+        AnyMessageEvent,
     },
     identifiers::EventId,
 };
