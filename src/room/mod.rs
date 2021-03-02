@@ -853,20 +853,19 @@ impl MatrixRoom {
         let line_contains_uuid = |l: &BufferLine| l.tags().contains(&uuid_tag);
 
         let mut lines = buffer.lines();
-        let mut first_line = lines.rfind(line_contains_uuid);
+        let mut current_line = lines.rfind(line_contains_uuid);
 
         // We go in reverse order here since we also use rfind(). We got from
         // the bottom of the buffer to the top since we're expecting these
         // lines to be freshly printed and thus at the bottom.
-        let mut line_num = rendered.content.lines.len() - 1;
+        let mut line_num = rendered.content.lines.len();
 
-        while let Some(line) = &first_line {
+        while let Some(line) = &current_line {
+            line_num -= 1;
             let rendered_line = &rendered.content.lines[line_num];
 
             line.set_message(&rendered_line.message);
-
-            line_num -= 1;
-            first_line = lines.next_back().filter(line_contains_uuid);
+            current_line = lines.next_back().filter(line_contains_uuid);
         }
     }
 
