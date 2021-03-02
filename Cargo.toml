@@ -9,13 +9,22 @@ license = "ISC"
 name = "matrix"
 crate-type = ["cdylib"]
 
+[features]
+default = []
+jaeger = ["tracing-opentelemetry", "opentelemetry", "opentelemetry-jaeger"]
+
 [dependencies]
 url = "2.2.1"
 futures = "0.3.13"
 tokio = { version = "1.2.0", features = [ "rt-multi-thread", "sync" ] }
 dashmap = "4.0.2"
-tracing = "0.1.22"
-tracing-subscriber = "0.2.15"
+
+tracing = "0.1.25"
+tracing-subscriber = "0.2.16"
+tracing-opentelemetry = { version = "0.11.0", optional = true }
+opentelemetry = { version = "0.12.0", optional = true }
+opentelemetry-jaeger = { version = "0.11.0", optional = true }
+
 clap = "2.33.3"
 syntect = "4.5.0"
 uuid = { version = "0.8.2", features = ["v4"] }
