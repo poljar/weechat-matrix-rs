@@ -32,6 +32,7 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     collections::HashMap,
+    convert::TryInto,
     ops::Deref,
     rc::Rc,
     sync::{
@@ -48,16 +49,20 @@ use url::Url;
 
 use matrix_sdk::{
     async_trait,
-    deserialized_responses::AmbiguityChange,
+    deserialized_responses::{
+        events::{SyncMessageEvent, SyncRedactionEvent},
+        AmbiguityChange, AnyMessageEventContent, AnySyncMessageEvent,
+        AnySyncRoomEvent,
+    },
     events::{
         room::{
             member::MemberEventContent,
-            message::{MessageEventContent, TextMessageEventContent},
-            redaction::SyncRedactionEvent,
+            message::{
+                MessageEventContent, MessageType, TextMessageEventContent,
+            },
         },
-        AnyMessageEventContent, AnyRedactedSyncMessageEvent, AnyRoomEvent,
-        AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
-        SyncMessageEvent, SyncStateEvent,
+        AnyRedactedSyncMessageEvent, AnyRoomEvent, AnySyncStateEvent,
+        SyncStateEvent,
     },
     identifiers::{EventId, RoomAliasId, RoomId, UserId},
     uuid::Uuid,
@@ -338,8 +343,9 @@ impl RoomHandle {
 impl BufferInputCallbackAsync for MatrixRoom {
     async fn callback(&mut self, _: BufferHandle, input: String) {
         // TODO parse the input here and produce a formatted body.
-        let content =
-            MessageEventContent::Text(TextMessageEventContent::markdown(input));
+        let content = MessageEventContent::new(MessageType::Text(
+            TextMessageEventContent::markdown(input),
+        ));
         self.send_message(content).await;
     }
 }
@@ -488,13 +494,13 @@ impl MatrixRoom {
         content: &AnyMessageEventContent,
     ) -> Option<RenderedEvent> {
         use AnyMessageEventContent::*;
-        use MessageEventContent::*;
+        use MessageType::*;
 
         let rendered = match content {
             RoomEncrypted(c) => {
                 c.render_with_prefix(send_time, event_id, sender, &())
             }
-            RoomMessage(c) => match c {
+            RoomMessage(c) => match &c.msgtype {
                 Text(c) => {
                     c.render_with_prefix(send_time, event_id, sender, &())
                 }
@@ -578,7 +584,7 @@ impl MatrixRoom {
         content: &MessageEventContent,
     ) {
         if self.config.borrow().look().local_echo() {
-            if let MessageEventContent::Text(c) = content {
+            if let MessageType::Text(c) = &content.msgtype {
                 let sender =
                     self.members.get(&self.own_user_id).await.unwrap_or_else(
                         || panic!("No own member {}", self.own_user_id),
@@ -626,7 +632,9 @@ impl MatrixRoom {
             match c
                 .send_message(
                     &self.room_id,
-                    AnyMessageEventContent::RoomMessage(content),
+                    AnyMessageEventContent::RoomMessage(content)
+                        .try_into()
+                        .expect("Can't convert to ruma event"),
                     Some(uuid),
                 )
                 .await
@@ -874,6 +882,7 @@ impl MatrixRoom {
                 event_id: event_id.clone(),
                 content,
                 unsigned: Default::default(),
+                encryption_info: None,
             };
 
             let event = AnySyncMessageEvent::RoomMessage(event);
@@ -1086,12 +1095,13 @@ impl MatrixRoom {
                     );
 
                     let send_time = event.origin_server_ts();
+
                     if let Some(rendered) = self
                         .render_message_content(
                             event.event_id(),
                             send_time,
                             &sender,
-                            &event.content(),
+                            &event.content().into(),
                         )
                         .await
                     {

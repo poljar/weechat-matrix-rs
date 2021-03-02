@@ -69,10 +69,9 @@ use url::Url;
 use matrix_sdk::{
     self,
     api::r0::session::login::Response as LoginResponse,
-    deserialized_responses::AmbiguityChange,
+    deserialized_responses::{AmbiguityChange, AnySyncRoomEvent},
     events::{
-        room::member::MemberEventContent, AnySyncRoomEvent, AnySyncStateEvent,
-        SyncStateEvent,
+        room::member::MemberEventContent, AnySyncStateEvent, SyncStateEvent,
     },
     identifiers::{DeviceIdBox, RoomId, UserId},
     Client, ClientConfig, JoinedRoom,

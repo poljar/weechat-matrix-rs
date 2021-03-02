@@ -36,10 +36,10 @@ use matrix_sdk::{
         typing::create_typing_event::{Response as TypingResponse, Typing},
         uiaa::AuthData,
     },
-    deserialized_responses::AmbiguityChange,
+    deserialized_responses::{AmbiguityChange, AnySyncRoomEvent},
     events::{
         room::member::MemberEventContent, AnyMessageEventContent,
-        AnySyncRoomEvent, AnySyncStateEvent, SyncStateEvent,
+        AnySyncStateEvent, SyncStateEvent,
     },
     identifiers::{DeviceIdBox, RoomId},
     Client, JoinedRoom, LoopCtrl, Result as MatrixResult, SyncSettings,
