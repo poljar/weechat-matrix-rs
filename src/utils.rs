@@ -1,12 +1,11 @@
 use matrix_sdk::{
     deserialized_responses::AnySyncMessageEvent,
     events::{
-        room::message::Relation,
+        room::message::{MessageEventContent, Relation},
         AnyMessageEvent,
     },
     identifiers::EventId,
 };
-use matrix_sdk::events::room::message::MessageEventContent;
 
 pub trait Edit {
     fn is_edit(&self) -> bool;
