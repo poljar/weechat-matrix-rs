@@ -74,7 +74,7 @@ use matrix_sdk::{
         room::member::MemberEventContent, AnySyncStateEvent, SyncStateEvent,
     },
     identifiers::{DeviceIdBox, RoomId, UserId},
-    Client, ClientConfig, JoinedRoom,
+    Client, ClientConfig, Room,
 };
 
 use weechat::{
@@ -487,7 +487,7 @@ impl InnerServer {
         self.settings.borrow().password.clone()
     }
 
-    pub async fn restore_room(&self, room: JoinedRoom) {
+    pub async fn restore_room(&self, room: Room) {
         let homeserver = self
             .settings
             .borrow()
