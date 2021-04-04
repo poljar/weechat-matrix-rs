@@ -421,7 +421,7 @@ impl Drop for MatrixServer {
                 let option_name =
                     &format!("{}.{}", self.server_name, option_name);
                 section.free_option(option_name).unwrap_or_else(|_| {
-                    panic!(format!("Can't free option {}", option_name))
+                    panic!("Can't free option {}", option_name)
                 });
             }
         }
