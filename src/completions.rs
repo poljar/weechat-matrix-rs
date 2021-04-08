@@ -11,7 +11,7 @@ use weechat::{
 use crate::Servers;
 
 pub struct Completions {
-    #[used]
+    #[allow(dead_code)]
     servers: CompletionHook,
 }
 

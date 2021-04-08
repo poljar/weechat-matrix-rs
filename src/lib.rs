@@ -153,13 +153,16 @@ impl SignalCallback for Servers {
     }
 }
 
-#[allow(dead_code)]
 struct Matrix {
     servers: Servers,
+    #[allow(dead_code)]
     commands: Commands,
     config: ConfigHandle,
+    #[allow(dead_code)]
     bar_items: BarItems,
+    #[allow(dead_code)]
     typing_notice_signal: SignalHook,
+    #[allow(dead_code)]
     completions: Completions,
     debug_buffer: RefCell<Option<BufferHandle>>,
     #[cfg(feature = "jaeger")]
