@@ -15,7 +15,7 @@ use std::{
     rc::Rc,
 };
 
-use tracing_subscriber::{layer::SubscriberExt};
+use tracing_subscriber::layer::SubscriberExt;
 
 #[cfg(feature = "jaeger")]
 use opentelemetry_jaeger::Uninstall;
@@ -224,11 +224,14 @@ impl Plugin for Matrix {
                 .expect("Can't install jaeger thing");
 
             let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-            let filter = tracing_subscriber::filter::EnvFilter::from_default_env();
+            let filter =
+                tracing_subscriber::filter::EnvFilter::from_default_env();
 
             let subscriber = tracing_subscriber::registry()
                 .with(filter)
-                .with(tracing_subscriber::fmt::layer().with_writer(debug::Debug))
+                .with(
+                    tracing_subscriber::fmt::layer().with_writer(debug::Debug),
+                )
                 .with(telemetry);
 
             (subscriber, uninstall)
@@ -236,11 +239,12 @@ impl Plugin for Matrix {
 
         #[cfg(not(feature = "jaeger"))]
         let subscriber = {
-            let filter = tracing_subscriber::filter::EnvFilter::from_default_env();
+            let filter =
+                tracing_subscriber::filter::EnvFilter::from_default_env();
 
-            tracing_subscriber::registry()
-                .with(filter)
-                .with(tracing_subscriber::fmt::layer().with_writer(debug::Debug))
+            tracing_subscriber::registry().with(filter).with(
+                tracing_subscriber::fmt::layer().with_writer(debug::Debug),
+            )
         };
 
         let _ = tracing::subscriber::set_global_default(subscriber).map_err(
