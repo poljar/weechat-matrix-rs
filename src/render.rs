@@ -535,7 +535,7 @@ macro_rules! has_url_or_file {
 
             #[inline]
             fn url(&self) -> Option<&str> {
-                self.url.as_deref()
+                self.url.as_ref().map(|u| u.as_str())
             }
 
             #[inline]

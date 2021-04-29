@@ -38,7 +38,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Mutex, MutexGuard,
     },
-    time::{Instant, SystemTime},
+    time::SystemTime,
 };
 
 use futures::executor::block_on;
@@ -52,7 +52,9 @@ use matrix_sdk::{
     events::{
         room::{
             member::MemberEventContent,
-            message::{MessageEventContent, TextMessageEventContent},
+            message::{
+                MessageEventContent, MessageType, TextMessageEventContent,
+            },
             redaction::SyncRedactionEvent,
         },
         AnyMessageEventContent, AnyRedactedSyncMessageEvent, AnyRoomEvent,
@@ -60,8 +62,9 @@ use matrix_sdk::{
         SyncMessageEvent, SyncStateEvent,
     },
     identifiers::{EventId, RoomAliasId, RoomId, UserId},
+    room::Joined,
     uuid::Uuid,
-    JoinedRoom, StoreError,
+    StoreError,
 };
 
 use weechat::{
@@ -74,7 +77,7 @@ use weechat::{
 
 use crate::{
     config::{Config, RedactionStyle},
-    connection::{Connection, TYPING_NOTICE_TIMEOUT},
+    connection::Connection,
     render::{Render, RenderedEvent},
     utils::Edit,
     PLUGIN_NAME,
@@ -145,14 +148,11 @@ pub struct MatrixRoom {
     homeserver: Rc<Url>,
     room_id: Rc<RoomId>,
     own_user_id: Rc<UserId>,
-    room: JoinedRoom,
+    room: Joined,
     buffer: Rc<RefCell<Option<BufferHandle>>>,
 
     config: Rc<RefCell<Config>>,
     connection: Rc<RefCell<Option<Connection>>>,
-
-    typing_notice_time: Rc<RefCell<Option<Instant>>>,
-    typing_in_flight: Rc<Mutex<()>>,
 
     messages_in_flight: IntMutex,
     prev_batch: Rc<RefCell<Option<PrevBatch>>>,
@@ -192,14 +192,14 @@ impl RoomHandle {
         server_name: &str,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
-        room: JoinedRoom,
+        room: Joined,
         homeserver: Url,
         room_id: RoomId,
         own_user_id: &UserId,
     ) -> Self {
         let members = Members::new(room.clone());
 
-        let own_nick = block_on(room.get_member(own_user_id))
+        let own_nick = block_on(room.get_member_no_sync(own_user_id))
             .ok()
             .flatten()
             .map(|m| m.name().to_owned())
@@ -209,8 +209,6 @@ impl RoomHandle {
             homeserver: Rc::new(homeserver),
             room_id: Rc::new(room_id.clone()),
             connection: connection.clone(),
-            typing_notice_time: Rc::new(RefCell::new(None)),
-            typing_in_flight: Rc::new(Mutex::new(())),
             config,
             prev_batch: Rc::new(RefCell::new(
                 room.last_prev_batch().map(PrevBatch::Backwards),
@@ -295,7 +293,7 @@ impl RoomHandle {
 
     pub async fn restore(
         server_name: &str,
-        room: JoinedRoom,
+        room: Joined,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
         homeserver: Url,
@@ -338,9 +336,13 @@ impl RoomHandle {
 impl BufferInputCallbackAsync for MatrixRoom {
     async fn callback(&mut self, _: BufferHandle, input: String) {
         let content = if self.config.borrow().input().markdown_input() {
-            MessageEventContent::Text(TextMessageEventContent::markdown(input))
+            MessageEventContent::new(MessageType::Text(
+                TextMessageEventContent::markdown(input),
+            ))
         } else {
-            MessageEventContent::Text(TextMessageEventContent::plain(input))
+            MessageEventContent::new(MessageType::Text(
+                TextMessageEventContent::plain(input),
+            ))
         };
 
         self.send_message(content).await;
@@ -491,13 +493,13 @@ impl MatrixRoom {
         content: &AnyMessageEventContent,
     ) -> Option<RenderedEvent> {
         use AnyMessageEventContent::*;
-        use MessageEventContent::*;
+        use MessageType::*;
 
         let rendered = match content {
             RoomEncrypted(c) => {
                 c.render_with_prefix(send_time, event_id, sender, &())
             }
-            RoomMessage(c) => match c {
+            RoomMessage(c) => match &c.msgtype {
                 Text(c) => {
                     c.render_with_prefix(send_time, event_id, sender, &())
                 }
@@ -581,7 +583,7 @@ impl MatrixRoom {
         content: &MessageEventContent,
     ) {
         if self.config.borrow().look().local_echo() {
-            if let MessageEventContent::Text(c) = content {
+            if let MessageType::Text(c) = &content.msgtype {
                 let sender =
                     self.members.get(&self.own_user_id).await.unwrap_or_else(
                         || panic!("No own member {}", self.own_user_id),
@@ -628,7 +630,7 @@ impl MatrixRoom {
             self.queue_outgoing_message(uuid, &content).await;
             match c
                 .send_message(
-                    &self.room_id,
+                    self.room().clone(),
                     AnyMessageEventContent::RoomMessage(content),
                     Some(uuid),
                 )
@@ -659,7 +661,6 @@ impl MatrixRoom {
     ///
     /// If the input is empty the typing notice is disabled.
     pub fn update_typing_notice(&self) {
-        let typing_in_flight = self.typing_in_flight.clone();
         let buffer_handle = self.buffer_handle();
 
         let buffer = if let Ok(b) = buffer_handle.upgrade() {
@@ -676,68 +677,24 @@ impl MatrixRoom {
         }
 
         let connection = self.connection.clone();
-        let room_id = self.room_id.clone();
-        let typing_notice_time = self.typing_notice_time.clone();
+        let room = self.room().clone();
 
-        #[allow(clippy::await_holding_lock)]
         let send = |typing: bool| async move {
-            let typing_time = typing_notice_time;
-
-            // We're in the process of sending out a typing notice, so don't
-            // make the same request twice. It's fine to hold on to this lock
-            // accross the await point since we're not going to try to lock it
-            // anywhere else.
-            let guard = match typing_in_flight.try_lock() {
-                Ok(guard) => guard,
-                Err(_) => {
-                    return;
-                }
-            };
-
             let connection = connection.borrow().clone();
 
             if let Some(connection) = connection {
-                let response =
-                    connection.send_typing_notice(&*room_id, typing).await;
-
-                // We need to record the time when the last typing notice was
-                // sent to ensure we don't send out new ones while a previous
-                // one is active. If we cancelled the last notice (`!typing`),
-                // we record that there is currently no active notice.
-                //
-                // An unsuccessful response indicates the send operation failed.
-                // In this case we need to retry, so we don't update anything.
-
-                if response.is_ok() {
-                    if typing {
-                        *typing_time.borrow_mut() = Some(Instant::now());
-                    } else {
-                        *typing_time.borrow_mut() = None;
-                    }
-                }
+                let _ = connection.send_typing_notice(room, typing).await;
             };
-
-            drop(guard)
         };
 
-        let typing_time = self.typing_notice_time.borrow_mut();
-
-        if input.len() < 4 && typing_time.is_some() {
+        if input.len() < 4 {
             // If we have an active typing notice and our input is short, e.g.
             // we removed the input set the typing notice to false.
             Weechat::spawn(send(false)).detach();
         } else if input.len() >= 4 {
-            if let Some(typing_time) = &*typing_time {
-                // If we have some valid input, check if the typing notice
-                // expired and send one out if it indeed expired.
-                if typing_time.elapsed() > TYPING_NOTICE_TIMEOUT {
-                    Weechat::spawn(send(true)).detach();
-                }
-            } else {
-                // If we have some valid input and no active typing notice, send
-                // one out.
-                Weechat::spawn(send(true)).detach();
-            }
+            // If we have some valid input and no active typing notice, send
+            // one out.
+            Weechat::spawn(send(true)).detach();
         }
     }
 
@@ -755,7 +712,6 @@ impl MatrixRoom {
         let messages_lock = self.messages_in_flight.clone();
 
         let connection = self.connection.borrow().as_ref().cloned();
-        let room_id = self.room_id().clone();
 
         let prev_batch =
             if let Some(p) = self.prev_batch.borrow().as_ref().cloned() {
@@ -774,7 +730,9 @@ impl MatrixRoom {
         Weechat::bar_item_update("matrix_modes");
 
         if let Some(connection) = connection {
-            if let Ok(r) = connection.room_messages(room_id, prev_batch).await {
+            let room = self.room().clone();
+
+            if let Ok(r) = connection.room_messages(room, prev_batch).await {
                 for event in r.chunk.iter().filter_map(|e| e.deserialize().ok())
                 {
                     self.handle_room_event(&event).await;
@@ -1089,6 +1047,7 @@ impl MatrixRoom {
                     );
 
                     let send_time = event.origin_server_ts();
+
                     if let Some(rendered) = self
                         .render_message_content(
                             event.event_id(),
@@ -1109,7 +1068,7 @@ impl MatrixRoom {
         }
     }
 
-    pub fn room(&self) -> &JoinedRoom {
+    pub fn room(&self) -> &Joined {
         &self.room
     }
 

@@ -1,9 +1,6 @@
 use matrix_sdk::{
     events::{
-        room::message::{
-            MessageEventContent, NoticeMessageEventContent, Relation,
-            TextMessageEventContent,
-        },
+        room::message::{MessageEventContent, Relation},
         AnyMessageEvent, AnySyncMessageEvent,
     },
     identifiers::EventId,
@@ -14,51 +11,24 @@ pub trait Edit {
     fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)>;
 }
 
-macro_rules! impl_relation {
-    ($name:ident) => {
-        impl Edit for $name {
-            fn is_edit(&self) -> bool {
-                if let Some(Relation::Replacement(_)) = self.relates_to.as_ref()
-                {
-                    self.new_content.is_some()
-                } else {
-                    false
-                }
-            }
-
-            fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)> {
-                if let Some(Relation::Replacement(r)) = self.relates_to.as_ref()
-                {
-                    if let Some(content) = self.new_content.as_ref() {
-                        Some((&r.event_id, &*content))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-        }
-    };
-}
-
-impl_relation!(TextMessageEventContent);
-impl_relation!(NoticeMessageEventContent);
-
 impl Edit for MessageEventContent {
     fn is_edit(&self) -> bool {
-        match self {
-            MessageEventContent::Notice(n) => n.is_edit(),
-            MessageEventContent::Text(t) => t.is_edit(),
-            _ => false,
+        if let Some(Relation::Replacement(_)) = self.relates_to.as_ref() {
+            self.new_content.is_some()
+        } else {
+            false
         }
     }
 
     fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)> {
-        match self {
-            MessageEventContent::Notice(n) => n.get_edit(),
-            MessageEventContent::Text(t) => t.get_edit(),
-            _ => None,
+        if let Some(Relation::Replacement(r)) = self.relates_to.as_ref() {
+            if let Some(content) = self.new_content.as_ref() {
+                Some((&r.event_id, &*content))
+            } else {
+                None
+            }
+        } else {
+            None
         }
     }
 }
