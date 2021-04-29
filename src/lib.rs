@@ -17,9 +17,6 @@ use std::{
 
 use tracing_subscriber::layer::SubscriberExt;
 
-#[cfg(feature = "jaeger")]
-use opentelemetry_jaeger::Uninstall;
-
 use weechat::{
     buffer::{Buffer, BufferHandle},
     hooks::{SignalCallback, SignalData, SignalHook},
@@ -165,8 +162,6 @@ struct Matrix {
     #[allow(dead_code)]
     completions: Completions,
     debug_buffer: RefCell<Option<BufferHandle>>,
-    #[cfg(feature = "jaeger")]
-    uninstall: Uninstall,
 }
 
 impl std::fmt::Debug for Matrix {
@@ -216,28 +211,6 @@ impl Plugin for Matrix {
         let bar_items = BarItems::hook_all(servers.clone())?;
         let completions = Completions::hook_all(servers.clone())?;
 
-        #[cfg(feature = "jaeger")]
-        let (subscriber, uninstall) = {
-            let (tracer, uninstall) = opentelemetry_jaeger::new_pipeline()
-                .with_service_name("weechat-matrix")
-                .install()
-                .expect("Can't install jaeger thing");
-
-            let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-            let filter =
-                tracing_subscriber::filter::EnvFilter::from_default_env();
-
-            let subscriber = tracing_subscriber::registry()
-                .with(filter)
-                .with(
-                    tracing_subscriber::fmt::layer().with_writer(debug::Debug),
-                )
-                .with(telemetry);
-
-            (subscriber, uninstall)
-        };
-
-        #[cfg(not(feature = "jaeger"))]
         let subscriber = {
             let filter =
                 tracing_subscriber::filter::EnvFilter::from_default_env();
@@ -273,8 +246,6 @@ impl Plugin for Matrix {
             completions,
             debug_buffer: RefCell::new(None),
             typing_notice_signal: typing,
-            #[cfg(feature = "jaeger")]
-            uninstall,
         };
 
         Weechat::spawn(async move {
