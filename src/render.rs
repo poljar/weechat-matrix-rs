@@ -716,6 +716,8 @@ pub fn render_membership(
 
 #[cfg(test)]
 mod tests {
+    use matrix_sdk::identifiers::MxcUri;
+
     use super::*;
 
     #[test]
@@ -746,7 +748,7 @@ mod tests {
             },
             iv: "some-test-iv".to_string(),
             v: "v2".to_string(),
-            url: "mxc://some-url".to_string(),
+            url: MxcUri::from("mxc://some-url"),
             hashes,
         };
         let expected =
