@@ -11,7 +11,8 @@ use matrix_sdk::{
         SyncStateEvent,
     },
     identifiers::UserId,
-    JoinedRoom, RoomMember, StoreError,
+    room::Joined,
+    RoomMember, StoreError,
 };
 
 use weechat::{
@@ -23,7 +24,7 @@ use crate::render::render_membership;
 
 #[derive(Clone)]
 pub struct Members {
-    room: JoinedRoom,
+    room: Joined,
     ambiguity_map: Rc<DashMap<UserId, bool>>,
     nicks: Rc<DashMap<UserId, String>>,
     pub(super) buffer: Rc<RefCell<Option<BufferHandle>>>,
@@ -37,7 +38,7 @@ pub struct WeechatRoomMember {
 }
 
 impl Members {
-    pub fn new(room: JoinedRoom) -> Self {
+    pub fn new(room: Joined) -> Self {
         Self {
             room,
             nicks: DashMap::new().into(),
@@ -88,7 +89,7 @@ impl Members {
             return;
         };
 
-        match self.room().get_member(user_id).await {
+        match self.room().get_member_no_sync(user_id).await {
             Ok(Some(member)) => {
                 self.ambiguity_map
                     .insert(user_id.clone(), member.name_ambiguous());
@@ -204,7 +205,7 @@ impl Members {
                 .expect("Couldn't get the nick color name")
         };
 
-        match self.room.get_member(user_id).await {
+        match self.room.get_member_no_sync(user_id).await {
             Ok(m) => m.map(|m| WeechatRoomMember {
                 color: Rc::new(color),
                 ambiguous_nick: Rc::new(
@@ -226,7 +227,7 @@ impl Members {
         }
     }
 
-    fn room(&self) -> &JoinedRoom {
+    fn room(&self) -> &Joined {
         &self.room
     }
 

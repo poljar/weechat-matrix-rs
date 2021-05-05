@@ -13,6 +13,7 @@ use matrix_sdk::{
                 RedactedMessageEventContent, ServerNoticeMessageEventContent,
                 TextMessageEventContent, VideoMessageEventContent,
             },
+            EncryptedFile,
         },
         RedactedSyncMessageEvent, SyncStateEvent,
     },
@@ -310,18 +311,112 @@ impl Render for ServerNoticeMessageEventContent {
     }
 }
 
+/// Create an HTTP download path from a matrix content URI
+fn mxc_to_http_download_path(
+    mxc_url: Url,
+) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(format!(
+        "/_matrix/media/r0/download/{server_name}{media_id}",
+        server_name = mxc_url.host_str().ok_or("Missing host")?,
+        media_id = mxc_url.path(),
+    ))
+}
+
+/// Convert a matrix content URI to HTTP(s), respecting a user's homeserver
+fn mxc_to_http(
+    mxc_url: &str,
+    homeserver: &Url,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let url = url::Url::parse(mxc_url)?;
+
+    if url.scheme() != "mxc" {
+        return Err("URL missing MXC scheme".into());
+    }
+
+    if url.path().is_empty() {
+        return Err("URL missing path".into());
+    }
+
+    Ok(homeserver
+        .join(&mxc_to_http_download_path(url)?)?
+        .to_string())
+}
+
+/// Convert a matrix content URI to an encrypted mxc URI, respecting a user's homeserver.
+///
+/// The return value of this function will have a URI schema of emxc://. The path of the URI will
+/// be converted just like the mxc_to_http() function does, but it will also contain query
+/// parameters that are necessary to decrypt the payload the URI is pointing to.
+///
+/// This function is useful to present a clickable URI that can be passed to a plumber program that
+/// will download and decrypt the content that the matrix content URI is pointing to.
+///
+/// The returned URI should never be converted to http and opened directly, as that would expose
+/// the decryption parameters to any middleman or ISP.
+fn mxc_to_emxc(
+    mxc_url: &str,
+    homeserver: &Url,
+    encrypted: &EncryptedFile,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let url = url::Url::parse(mxc_url)?;
+
+    if url.scheme() != "mxc" {
+        return Err("URL missing MXC scheme".into());
+    }
+
+    if url.path().is_empty() {
+        return Err("URL missing path".into());
+    }
+
+    let host_str = format!(
+        "emxc://{}",
+        homeserver
+            .host_str()
+            .ok_or("Missing homeserver host string")?
+    );
+
+    let mut emxc_url = url::Url::parse(&host_str)?;
+    emxc_url
+        .set_port(homeserver.port_or_known_default())
+        .map_err(|_| "Can't set port")?;
+
+    emxc_url = emxc_url.join(&mxc_to_http_download_path(url)?)?;
+
+    // Add query parameters
+    emxc_url
+        .query_pairs_mut()
+        .append_pair("key", &encrypted.key.k)
+        .append_pair(
+            "hash",
+            encrypted
+                .hashes
+                .get("sha256")
+                .ok_or("Missing sha256 hash")?,
+        )
+        .append_pair("iv", &encrypted.iv);
+
+    Ok(emxc_url.to_string())
+}
+
 impl<C: HasUrlOrFile> Render for C {
     type RenderContext = Url;
     const TAGS: &'static [&'static str] = &["matrix_media"];
 
-    fn render(&self, _homeserver: &Self::RenderContext) -> RenderedContent {
+    fn render(&self, homeserver: &Self::RenderContext) -> RenderedContent {
+        // Convert MXC to HTTP(s) or EMXC, but fallback to MXC if unable to.
+        let mxc_url = match self.encrypted_file() {
+            Some(encrypted_file) => {
+                mxc_to_emxc(self.resolve_url(), homeserver, &encrypted_file)
+            }
+            None => mxc_to_http(self.resolve_url(), homeserver),
+        }
+        .unwrap_or_else(|_| self.resolve_url().to_string());
+
         let message = format!(
             "{color_delimiter}<{color_reset}{}{color_delimiter}>\
                 [{color_reset}{}{color_delimiter}]{color_reset}",
             self.body(),
-            // FIXME this isn't right, the MXID -> URL transformation depends on
-            // your homeserver URL.
-            self.resolve_url(),
+            mxc_url,
             color_delimiter = Weechat::color("color_delimiter"),
             color_reset = Weechat::color("reset")
         );
@@ -426,6 +521,7 @@ pub trait HasUrlOrFile {
         // `file` must exist and unwrapping will never panic
         self.url().or_else(|| self.file()).unwrap()
     }
+    fn encrypted_file(&self) -> &Option<Box<EncryptedFile>>;
 }
 
 // Same as above: a simple macro to implement the trait for structs with `url`
@@ -439,12 +535,16 @@ macro_rules! has_url_or_file {
 
             #[inline]
             fn url(&self) -> Option<&str> {
-                self.url.as_deref()
+                self.url.as_ref().map(|u| u.as_str())
             }
 
             #[inline]
             fn file(&self) -> Option<&str> {
                 self.file.as_ref().map(|f| f.url.as_str())
+            }
+
+            fn encrypted_file(&self) -> &Option<Box<EncryptedFile>> {
+                &self.file
             }
         }
     };
@@ -611,5 +711,51 @@ pub fn render_membership(
             target = target_name,
             op = operation
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use matrix_sdk::identifiers::MxcUri;
+
+    use super::*;
+
+    #[test]
+    fn test_mxc_to_http() {
+        let homeserver = url::Url::parse("https://matrix.org").unwrap();
+        let mxc_url = "mxc://matrix.org/some-media-id";
+        let expected =
+            "https://matrix.org/_matrix/media/r0/download/matrix.org/some-media-id";
+        assert_eq!(expected, mxc_to_http(&mxc_url, &homeserver).unwrap());
+    }
+
+    #[test]
+    fn test_emxc_to_http() {
+        use matrix_sdk::events::room::JsonWebKey;
+        use std::collections::BTreeMap;
+
+        let homeserver = url::Url::parse("https://matrix.org").unwrap();
+        let mxc_url = "mxc://matrix.org/some-media-id";
+        let mut hashes: BTreeMap<String, String> = BTreeMap::new();
+        hashes.insert("sha256".to_string(), "some-sha256".to_string());
+        let encrypt_info = EncryptedFile {
+            key: JsonWebKey {
+                k: "some-secret-key".to_string(),
+                kty: "oct".to_string(),
+                key_ops: vec![],
+                ext: true,
+                alg: "A256CTR".to_string(),
+            },
+            iv: "some-test-iv".to_string(),
+            v: "v2".to_string(),
+            url: MxcUri::from("mxc://some-url"),
+            hashes,
+        };
+        let expected =
+            "emxc://matrix.org:443/_matrix/media/r0/download/matrix.org/some-media-id?key=some-secret-key&hash=some-sha256&iv=some-test-iv";
+        assert_eq!(
+            expected,
+            mxc_to_emxc(&mxc_url, &homeserver, &encrypt_info).unwrap()
+        );
     }
 }

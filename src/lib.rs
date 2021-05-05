@@ -15,6 +15,8 @@ use std::{
     rc::Rc,
 };
 
+use tracing_subscriber::layer::SubscriberExt;
+
 use weechat::{
     buffer::{Buffer, BufferHandle},
     hooks::{SignalCallback, SignalData, SignalHook},
@@ -150,15 +152,14 @@ impl SignalCallback for Servers {
 
 struct Matrix {
     servers: Servers,
-    #[used]
+    #[allow(dead_code)]
     commands: Commands,
-    #[used]
     config: ConfigHandle,
-    #[used]
+    #[allow(dead_code)]
     bar_items: BarItems,
-    #[used]
+    #[allow(dead_code)]
     typing_notice_signal: SignalHook,
-    #[used]
+    #[allow(dead_code)]
     completions: Completions,
     debug_buffer: RefCell<Option<BufferHandle>>,
 }
@@ -210,10 +211,14 @@ impl Plugin for Matrix {
         let bar_items = BarItems::hook_all(servers.clone())?;
         let completions = Completions::hook_all(servers.clone())?;
 
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(debug::Debug)
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .finish();
+        let subscriber = {
+            let filter =
+                tracing_subscriber::filter::EnvFilter::from_default_env();
+
+            tracing_subscriber::registry().with(filter).with(
+                tracing_subscriber::fmt::layer().with_writer(debug::Debug),
+            )
+        };
 
         let _ = tracing::subscriber::set_global_default(subscriber).map_err(
             |_err| Weechat::print("Unable to set global default subscriber"),

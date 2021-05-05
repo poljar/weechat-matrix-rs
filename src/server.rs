@@ -69,12 +69,14 @@ use url::Url;
 use matrix_sdk::{
     self,
     api::r0::session::login::Response as LoginResponse,
-    deserialized_responses::{events::AnySyncRoomEvent, AmbiguityChange},
+    deserialized_responses::AmbiguityChange,
     events::{
-        room::member::MemberEventContent, AnySyncStateEvent, SyncStateEvent,
+        room::member::MemberEventContent, AnySyncRoomEvent, AnySyncStateEvent,
+        SyncStateEvent,
     },
     identifiers::{DeviceIdBox, DeviceKeyAlgorithm, RoomId, UserId},
-    Client, ClientConfig, JoinedRoom,
+    room::Joined,
+    Client, ClientConfig,
 };
 
 use weechat::{
@@ -420,7 +422,7 @@ impl Drop for MatrixServer {
                 let option_name =
                     &format!("{}.{}", self.server_name, option_name);
                 section.free_option(option_name).unwrap_or_else(|_| {
-                    panic!(format!("Can't free option {}", option_name))
+                    panic!("Can't free option {}", option_name)
                 });
             }
         }
@@ -487,7 +489,7 @@ impl InnerServer {
         self.settings.borrow().password.clone()
     }
 
-    pub async fn restore_room(&self, room: JoinedRoom) {
+    pub async fn restore_room(&self, room: Joined) {
         let homeserver = self
             .settings
             .borrow()

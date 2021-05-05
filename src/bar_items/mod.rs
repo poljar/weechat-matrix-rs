@@ -10,11 +10,11 @@ use buffer_plugin::BufferPlugin;
 use status::Status;
 
 pub struct BarItems {
-    #[used]
+    #[allow(dead_code)]
     status: BarItem,
-    #[used]
+    #[allow(dead_code)]
     buffer_name: BarItem,
-    #[used]
+    #[allow(dead_code)]
     buffer_plugin: BarItem,
 }
 

@@ -23,10 +23,6 @@ If you are interested in helping out take a look at the issue tracker.
 
 # Build
 
-To build this project a
-[nightly](https://github.com/rust-lang/rustup#working-with-nightly-rust)
-version of Rust is required.
-
 After Rust is installed the plugin can be compiled with:
 
     cargo build
