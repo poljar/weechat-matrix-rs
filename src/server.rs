@@ -55,7 +55,6 @@
 //! that processing events will not block the Weechat mainloop for too long.
 
 use chrono::{offset::Utc, DateTime};
-use indoc::indoc;
 use std::{
     cell::{Ref, RefCell, RefMut},
     cmp::Reverse,
@@ -889,12 +888,7 @@ impl InnerServer {
             }
 
             self.print_network(&format!(
-                indoc!(
-                    "
-                    Devices for server {}{}{}:
-                      Device ID      Device name                   Last seen
-                "
-                ),
+                "Devices for server {}{}{}:",
                 Weechat::color("chat_server"),
                 self.name(),
                 Weechat::color("reset")
@@ -925,55 +919,61 @@ impl InnerServer {
                     last_seen_date
                 );
 
-                let (bold, color) = if own_device_id
+                let is_own_device = own_device_id
                     .as_ref()
                     .map(|o| o == &device_info.device_id)
-                    .unwrap_or(false)
-                {
+                    .unwrap_or(false);
+
+                let (bold, color) = if is_own_device {
                     (Weechat::color("bold"), format!("*{}", device_color))
                 } else {
                     ("", device_color)
                 };
 
-                let fingerprint = c
-                    .client()
-                    .get_device(&own_user_id, &device_info.device_id)
-                    .await
-                    .unwrap()
-                    .map(|d| d.get_key(DeviceKeyAlgorithm::Ed25519).cloned())
-                    .flatten()
-                    .unwrap_or("-".to_owned());
+                let fingerprint = if is_own_device {
+                    // TODO we need to be able to fetch this
+                    "TODO".to_owned()
+                } else {
+                    c.client()
+                        .get_device(&own_user_id, &device_info.device_id)
+                        .await
+                        .unwrap()
+                        .map(|d| {
+                            d.get_key(DeviceKeyAlgorithm::Ed25519).cloned()
+                        })
+                        .flatten()
+                        .unwrap_or("-".to_owned())
+                };
+
+                let fingerprint = fingerprint
+                    .chars()
+                    .collect::<Vec<char>>()
+                    .chunks(4)
+                    .map(|c| c.iter().collect::<String>())
+                    .collect::<Vec<String>>()
+                    .join(" ");
 
                 let info = format!(
-                    "Device: {}{}{}\n         \
-                              Name: {}{}\n  \
-                       Fingerprint: {}{}\n",
+                    "       \
+                            Name: {}{}\n  \
+                       Device ID: {}{}{}\n  \
+                       Last seen: {}\n\
+                     Fingerprint: {}{}{}\n",
+                    bold,
+                    device_info.display_name.as_deref().unwrap_or(""),
                     Weechat::color(&color),
                     device_info.device_id.as_str(),
                     Weechat::color("reset"),
-                    bold,
-                    device_info.display_name.as_deref().unwrap_or(""),
+                    last_seen,
                     Weechat::color("magenta"),
                     fingerprint,
+                    Weechat::color("reset"),
                 );
-
-                // let info = format!(
-                //     "       Device: {}{:<15}{}{}{:<30}{:<}\n  \
-                //        Fingerprint: {}{}",
-                //     Weechat::color(&color),
-                //     device_info.device_id.as_str(),
-                //     Weechat::color("reset"),
-                //     bold,
-                //     device_info.display_name.as_deref().unwrap_or(""),
-                //     last_seen,
-                //     Weechat::color("magenta"),
-                //     fingerprint,
-                // );
 
                 lines.push(info);
             }
 
-            let line = lines.join("\n\n");
+            let line = lines.join("\n");
             self.print(&line);
         };
     }
