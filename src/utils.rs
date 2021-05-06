@@ -22,11 +22,9 @@ impl Edit for MessageEventContent {
 
     fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)> {
         if let Some(Relation::Replacement(r)) = self.relates_to.as_ref() {
-            if let Some(content) = self.new_content.as_ref() {
-                Some((&r.event_id, &*content))
-            } else {
-                None
-            }
+            self.new_content
+                .as_ref()
+                .map(|content| (&r.event_id, content.as_ref()))
         } else {
             None
         }

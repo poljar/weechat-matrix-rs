@@ -931,8 +931,7 @@ impl InnerServer {
                 };
 
                 let fingerprint = if is_own_device {
-                    // TODO we need to be able to fetch this
-                    "TODO".to_owned()
+                    c.client().ed25519_key().await
                 } else {
                     c.client()
                         .get_device(&own_user_id, &device_info.device_id)
@@ -942,8 +941,8 @@ impl InnerServer {
                             d.get_key(DeviceKeyAlgorithm::Ed25519).cloned()
                         })
                         .flatten()
-                        .unwrap_or("-".to_owned())
-                };
+                }
+                .unwrap_or_else(|| "-".to_owned());
 
                 let fingerprint = fingerprint
                     .chars()
