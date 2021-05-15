@@ -23,7 +23,7 @@ use matrix_sdk::{
 
 use weechat::{Prefix, Weechat};
 
-use crate::room::WeechatRoomMember;
+use crate::{room::WeechatRoomMember, utils::ToTag};
 
 /// The rendered version of an event.
 pub struct RenderedEvent {
@@ -94,8 +94,8 @@ pub trait Render {
         color_name: &str,
     ) -> Vec<String> {
         let mut tags = self.tags();
-        let event_tag = format!("matrix_id_{}", event_id.as_str());
-        let sender_tag = format!("matrix_sender_{}", sender.as_str());
+        let event_tag = event_id.to_tag();
+        let sender_tag = sender.to_tag();
         let nick_tag = format!("nick_{}", nick);
         let color = format!("prefix_nick_{}", color_name);
         tags.push(event_tag);

@@ -3,8 +3,24 @@ use matrix_sdk::{
         room::message::{MessageEventContent, Relation},
         AnyMessageEvent, AnySyncMessageEvent,
     },
-    identifiers::EventId,
+    identifiers::{EventId, UserId},
 };
+
+pub trait ToTag {
+    fn to_tag(&self) -> String;
+}
+
+impl ToTag for EventId {
+    fn to_tag(&self) -> String {
+        format!("matrix_id_{}", self.as_str())
+    }
+}
+
+impl ToTag for UserId {
+    fn to_tag(&self) -> String {
+        format!("matrix_sender_{}", self.as_str())
+    }
+}
 
 pub trait Edit {
     fn is_edit(&self) -> bool;

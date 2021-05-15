@@ -79,7 +79,7 @@ use crate::{
     config::{Config, RedactionStyle},
     connection::Connection,
     render::{Render, RenderedEvent},
-    utils::Edit,
+    utils::{Edit, ToTag},
     PLUGIN_NAME,
 };
 
@@ -872,50 +872,72 @@ impl MatrixRoom {
         self.members.update_buffer_name();
     }
 
-    async fn replace_event(&self, event_id: &EventId, event: RenderedEvent) {
-        use std::cmp::Ordering;
-
+    fn replace_edit(
+        &self,
+        event_id: &EventId,
+        sender: &UserId,
+        event: RenderedEvent,
+    ) {
         if let Ok(buffer) = self.buffer_handle().upgrade() {
-            let event_id_tag = Cow::from(format!("matrix_id_{}", event_id));
+            let sender_tag = Cow::from(sender.to_tag());
+            let event_id_tag = Cow::from(event_id.to_tag());
+
             let lines: Vec<BufferLine> = buffer
                 .lines()
                 .filter(|l| l.tags().contains(&event_id_tag))
                 .collect();
 
-            let date = lines.get(0).map(|l| l.date()).unwrap_or_default();
-
-            for (line, new) in lines.iter().zip(event.content.lines.iter()) {
-                let tags: Vec<&str> =
-                    new.tags.iter().map(|t| t.as_str()).collect();
-                let data = LineData {
-                    prefix: Some(&event.prefix),
-                    message: Some(&new.message),
-                    tags: Some(&tags),
-                    ..Default::default()
-                };
-
-                line.update(data);
+            if lines
+                .get(0)
+                .map(|l| l.tags().contains(&sender_tag))
+                .unwrap_or(false)
+            {
+                self.replace_event_helper(&buffer, lines, event);
             }
+        }
+    }
 
-            match lines.len().cmp(&event.content.lines.len()) {
-                Ordering::Greater => {
-                    for line in &lines[event.content.lines.len()..] {
-                        line.set_message("");
-                    }
-                }
-                Ordering::Less => {
-                    for line in &event.content.lines[lines.len()..] {
-                        let message =
-                            format!("{}{}", &event.prefix, &line.message);
-                        let tags: Vec<&str> =
-                            line.tags.iter().map(|t| t.as_str()).collect();
-                        buffer.print_date_tags(date, &tags, &message)
-                    }
+    fn replace_event_helper(
+        &self,
+        buffer: &Buffer,
+        lines: Vec<BufferLine<'_>>,
+        event: RenderedEvent,
+    ) {
+        use std::cmp::Ordering;
+        let date = lines.get(0).map(|l| l.date()).unwrap_or_default();
 
-                    self.sort_messages()
+        for (line, new) in lines.iter().zip(event.content.lines.iter()) {
+            let tags: Vec<&str> = new.tags.iter().map(|t| t.as_str()).collect();
+            let data = LineData {
+                // Our prefixes always come with a \t character, but when we
+                // replace stuff we're able to replace the prefix and the
+                // message separately, so trim the whitespace in the prefix.
+                prefix: Some(event.prefix.trim_end()),
+                message: Some(&new.message),
+                tags: Some(&tags),
+                ..Default::default()
+            };
+
+            line.update(data);
+        }
+
+        match lines.len().cmp(&event.content.lines.len()) {
+            Ordering::Greater => {
+                for line in &lines[event.content.lines.len()..] {
+                    line.set_message("");
                 }
-                _ => (),
             }
+            Ordering::Less => {
+                for line in &event.content.lines[lines.len()..] {
+                    let message = format!("{}{}", &event.prefix, &line.message);
+                    let tags: Vec<&str> =
+                        line.tags.iter().map(|t| t.as_str()).collect();
+                    buffer.print_date_tags(date, &tags, &message)
+                }
+
+                self.sort_messages()
+            }
+            Ordering::Equal => (),
         }
     }
 
@@ -946,7 +968,7 @@ impl MatrixRoom {
                     }
                 })
             {
-                self.replace_event(event_id, rendered).await;
+                self.replace_edit(event_id, event.sender(), rendered);
             }
         }
     }
