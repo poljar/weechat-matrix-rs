@@ -352,7 +352,8 @@ impl MatrixServer {
                     );
 
                     server_ref.settings.borrow_mut().username =
-                        option.value().to_string();
+                        Weechat::eval_string_expression(&option.value())
+                            .expect("Can't evaluate username");
                 });
 
         server_section
@@ -370,7 +371,8 @@ impl MatrixServer {
                     );
 
                     server_ref.settings.borrow_mut().password =
-                        option.value().to_string();
+                        Weechat::eval_string_expression(&option.value())
+                            .expect("Can't evaluate password");
                 });
 
         server_section
