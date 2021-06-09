@@ -872,6 +872,12 @@ impl InnerServer {
     }
 
     pub async fn devices(&self) {
+        enum DeviceTrust {
+            Verified,
+            Unverified,
+            Unsupported,
+        }
+
         if let Some(c) = self.connection() {
             let mut response = match c.devices().await {
                 Ok(r) => r,
@@ -909,11 +915,15 @@ impl InnerServer {
                 )
                 .expect("Can't get device color");
 
-                let last_seen_date =
-                    device_info.last_seen_ts.map_or("?".to_owned(), |d| {
-                        let date: DateTime<Utc> = d.into();
-                        date.format("%Y/%m/%d %H:%M").to_string()
-                    });
+                let last_seen_date = device_info
+                    .last_seen_ts
+                    .and_then(|d| {
+                        d.to_system_time().map(|d| {
+                            let date: DateTime<Utc> = d.into();
+                            date.format("%Y/%m/%d %H:%M").to_string()
+                        })
+                    })
+                    .unwrap_or_else(|| "?".to_string());
 
                 let last_seen = format!(
                     "{} @ {}",
@@ -943,32 +953,87 @@ impl InnerServer {
                             d.get_key(DeviceKeyAlgorithm::Ed25519).cloned()
                         })
                         .flatten()
-                }
-                .unwrap_or_else(|| "-".to_owned());
+                };
 
-                let fingerprint = fingerprint
-                    .chars()
-                    .collect::<Vec<char>>()
-                    .chunks(4)
-                    .map(|c| c.iter().collect::<String>())
-                    .collect::<Vec<String>>()
-                    .join(" ");
+                let verified = if is_own_device {
+                    DeviceTrust::Verified
+                } else {
+                    c.client()
+                        .get_device(&own_user_id, &device_info.device_id)
+                        .await
+                        .unwrap()
+                        .map(|d| {
+                            if d.is_trusted() {
+                                DeviceTrust::Verified
+                            } else {
+                                DeviceTrust::Unverified
+                            }
+                        })
+                        .unwrap_or(DeviceTrust::Unsupported)
+                };
+
+                let verified = match verified {
+                    DeviceTrust::Verified => {
+                        format!(
+                            "{}Trusted{}",
+                            Weechat::color("green"),
+                            Weechat::color("reset")
+                        )
+                    }
+                    DeviceTrust::Unverified => {
+                        format!(
+                            "{}Not trusted{}",
+                            Weechat::color("red"),
+                            Weechat::color("reset")
+                        )
+                    }
+                    DeviceTrust::Unsupported => {
+                        format!(
+                            "{}No encryption support{}",
+                            Weechat::color("darkgray"),
+                            Weechat::color("reset")
+                        )
+                    }
+                };
+
+                let fingerprint = if let Some(fingerprint) = fingerprint {
+                    let fingerprint = fingerprint
+                        .chars()
+                        .collect::<Vec<char>>()
+                        .chunks(4)
+                        .map(|c| c.iter().collect::<String>())
+                        .collect::<Vec<String>>()
+                        .join(" ");
+
+                    format!(
+                        "{}{}{}",
+                        Weechat::color("magenta"),
+                        fingerprint,
+                        Weechat::color("reset")
+                    )
+                } else {
+                    format!(
+                        "{}-{}",
+                        Weechat::color("darkgray"),
+                        Weechat::color("reset")
+                    )
+                };
 
                 let info = format!(
                     "       \
                             Name: {}{}\n  \
-                       Device ID: {}{}{}\n  \
-                       Last seen: {}\n\
-                     Fingerprint: {}{}{}\n",
+                       Device ID: {}{}{}\n   \
+                        Security: {}\n\
+                     Fingerprint: {}\n  \
+                       Last seen: {}\n",
                     bold,
                     device_info.display_name.as_deref().unwrap_or(""),
                     Weechat::color(&color),
                     device_info.device_id.as_str(),
                     Weechat::color("reset"),
-                    last_seen,
-                    Weechat::color("magenta"),
+                    verified,
                     fingerprint,
-                    Weechat::color("reset"),
+                    last_seen,
                 );
 
                 lines.push(info);
