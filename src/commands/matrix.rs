@@ -12,7 +12,9 @@ use weechat::{
 
 use super::parse_and_run;
 use crate::{
-    commands::{DevicesCommand, KeysCommand},
+    commands::{
+        verification::VerificationCommand, DevicesCommand, KeysCommand,
+    },
     config::ConfigHandle,
     MatrixServer, Servers, PLUGIN_NAME,
 };
@@ -38,20 +40,26 @@ impl MatrixCommand {
             .add_argument("reconnect <server-name>")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
             .arguments_description(&format!(
-                "      server: List, add, or remove Matrix servers.
-     connect: Connect to Matrix servers.
-  disconnect: Disconnect from one or all Matrix servers.
-   reconnect: Reconnect to server(s).
-     devices: {}
-        keys: {}
+                "        server: List, add, or remove Matrix servers.
+       connect: Connect to Matrix servers.
+    disconnect: Disconnect from one or all Matrix servers.
+     reconnect: Reconnect to server(s).
+       devices: {}
+          keys: {}
+  verification: {}
         help: Show detailed command help.\n
 Use /matrix [command] help to find out more.\n",
                 DevicesCommand::DESCRIPTION,
                 KeysCommand::DESCRIPTION,
+                VerificationCommand::DESCRIPTION,
             ))
             .add_completion("server |add|delete|list|listfull")
             .add_completion("devices |list|delete|set-name")
             .add_completion(&format!("keys {}", KeysCommand::COMPLETION))
+            .add_completion(&format!(
+                "verification {}",
+                VerificationCommand::COMPLETION
+            ))
             .add_completion("connect %(matrix_servers)")
             .add_completion("disconnect %(matrix_servers)")
             .add_completion("reconnect %(matrix_servers)")
@@ -224,6 +232,9 @@ Use /matrix [command] help to find out more.\n",
             ("keys", Some(subargs)) => {
                 KeysCommand::run(buffer, &self.servers, subargs)
             }
+            ("verification", Some(subargs)) => {
+                VerificationCommand::run(buffer, &self.servers, subargs)
+            }
             _ => unreachable!(),
         }
     }
@@ -285,6 +296,11 @@ impl CommandCallback for MatrixCommand {
             .subcommand(
                 SubCommand::with_name("keys")
                     .about(KeysCommand::DESCRIPTION)
+                    .subcommands(KeysCommand::subcommands()),
+            )
+            .subcommand(
+                SubCommand::with_name("verification")
+                    .about(VerificationCommand::DESCRIPTION)
                     .subcommands(KeysCommand::subcommands()),
             )
             .subcommand(

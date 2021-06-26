@@ -17,23 +17,26 @@ default = []
 clap = "2.33.3"
 chrono = "0.4.19"
 dashmap = "4.0.2"
-futures = "0.3.14"
+futures = "0.3.15"
 indoc = "1.0.3"
-url = "2.2.1"
+url = "2.2.2"
 serde_json = "1.0.64"
 strum = "0.20.0"
 strum_macros = "0.20.1"
 syntect = "4.5.0"
-tokio = { version = "1.5.0", features = [ "rt-multi-thread", "sync" ] }
-tracing = "0.1.25"
-tracing-subscriber = "0.2.17"
+tokio = { version = "1.7.1", features = [ "rt-multi-thread", "sync" ] }
+tracing = "0.1.26"
+tracing-subscriber = "0.2.19"
 uuid = { version = "0.8.2", features = ["v4"] }
 unicode-segmentation = "1.7.1"
+qrcode = { version = "0.12.0", default-features = false }
+image = "0.23.14"
 
 [dependencies.weechat]
 git = "https://github.com/poljar/rust-weechat"
 features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
-git = "https://github.com/matrix-org/matrix-rust-sdk"
+git = "https://github.com/matrix-org/matrix-rust-sdk/"
+rev = "b62f725bead1f44b2038784e5321909f71a4af4a"
 features = ["markdown"]

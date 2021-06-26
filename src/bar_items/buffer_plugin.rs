@@ -20,7 +20,9 @@ impl BufferPlugin {
 impl BarItemCallback for BufferPlugin {
     fn callback(&mut self, _: &Weechat, buffer: &Buffer) -> String {
         match self.servers.buffer_owner(buffer) {
-            BufferOwner::Server(s) | BufferOwner::Room(s, _) => {
+            BufferOwner::Server(s)
+            | BufferOwner::Room(s, _)
+            | BufferOwner::Verification(s, _) => {
                 format!(
                     "{plugin_name}{del_color}/{color}{name}",
                     plugin_name = PLUGIN_NAME,

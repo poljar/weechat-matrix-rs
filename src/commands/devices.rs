@@ -2,7 +2,7 @@ use clap::{
     App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
     SubCommand,
 };
-use matrix_sdk::identifiers::DeviceIdBox;
+use matrix_sdk::ruma::identifiers::DeviceIdBox;
 
 use weechat::{
     buffer::Buffer,

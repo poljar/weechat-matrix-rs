@@ -66,15 +66,17 @@ use tracing::error;
 use url::Url;
 
 use matrix_sdk::{
-    self,
-    api::r0::session::login::Response as LoginResponse,
     deserialized_responses::AmbiguityChange,
-    events::{
-        room::member::MemberEventContent, AnySyncRoomEvent, AnySyncStateEvent,
-        SyncStateEvent,
-    },
-    identifiers::{DeviceIdBox, DeviceKeyAlgorithm, RoomId, UserId},
     room::Joined,
+    ruma::{
+        api::client::r0::session::login::Response as LoginResponse,
+        events::{
+            room::member::MemberEventContent, AnySyncRoomEvent,
+            AnySyncStateEvent, AnyToDeviceEvent, SyncStateEvent,
+        },
+        identifiers::{DeviceIdBox, DeviceKeyAlgorithm, RoomId, UserId},
+    },
+    verification::Verification,
     Client, ClientConfig,
 };
 
@@ -88,6 +90,7 @@ use crate::{
     config::ServerBuffer,
     connection::{Connection, InteractiveAuthInfo},
     room::RoomHandle,
+    verification_buffer::VerificationBuffer,
     ConfigHandle, Servers, PLUGIN_NAME,
 };
 
@@ -161,6 +164,7 @@ pub struct InnerServer {
     login_state: Rc<RefCell<Option<LoginInfo>>>,
     connection: Rc<RefCell<Option<Connection>>>,
     server_buffer: Rc<RefCell<Option<BufferHandle>>>,
+    verification_buffers: Rc<RefCell<HashMap<String, VerificationBuffer>>>,
 }
 
 impl MatrixServer {
@@ -183,6 +187,7 @@ impl MatrixServer {
             login_state: Rc::new(RefCell::new(None)),
             connection: Rc::new(RefCell::new(None)),
             server_buffer: Rc::new(RefCell::new(None)),
+            verification_buffers: Rc::new(RefCell::new(HashMap::new())),
         };
 
         let server = server.into();
@@ -439,6 +444,14 @@ impl InnerServer {
         self.rooms.borrow().values().cloned().collect()
     }
 
+    pub fn verifications(&self) -> Vec<VerificationBuffer> {
+        self.verification_buffers
+            .borrow()
+            .values()
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn get_or_create_room(&self, room_id: &RoomId) -> RoomHandle {
         if !self.rooms.borrow().contains_key(room_id) {
             let homeserver = self
@@ -657,6 +670,104 @@ impl InnerServer {
     /// Is the server connected.
     pub fn connected(&self) -> bool {
         self.connection.borrow().is_some()
+    }
+
+    pub async fn receive_to_device_event(&self, event: AnyToDeviceEvent) {
+        let handle_event = |event, transaction_id| async move {
+            if let Some(b) =
+                self.verification_buffers.borrow().get(transaction_id)
+            {
+                b.handle_event(event).await;
+            }
+        };
+
+        match &event {
+            AnyToDeviceEvent::RoomKey(_) => {}
+            AnyToDeviceEvent::RoomKeyRequest(_) => {}
+            AnyToDeviceEvent::KeyVerificationRequest(e) => {
+                if let Some(client) = self.get_client() {
+                    if let Some(request) = client
+                        .get_verification_request(
+                            &e.sender,
+                            &e.content.transaction_id,
+                        )
+                        .await
+                    {
+                        let buffer = VerificationBuffer::new(
+                            &self.server_name,
+                            &e.sender,
+                            request,
+                            self.connection.clone(),
+                        );
+                        buffer.handle_event(&event).await;
+                        self.verification_buffers
+                            .borrow_mut()
+                            .insert(e.content.transaction_id.clone(), buffer);
+                    }
+                }
+            }
+            AnyToDeviceEvent::KeyVerificationStart(e) => {
+                if let Some(client) = self.get_client() {
+                    match client
+                        .get_verification(&e.sender, &e.content.transaction_id)
+                        .await
+                    {
+                        Some(Verification::SasV1(sas)) => {
+                            if !sas.is_cancelled() {
+                                let buffer = self
+                                    .verification_buffers
+                                    .borrow()
+                                    .get(&e.content.transaction_id)
+                                    .cloned();
+
+                                if let Some(mut buffer) = buffer {
+                                    buffer.update(sas).await;
+                                    buffer.handle_event(&event).await;
+                                } else {
+                                    let buffer = VerificationBuffer::new(
+                                        &self.server_name,
+                                        &e.sender,
+                                        sas,
+                                        self.connection.clone(),
+                                    );
+                                    buffer.handle_event(&event).await;
+                                    self.verification_buffers
+                                        .borrow_mut()
+                                        .insert(
+                                            e.content.transaction_id.clone(),
+                                            buffer,
+                                        );
+                                }
+                            }
+                        }
+                        Some(Verification::QrV1(qr)) => {
+                            if let Some(buffer) = self
+                                .verification_buffers
+                                .borrow_mut()
+                                .get_mut(&e.content.transaction_id)
+                            {
+                                buffer.update_qr(qr).await;
+                                buffer.handle_event(&event).await;
+                            }
+                        }
+                        None => todo!(),
+                    }
+                }
+            }
+            AnyToDeviceEvent::KeyVerificationCancel(e) => {
+                handle_event(&event, &e.content.transaction_id).await;
+            }
+            AnyToDeviceEvent::KeyVerificationAccept(e) => {
+                handle_event(&event, &e.content.transaction_id).await
+            }
+            AnyToDeviceEvent::KeyVerificationKey(e) => {
+                handle_event(&event, &e.content.transaction_id).await
+            }
+            AnyToDeviceEvent::KeyVerificationMac(e) => {
+                handle_event(&event, &e.content.transaction_id).await
+            }
+            _ => {}
+        }
     }
 
     pub async fn receive_member(
@@ -963,7 +1074,7 @@ impl InnerServer {
                         .await
                         .unwrap()
                         .map(|d| {
-                            if d.is_trusted() {
+                            if d.verified() {
                                 DeviceTrust::Verified
                             } else {
                                 DeviceTrust::Unverified

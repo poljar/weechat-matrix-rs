@@ -1,24 +1,35 @@
-use std::{convert::TryInto, time::SystemTime};
 use url::Url;
 
 use matrix_sdk::{
-    events::{
-        room::{
-            encrypted::EncryptedEventContent,
-            member::{MemberEventContent, MembershipChange},
-            message::{
-                AudioMessageEventContent, EmoteMessageEventContent,
-                FileMessageEventContent, ImageMessageEventContent,
-                LocationMessageEventContent, NoticeMessageEventContent,
-                RedactedMessageEventContent, ServerNoticeMessageEventContent,
-                TextMessageEventContent, VideoMessageEventContent,
+    ruma::{
+        events::{
+            key::verification::{
+                key::{KeyEventContent, KeyToDeviceEventContent},
+                ready::{ReadyEventContent, ReadyToDeviceEventContent},
+                request::RequestToDeviceEventContent,
+                start::{StartEventContent, StartToDeviceEventContent},
             },
-            EncryptedFile,
+            room::{
+                encrypted::EncryptedEventContent,
+                member::{MemberEventContent, MembershipChange},
+                message::{
+                    AudioMessageEventContent, EmoteMessageEventContent,
+                    FileMessageEventContent, ImageMessageEventContent,
+                    KeyVerificationRequestEventContent,
+                    LocationMessageEventContent, NoticeMessageEventContent,
+                    RedactedMessageEventContent,
+                    ServerNoticeMessageEventContent, TextMessageEventContent,
+                    VideoMessageEventContent,
+                },
+                EncryptedFile,
+            },
+            RedactedSyncMessageEvent, SyncStateEvent,
         },
-        RedactedSyncMessageEvent, SyncStateEvent,
+        identifiers::{EventId, UserId},
+        uint, MilliSecondsSinceUnixEpoch,
     },
-    identifiers::{EventId, UserId},
     uuid::Uuid,
+    verification::{SasVerification, Verification, VerificationRequest},
 };
 
 use weechat::{Prefix, Weechat};
@@ -72,7 +83,7 @@ pub struct RenderedContent {
 /// Trait allowing events to be rendered for Weechat.
 pub trait Render {
     /// The event specific tags that should be attached to the rendered event.
-    const TAGS: &'static [&'static str];
+    const TAGS: &'static [&'static str] = &[];
 
     /// Some events might need additional context to be rendered. For example,
     /// instead of displaying the MXID for the sender, we might want to display
@@ -113,19 +124,14 @@ pub trait Render {
     /// Render the event.
     fn render_with_prefix(
         &self,
-        timestamp: &SystemTime,
+        timestamp: &MilliSecondsSinceUnixEpoch,
         event_id: &EventId,
         sender: &WeechatRoomMember,
         context: &Self::RenderContext,
     ) -> RenderedEvent {
         let prefix = self.prefix(sender);
         let mut content = self.render(context);
-        let timestamp: i64 = timestamp
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .try_into()
-            .unwrap_or_default();
+        let timestamp: i64 = (timestamp.0 / uint!(1000)).into();
 
         let tags = self.event_tags(
             event_id,
@@ -478,6 +484,236 @@ impl Render for RedactedSyncMessageEvent<RedactedMessageEventContent> {
     }
 }
 
+pub enum StartVerificationContext {
+    Room(UserId, Verification),
+    ToDevice(UserId, Verification),
+}
+
+impl StartVerificationContext {
+    fn sender(&self) -> &UserId {
+        match self {
+            StartVerificationContext::Room(s, _) => &s,
+            StartVerificationContext::ToDevice(s, _) => &s,
+        }
+    }
+
+    fn verification(&self) -> &Verification {
+        match self {
+            StartVerificationContext::Room(_, v) => &v,
+            StartVerificationContext::ToDevice(_, v) => &v,
+        }
+    }
+
+    fn is_self_verification(&self) -> bool {
+        self.verification().is_self_verification()
+    }
+}
+
+macro_rules! render_start_content {
+    ($type: ident) => {
+        impl Render for $type {
+            const TAGS: &'static [&'static str] = &[];
+
+            type RenderContext = StartVerificationContext;
+
+            fn prefix(&self, _: &WeechatRoomMember) -> String {
+                Weechat::prefix(Prefix::Network)
+            }
+
+            fn render(&self, context: &Self::RenderContext) -> RenderedContent {
+                let message = match context.verification() {
+                    Verification::SasV1(sas) => {
+                        if context.sender() == sas.own_user_id() {
+                            if context.is_self_verification() {
+                                if sas.started_from_request() {
+                                    // We auto accept emoji verifications that start
+                                    // from a verification request, so don't print
+                                    // anything.
+                                    return RenderedContent {
+                                        lines: vec![],
+                                    }
+                                } else {
+                                    format!(
+                                        "You have started an interactive emoji \
+                                            verification, accept on your other device.",
+                                    )
+                                }
+                            } else {
+                                format!(
+                                    "You have started an interactive emoji \
+                                        verification, waiting for {} to accept",
+                                    sas.other_device().user_id()
+                                )
+                            }
+                        } else {
+                            if sas.started_from_request() {
+                                format!(
+                                    "{} has started an interactive emoji verifiaction \
+                                        with you, accept with TODO",
+                                    sas.other_device().user_id()
+                                )
+                            } else {
+                                // We auto accept emoji verifications that start
+                                // from a verification request, so don't print
+                                // anything.
+                                return RenderedContent {
+                                    lines: vec![],
+                                }
+                            }
+                        }
+                    }
+                    Verification::QrV1(_) => {
+                        // We don't support QR code scanning, so if there's an QR
+                        // code verification struct it's because someone else
+                        // scanned our QR code.
+                        format!(
+                            "{} has scanned our QR code, confirm that he \
+                                has done so TODO",
+                            context.sender(),
+                        )
+                    }
+                };
+
+                RenderedContent {
+                    lines: vec![RenderedLine {
+                        message,
+                        tags: self.tags(),
+                    }],
+                }
+            }
+        }
+    };
+}
+
+render_start_content!(StartEventContent);
+render_start_content!(StartToDeviceEventContent);
+
+pub enum VerificationContext {
+    Room(WeechatRoomMember, WeechatRoomMember),
+    ToDevice(VerificationRequest),
+}
+
+macro_rules! render_request_content {
+    ($type: ident) => {
+        impl Render for $type {
+            const TAGS: &'static [&'static str] = &[];
+
+            type RenderContext = VerificationContext;
+
+            fn prefix(&self, _: &WeechatRoomMember) -> String {
+                Weechat::prefix(Prefix::Network)
+            }
+
+            fn render(&self, context: &Self::RenderContext) -> RenderedContent {
+                let message = match context {
+                    VerificationContext::Room(own_member, sender) => {
+                        if own_member == sender {
+                            "You sent a verification request".to_string()
+                        } else {
+                            format!(
+                                "{} has sent a verification request",
+                                sender.nick_colored()
+                            )
+                        }
+                    }
+                    VerificationContext::ToDevice(_) => {
+                        format!("You have requested this device to be verified")
+                    }
+                };
+
+                RenderedContent {
+                    lines: vec![RenderedLine {
+                        message,
+                        tags: self.tags(),
+                    }],
+                }
+            }
+        }
+    };
+}
+
+render_request_content!(KeyVerificationRequestEventContent);
+render_request_content!(RequestToDeviceEventContent);
+
+macro_rules! render_ready_content {
+    ($type: ident) => {
+        impl Render for $type {
+            const TAGS: &'static [&'static str] = &[];
+
+            type RenderContext = (WeechatRoomMember, WeechatRoomMember);
+
+            fn prefix(&self, _: &WeechatRoomMember) -> String {
+                Weechat::prefix(Prefix::Network)
+            }
+
+            fn render(&self, context: &Self::RenderContext) -> RenderedContent {
+                let (own_mebmer, sender) = context;
+
+                let message = if own_mebmer == sender {
+                    "You answered the verification request".to_string()
+                } else {
+                    format!(
+                        "{} has answered the verification request",
+                        sender.nick_colored()
+                    )
+                };
+
+                RenderedContent {
+                    lines: vec![RenderedLine {
+                        message,
+                        tags: self.tags(),
+                    }],
+                }
+            }
+        }
+    };
+}
+
+render_ready_content!(ReadyEventContent);
+render_ready_content!(ReadyToDeviceEventContent);
+
+macro_rules! render_key_content {
+    ($type: ident) => {
+        impl Render for $type {
+            type RenderContext = SasVerification;
+
+            fn prefix(&self, _: &WeechatRoomMember) -> String {
+                Weechat::prefix(Prefix::Network)
+            }
+
+            fn render(&self, sas: &Self::RenderContext) -> RenderedContent {
+                let (message, short_auth_string) = if sas.supports_emoji() {
+                    (
+                        "Do the emojis match".to_string(),
+                        format!("{:?}", sas.emoji()),
+                    )
+                } else {
+                    (
+                        "Do the decimals match".to_string(),
+                        format!("{:?}", sas.decimals()),
+                    )
+                };
+
+                RenderedContent {
+                    lines: vec![
+                        RenderedLine {
+                            message,
+                            tags: self.tags(),
+                        },
+                        RenderedLine {
+                            message: short_auth_string,
+                            tags: self.tags(),
+                        },
+                    ],
+                }
+            }
+        }
+    };
+}
+
+render_key_content!(KeyEventContent);
+render_key_content!(KeyToDeviceEventContent);
+
 /// Trait for message event types that contain an optional formatted body.
 /// `resolve_body` will return the formatted body if present, else fallback to
 /// the regular body.
@@ -716,9 +952,12 @@ pub fn render_membership(
 
 #[cfg(test)]
 mod tests {
-    use matrix_sdk::identifiers::MxcUri;
+    use matrix_sdk::ruma::{
+        events::room::{EncryptedFileInit, JsonWebKeyInit},
+        identifiers::MxcUri,
+    };
 
-    use super::*;
+    use crate::render::{mxc_to_emxc, mxc_to_http};
 
     #[test]
     fn test_mxc_to_http() {
@@ -731,26 +970,27 @@ mod tests {
 
     #[test]
     fn test_emxc_to_http() {
-        use matrix_sdk::events::room::JsonWebKey;
         use std::collections::BTreeMap;
 
         let homeserver = url::Url::parse("https://matrix.org").unwrap();
         let mxc_url = "mxc://matrix.org/some-media-id";
         let mut hashes: BTreeMap<String, String> = BTreeMap::new();
         hashes.insert("sha256".to_string(), "some-sha256".to_string());
-        let encrypt_info = EncryptedFile {
-            key: JsonWebKey {
+        let encrypt_info = EncryptedFileInit {
+            key: JsonWebKeyInit {
                 k: "some-secret-key".to_string(),
                 kty: "oct".to_string(),
                 key_ops: vec![],
                 ext: true,
                 alg: "A256CTR".to_string(),
-            },
+            }
+            .into(),
             iv: "some-test-iv".to_string(),
             v: "v2".to_string(),
             url: MxcUri::from("mxc://some-url"),
             hashes,
-        };
+        }
+        .into();
         let expected =
             "emxc://matrix.org:443/_matrix/media/r0/download/matrix.org/some-media-id?key=some-secret-key&hash=some-sha256&iv=some-test-iv";
         assert_eq!(
