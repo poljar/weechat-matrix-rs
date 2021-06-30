@@ -22,15 +22,28 @@ to a Matrix server and send messages.
 If you are interested in helping out take a look at the issue tracker.
 
 # Build
+Ensure the following are downloaded:
+* [Weechat Source](https://weechat.org/download/) (does not need to be built, just the same version as is installed)
+* [Rust](https://www.rust-lang.org/learn/get-started) (follow installation instructions)
 
-After Rust is installed the plugin can be compiled with:
+You need Weechat source code to get the file `weechat-plugin.h`
 
-    cargo build
+After Rust is installed the plugin can be compiled with the following (use correct path for `weechat-plugin.h`):
 
-On Linux this creates a `libmatrix.so` file in the `target/debug/` folder, this
-file needs to be renamed to `matrix.so` and copied to your Weechat plugin
-directory. A plugin directory can be created in your `$WEECHAT_HOME` folder, by
+    WEECHAT_PLUGIN_FILE=/PATH/TO/WEECHAT/src/plugins/weechat-plugin.h make install
+
+On Linux this will build and install the plugin in your `$WEECHAT_HOME`.
+
+
+
+Alternatively, if `weechat-plugin.h` is globaly visible, `cargo build` creates a 
+`libmatrix.so` file in the `target/debug/` folder, this file needs to be renamed to 
+`matrix.so` and copied to your Weechat plugin directory. 
+A plugin directory can be created in your `$WEECHAT_HOME` folder, by
 default `.weechat/plugins/`.
 
-Alternatively `make install` will build and install the plugin in your
-`$WEECHAT_HOME` as well.
+# Usage
+
+1. Add a server using `/matrix server add [server-name] [server-url]`. Make sure the url includes the scheme (eg 'https://matrix.org').
+2. Add username and password: `/set matrix-rust.server.[server-name].username [username]` and `/set matrix-rust.server.[server-name].password [password]`.
+3. Connect to server using `/matrix connect [server-name]`. This may take several minutes, be patient.
