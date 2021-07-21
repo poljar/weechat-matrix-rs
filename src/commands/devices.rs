@@ -21,6 +21,13 @@ impl DevicesCommand {
     pub const DESCRIPTION: &'static str =
         "List, delete or rename Matrix devices";
 
+    pub const SETTINGS: &'static [ArgParseSettings] = &[
+        ArgParseSettings::DisableHelpFlags,
+        ArgParseSettings::DisableVersion,
+        ArgParseSettings::VersionlessSubcommands,
+        ArgParseSettings::SubcommandRequiredElseHelp,
+    ];
+
     pub fn create(servers: &Servers) -> Result<Command, ()> {
         let settings = CommandSettings::new("devices")
             .description(Self::DESCRIPTION)
@@ -115,10 +122,7 @@ impl CommandCallback for DevicesCommand {
     fn callback(&mut self, _: &Weechat, buffer: &Buffer, arguments: Args) {
         let argparse = Argparse::new("devices")
             .about(Self::DESCRIPTION)
-            .global_setting(ArgParseSettings::DisableHelpFlags)
-            .global_setting(ArgParseSettings::DisableVersion)
-            .global_setting(ArgParseSettings::VersionlessSubcommands)
-            .setting(ArgParseSettings::SubcommandRequiredElseHelp)
+            .settings(Self::SETTINGS)
             .subcommands(Self::subcommands());
 
         parse_and_run(argparse, arguments, |matches| {
