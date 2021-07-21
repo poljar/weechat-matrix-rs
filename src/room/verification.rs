@@ -13,7 +13,7 @@ use matrix_sdk::{
 
 use crate::{
     connection::Connection,
-    render::{Render, StartVerificationContext, VerificationContext},
+    render::{Render, VerificationContext, VerificationRequestContext},
 };
 
 use super::{buffer::RoomBuffer, members::Members};
@@ -31,6 +31,15 @@ pub struct Verification {
 enum ActiveVerification {
     Request(VerificationRequest),
     Sas(SasVerification),
+}
+
+impl ActiveVerification {
+    fn is_done(&self) -> bool {
+        match self {
+            ActiveVerification::Request(v) => v.is_done(),
+            ActiveVerification::Sas(v) => v.is_done(),
+        }
+    }
 }
 
 impl From<VerificationRequest> for ActiveVerification {
@@ -99,7 +108,8 @@ impl Verification {
                 if let Some(sas) = c
                     .spawn(async move { verification_clone.start_sas().await })
                     .await
-                    .unwrap()
+                    .ok()
+                    .flatten()
                 {
                     *self.inner.borrow_mut() = Some(sas.into());
                 }
@@ -134,8 +144,8 @@ impl Verification {
                         .map(|s| s.sas())
                         .flatten()
                     {
-                        let context = StartVerificationContext::Room(
-                            e.sender.to_owned(),
+                        let context = VerificationContext::Room(
+                            sender.clone(),
                             sas.clone().into(),
                         );
                         let rendered = e.content.render_with_prefix(
@@ -162,41 +172,54 @@ impl Verification {
             AnySyncMessageEvent::KeyVerificationAccept(_) => {}
             AnySyncMessageEvent::KeyVerificationKey(e) => {
                 let flow_id = &e.content.relates_to.event_id;
+
                 if let Some(ActiveVerification::Sas(sas)) =
                     self.inner.borrow().clone()
                 {
-                    if sas.can_be_presented() {
-                        let rendered = e.content.render_with_prefix(
-                            send_time,
-                            event.event_id(),
-                            &sender,
-                            &sas,
-                        );
-                        self.buffer
-                            .replace_verification_event(flow_id, rendered);
-                    }
+                    let rendered = e.content.render_with_prefix(
+                        send_time,
+                        event.event_id(),
+                        &sender,
+                        &sas,
+                    );
+                    self.buffer.replace_verification_event(flow_id, rendered);
                 }
             }
-            AnySyncMessageEvent::KeyVerificationMac(_) => {}
-            AnySyncMessageEvent::KeyVerificationDone(_) => {}
+            AnySyncMessageEvent::KeyVerificationMac(_)
+            | AnySyncMessageEvent::KeyVerificationDone(_) => {
+                if self
+                    .inner
+                    .borrow()
+                    .as_ref()
+                    .map(|v| v.is_done())
+                    .unwrap_or_default()
+                {
+                    self.inner.borrow_mut().take();
+                    todo!("Print done");
+                }
+            }
             AnySyncMessageEvent::RoomMessage(e) => {
                 if let MessageType::VerificationRequest(content) =
                     &e.content.msgtype
                 {
-                    let rendered = content.render_with_prefix(
-                        send_time,
-                        &e.event_id,
-                        &sender.clone(),
-                        &VerificationContext::Room(sender, own_member),
-                    );
-                    self.buffer.print_rendered_event(rendered);
-
                     if let Some(connection) = connection {
                         if let Some(verification) = connection
                             .client()
                             .get_verification_request(&e.sender, &e.event_id)
                             .await
                         {
+                            let rendered = content.render_with_prefix(
+                                send_time,
+                                &e.event_id,
+                                &sender.clone(),
+                                &VerificationRequestContext::Room(
+                                    verification.clone(),
+                                    sender,
+                                    own_member,
+                                ),
+                            );
+                            self.buffer.print_rendered_event(rendered);
+
                             *self.inner.borrow_mut() =
                                 Some(verification.into());
                         }

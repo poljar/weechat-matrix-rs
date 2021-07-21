@@ -305,7 +305,8 @@ impl CommandCallback for MatrixCommand {
             .subcommand(
                 SubCommand::with_name("verification")
                     .about(VerificationCommand::DESCRIPTION)
-                    .subcommands(KeysCommand::subcommands()),
+                    .settings(VerificationCommand::SETTINGS)
+                    .subcommands(VerificationCommand::subcommands()),
             )
             .subcommand(
                 SubCommand::with_name("connect")

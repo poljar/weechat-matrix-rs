@@ -34,9 +34,10 @@ image = "0.23.14"
 
 [dependencies.weechat]
 git = "https://github.com/poljar/rust-weechat"
+rev = "8209460a4313bdcaef161ec423ae8de97a6ee412"
 features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
 git = "https://github.com/matrix-org/matrix-rust-sdk/"
-rev = "b62f725bead1f44b2038784e5321909f71a4af4a"
+rev = "e919a82b2c8ea881e00982c5ce26521ec91894cf"
 features = ["markdown"]

@@ -164,7 +164,7 @@ pub struct InnerServer {
     login_state: Rc<RefCell<Option<LoginInfo>>>,
     connection: Rc<RefCell<Option<Connection>>>,
     server_buffer: Rc<RefCell<Option<BufferHandle>>>,
-    verification_buffers: Rc<RefCell<HashMap<String, VerificationBuffer>>>,
+    verification_buffers: Rc<RefCell<HashMap<UserId, VerificationBuffer>>>,
 }
 
 impl MatrixServer {
@@ -673,11 +673,11 @@ impl InnerServer {
     }
 
     pub async fn receive_to_device_event(&self, event: AnyToDeviceEvent) {
-        let handle_event = |event, transaction_id| async move {
+        let handle_event = |event: AnyToDeviceEvent| async move {
             if let Some(b) =
-                self.verification_buffers.borrow().get(transaction_id)
+                self.verification_buffers.borrow().get(event.sender())
             {
-                b.handle_event(event).await;
+                b.handle_event(&event).await;
             }
         };
 
@@ -693,16 +693,33 @@ impl InnerServer {
                         )
                         .await
                     {
-                        let buffer = VerificationBuffer::new(
+                        let buffer = self
+                            .verification_buffers
+                            .borrow()
+                            .get(request.other_user_id())
+                            .cloned();
+
+                        if let Some(buffer) = buffer {
+                            buffer.replace_verification(request);
+                            buffer.handle_event(&event).await;
+                        } else if let Ok(buffer) = VerificationBuffer::new(
                             &self.server_name,
                             &e.sender,
-                            request,
+                            request.clone(),
                             self.connection.clone(),
-                        );
-                        buffer.handle_event(&event).await;
-                        self.verification_buffers
-                            .borrow_mut()
-                            .insert(e.content.transaction_id.clone(), buffer);
+                            &self.verification_buffers,
+                        ) {
+                            buffer.handle_event(&event).await;
+                            self.verification_buffers.borrow_mut().insert(
+                                request.other_user_id().to_owned(),
+                                buffer,
+                            );
+                        } else {
+                            self.print_error(&format!(
+                                "Error creating a verification buffer for {}",
+                                e.sender
+                            ));
+                        }
                     }
                 }
             }
@@ -717,26 +734,42 @@ impl InnerServer {
                                 let buffer = self
                                     .verification_buffers
                                     .borrow()
-                                    .get(&e.content.transaction_id)
+                                    .get(&e.sender)
                                     .cloned();
 
-                                if let Some(mut buffer) = buffer {
-                                    buffer.update(sas).await;
+                                if let Some(buffer) = buffer {
+                                    if sas.started_from_request() {
+                                        if let Err(e) = buffer.update(sas).await
+                                        {
+                                            self.print_error(&format!("Error updating the verification buffer {:?}", e))
+                                        }
+                                    } else {
+                                        buffer.replace_verification(sas);
+                                    }
                                     buffer.handle_event(&event).await;
                                 } else {
-                                    let buffer = VerificationBuffer::new(
+                                    if let Ok(buffer) = VerificationBuffer::new(
                                         &self.server_name,
                                         &e.sender,
-                                        sas,
+                                        sas.clone(),
                                         self.connection.clone(),
-                                    );
-                                    buffer.handle_event(&event).await;
-                                    self.verification_buffers
-                                        .borrow_mut()
-                                        .insert(
-                                            e.content.transaction_id.clone(),
-                                            buffer,
+                                        &self.verification_buffers,
+                                    ) {
+                                        buffer.handle_event(&event).await;
+
+                                        self.verification_buffers
+                                            .borrow_mut()
+                                            .insert(
+                                                sas.other_user_id().to_owned(),
+                                                buffer,
+                                            );
+                                    } else {
+                                        self.print_error(
+                                            &format!(
+                                                "Error creating a verification buffer for {}", e.sender
+                                            )
                                         );
+                                    }
                                 }
                             }
                         }
@@ -744,7 +777,7 @@ impl InnerServer {
                             if let Some(buffer) = self
                                 .verification_buffers
                                 .borrow_mut()
-                                .get_mut(&e.content.transaction_id)
+                                .get_mut(qr.other_user_id())
                             {
                                 buffer.update_qr(qr).await;
                                 buffer.handle_event(&event).await;
@@ -754,17 +787,11 @@ impl InnerServer {
                     }
                 }
             }
-            AnyToDeviceEvent::KeyVerificationCancel(e) => {
-                handle_event(&event, &e.content.transaction_id).await;
-            }
-            AnyToDeviceEvent::KeyVerificationAccept(e) => {
-                handle_event(&event, &e.content.transaction_id).await
-            }
-            AnyToDeviceEvent::KeyVerificationKey(e) => {
-                handle_event(&event, &e.content.transaction_id).await
-            }
-            AnyToDeviceEvent::KeyVerificationMac(e) => {
-                handle_event(&event, &e.content.transaction_id).await
+            AnyToDeviceEvent::KeyVerificationCancel(_)
+            | AnyToDeviceEvent::KeyVerificationAccept(_)
+            | AnyToDeviceEvent::KeyVerificationKey(_)
+            | AnyToDeviceEvent::KeyVerificationMac(_) => {
+                handle_event(event).await
             }
             _ => {}
         }

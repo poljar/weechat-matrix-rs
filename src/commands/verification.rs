@@ -18,6 +18,7 @@ pub struct VerificationCommand {
 enum CommandType {
     Accept,
     Confirm,
+    UseEmoji,
     Cancel,
 }
 
@@ -25,14 +26,23 @@ impl VerificationCommand {
     pub const DESCRIPTION: &'static str =
         "Control interactive verification flows";
 
-    pub const COMPLETION: &'static str = "accept|confirm|cancel";
+    pub const COMPLETION: &'static str = "accept|confirm|cancel|use-emoji";
+
+    pub const SETTINGS: &'static [ArgParseSettings] = &[
+        ArgParseSettings::DisableHelpFlags,
+        ArgParseSettings::DisableVersion,
+        ArgParseSettings::VersionlessSubcommands,
+        ArgParseSettings::SubcommandRequiredElseHelp,
+    ];
 
     pub fn create(servers: &Servers) -> Result<Command, ()> {
         let settings = CommandSettings::new("verification")
             .description(Self::DESCRIPTION)
-            .add_argument("verification accept|confirm|cancel")
+            .add_argument("verification accept|confirm|cancel|use-emoji")
             .arguments_description(
                 "accept: accept the verification request
+                use-emoji: switch to emoji verification QR code verification \
+                isn't possible
                 confirm: confirm that the emojis match on both sides or \
                 confirm that the other side has scanned our QR code
                 cancel: cancel the verification flow or request",
@@ -56,11 +66,15 @@ impl VerificationCommand {
                 CommandType::Accept => b.accept_verification(),
                 CommandType::Confirm => b.confirm_verification(),
                 CommandType::Cancel => b.cancel_verification(),
+                CommandType::UseEmoji => Weechat::print(
+                    "The 'use-emoji' command can only be used for self verifications"
+                ),
             },
             BufferOwner::Verification(_, b) => match command {
                 CommandType::Accept => b.accept(),
                 CommandType::Confirm => b.confirm(),
                 CommandType::Cancel => b.cancel(),
+                CommandType::UseEmoji => b.start_sas(),
             },
             BufferOwner::Server(_) | BufferOwner::None => {
                 Weechat::print(
@@ -79,6 +93,9 @@ impl VerificationCommand {
             ("confirm", _) => {
                 Self::verification(servers, buffer, CommandType::Confirm)
             }
+            ("use-emoji", _) => {
+                Self::verification(servers, buffer, CommandType::UseEmoji)
+            }
             ("cancel", _) => {
                 Self::verification(servers, buffer, CommandType::Cancel)
             }
@@ -90,6 +107,8 @@ impl VerificationCommand {
         vec![
             SubCommand::with_name("accept")
                 .about("Accept a verification request"),
+            SubCommand::with_name("use-emoji")
+                .about("Switch to emoji verification"),
             SubCommand::with_name("confirm").about(
                 "Confirm that the emoji matches or that the other side has \
                    scanned our QR code",
@@ -104,10 +123,7 @@ impl CommandCallback for VerificationCommand {
     fn callback(&mut self, _: &Weechat, buffer: &Buffer, arguments: Args) {
         let argparse = Argparse::new("verification")
             .about(Self::DESCRIPTION)
-            .global_setting(ArgParseSettings::DisableHelpFlags)
-            .global_setting(ArgParseSettings::DisableVersion)
-            .global_setting(ArgParseSettings::VersionlessSubcommands)
-            .setting(ArgParseSettings::SubcommandRequiredElseHelp)
+            .settings(Self::SETTINGS)
             .subcommands(Self::subcommands());
 
         parse_and_run(argparse, arguments, |matches| {

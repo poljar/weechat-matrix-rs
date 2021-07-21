@@ -1,4 +1,9 @@
-use std::{cell::RefCell, convert::TryInto, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    convert::TryInto,
+    rc::{Rc, Weak},
+};
 
 use weechat::{
     buffer::{
@@ -8,7 +13,7 @@ use weechat::{
     Weechat,
 };
 
-use qrcode::render::unicode::Dense1x2;
+use qrcode::QrCode;
 
 use matrix_sdk::{
     async_trait,
@@ -22,8 +27,8 @@ use matrix_sdk::{
         identifiers::UserId,
     },
     verification::{
-        QrVerification, SasVerification, Verification as SdkVerification,
-        VerificationRequest,
+        CancelInfo, QrVerification, SasVerification,
+        Verification as SdkVerification, VerificationRequest,
     },
     Error,
 };
@@ -31,7 +36,8 @@ use matrix_sdk::{
 use crate::{
     connection::Connection,
     render::{
-        Render, RenderedContent, StartVerificationContext, VerificationContext,
+        CancelContext, Render, RenderedContent, VerificationContext,
+        VerificationRequestContext,
     },
 };
 
@@ -79,19 +85,43 @@ impl From<QrVerification> for Verification {
 }
 
 impl Verification {
+    fn is_done(&self) -> bool {
+        match self {
+            Verification::Request(r) => r.is_done(),
+            Verification::Sas(v) => v.is_done(),
+            Verification::Qr(v) => v.is_done(),
+        }
+    }
+
+    fn is_self_verification(&self) -> bool {
+        match self {
+            Verification::Request(v) => v.is_self_verification(),
+            Verification::Sas(v) => v.is_self_verification(),
+            Verification::Qr(v) => v.is_self_verification(),
+        }
+    }
+
+    fn other_user_id(&self) -> &UserId {
+        match self {
+            Verification::Request(v) => v.other_user_id(),
+            Verification::Sas(v) => v.other_user_id(),
+            Verification::Qr(v) => v.other_user_id(),
+        }
+    }
+
+    fn cancel_info(&self) -> Option<CancelInfo> {
+        match self {
+            Verification::Request(v) => v.cancel_info(),
+            Verification::Sas(v) => v.cancel_info(),
+            Verification::Qr(v) => v.cancel_info(),
+        }
+    }
+
     async fn accept(&self) -> Result<(), Error> {
         match self {
             Verification::Request(r) => r.accept().await,
             Verification::Sas(s) => s.accept().await,
             Verification::Qr(qr) => qr.confirm().await,
-        }
-    }
-
-    async fn generate_qr_code(&self) -> Option<QrVerification> {
-        match self {
-            Verification::Request(r) => r.generate_qr_code().await.unwrap(),
-            Verification::Sas(_) => None,
-            Verification::Qr(_) => None,
         }
     }
 
@@ -108,10 +138,69 @@ impl Verification {
 struct InnerVerificationBuffer {
     verification: Rc<RefCell<Verification>>,
     connection: Rc<RefCell<Option<Connection>>>,
+    verification_buffers: Weak<RefCell<HashMap<UserId, VerificationBuffer>>>,
 }
 
 impl InnerVerificationBuffer {
-    fn print_done(&self, buffer: BufferHandle) {}
+    fn print_done(&self, buffer: BufferHandle) {
+        self.print_raw(buffer, "The verification finished successfully.");
+    }
+
+    fn print_cancel(&self, buffer: BufferHandle, info: Option<CancelInfo>) {
+        if let Some(info) = info {
+            let verification = match self.verification.borrow().clone() {
+                Verification::Request(r) => r.into(),
+                Verification::Sas(s) => SdkVerification::from(s).into(),
+                Verification::Qr(q) => SdkVerification::from(q).into(),
+            };
+
+            let context = CancelContext::ToDevice(verification);
+
+            let content = info.render(&context);
+            self.print(buffer, content)
+        } else {
+            self.print_raw(buffer, "You cancelled the verification flow.");
+        }
+    }
+
+    fn print_waiting(&self, buffer: BufferHandle) {
+        self.print_raw(buffer, "Waiting for the other side to confirm...")
+    }
+
+    fn print(&self, buffer: BufferHandle, content: RenderedContent) {
+        if let Ok(buffer) = buffer.upgrade() {
+            for line in content.lines {
+                let tags: Vec<&str> =
+                    line.tags.iter().map(|t| t.as_str()).collect();
+                buffer.print_date_tags(0, &tags, &line.message);
+            }
+        } else {
+            Weechat::print("Error: The verification buffer has been closed");
+        }
+    }
+
+    fn print_raw(&self, buffer: BufferHandle, message: &str) {
+        if let Ok(buffer) = buffer.upgrade() {
+            buffer.print(message)
+        } else {
+            Weechat::print("Error: Verification buffer has been closed")
+        }
+    }
+
+    async fn start_sas(
+        &self,
+        request: VerificationRequest,
+    ) -> Result<(), Error> {
+        if let Some(c) = self.connection.borrow().clone() {
+            if let Some(sas) =
+                c.spawn(async move { request.start_sas().await }).await?
+            {
+                *self.verification.borrow_mut() = sas.into();
+            }
+        }
+
+        Ok(())
+    }
 
     pub async fn accept(&self, buffer: BufferHandle) -> Result<(), Error> {
         if let Some(c) = self.connection.borrow().clone() {
@@ -127,25 +216,18 @@ impl InnerVerificationBuffer {
                     .unwrap_or_default()
                     .contains(&VerificationMethod::QrCodeShowV1)
                 {
-                    if let Some(qr_code) = request.generate_qr_code().await? {
-                        if let Ok(code) = qr_code.to_qr_code() {
-                            if let Ok(b) = buffer.upgrade() {
-                                let string = code
-                                    .render::<Dense1x2>()
-                                    .light_color(Dense1x2::Dark)
-                                    .dark_color(Dense1x2::Light)
-                                    .build();
-                                b.print(&string);
-                            }
-                        }
+                    if let Some(code) = request
+                        .generate_qr_code()
+                        .await?
+                        .and_then(|qr| qr.to_qr_code().ok())
+                    {
+                        let content = <QrCode as Render>::render(&code, &());
+                        self.print(buffer, content)
+                    } else {
+                        self.start_sas(request).await?;
                     }
                 } else {
-                    if let Some(sas) = c
-                        .spawn(async move { request.start_sas().await })
-                        .await?
-                    {
-                        *self.verification.borrow_mut() = sas.into();
-                    }
+                    self.start_sas(request).await?;
                 }
             }
         }
@@ -161,15 +243,20 @@ impl InnerVerificationBuffer {
 
                 if sas.is_done() {
                     self.print_done(buffer);
+                } else {
+                    self.print_waiting(buffer);
                 }
             } else if let Verification::Qr(qr) =
                 self.verification.borrow().clone()
             {
+                let qr_clone = qr.clone();
                 c.spawn(async move { qr.confirm().await }).await?;
 
-                // if qr.is_done() {
-                //     self.print_done(buffer);
-                // }
+                if qr_clone.is_done() {
+                    self.print_done(buffer);
+                } else {
+                    self.print_waiting(buffer);
+                }
             } else {
                 if let Ok(b) = buffer.upgrade() {
                     b.print("Error, can't confirm the verification yet");
@@ -223,7 +310,18 @@ impl BufferInputCallbackAsync for InnerVerificationBuffer {
 impl BufferCloseCallback for InnerVerificationBuffer {
     fn callback(&mut self, _: &Weechat, _: &Buffer) -> Result<(), ()> {
         let inner = self.clone();
-        Weechat::spawn(async move { inner.cancel().await }).detach();
+
+        if let Some(buffers) = self.verification_buffers.upgrade() {
+            buffers
+                .borrow_mut()
+                .remove(self.verification.borrow().other_user_id());
+        }
+
+        if let Some(task) =
+            Weechat::spawn_checked(async move { inner.cancel().await })
+        {
+            task.detach();
+        }
 
         Ok(())
     }
@@ -235,38 +333,43 @@ impl VerificationBuffer {
         sender: &UserId,
         verification: impl Into<Verification>,
         connection: Rc<RefCell<Option<Connection>>>,
-    ) -> Self {
+        verification_buffers: &Rc<RefCell<HashMap<UserId, VerificationBuffer>>>,
+    ) -> Result<Self, ()> {
+        let verification = verification.into();
+
         let inner = InnerVerificationBuffer {
-            verification: Rc::new(RefCell::new(verification.into())),
+            verification: Rc::new(RefCell::new(verification.clone())),
             connection,
+            verification_buffers: Rc::downgrade(verification_buffers),
         };
 
-        let buffer_name = format!("{}.verification", server_name);
+        let buffer_name = format!("{}.{}.verification", server_name, sender);
 
         let buffer_handle = BufferBuilderAsync::new(&buffer_name)
             .input_callback(inner.clone())
-            .close_callback(|_weechat: &Weechat, _buffer: &Buffer| {
-                // TODO remove the roombuffer from the server here.
-                // TODO leave the room if the plugin isn't unloading.
-                Ok(())
-            })
-            .build()
-            .expect("Can't create new room buffer");
+            .close_callback(inner.clone())
+            .build()?;
 
-        let buffer = buffer_handle
-            .upgrade()
-            .expect("Can't upgrade newly created buffer");
+        let buffer = buffer_handle.upgrade()?;
 
         buffer.disable_nicklist();
         buffer.disable_nicklist_groups();
         buffer.enable_multiline();
 
+        let buffer_name = if verification.is_self_verification() {
+            format!("Verification with {}", sender)
+        } else {
+            "Self verification".to_owned()
+        };
+
+        buffer.set_short_name(&buffer_name);
+        buffer.set_title(&buffer_name);
         buffer.set_localvar("server", server_name);
 
-        Self {
+        Ok(Self {
             inner,
             buffer: buffer_handle,
-        }
+        })
     }
 
     pub fn buffer(&self) -> BufferHandle {
@@ -282,6 +385,19 @@ impl VerificationBuffer {
     pub fn cancel(&self) {
         let inner = self.inner.clone();
         Weechat::spawn(async move { inner.cancel().await }).detach();
+        self.inner.print_cancel(self.buffer(), None);
+    }
+
+    pub fn start_sas(&self) {
+        if let Verification::Request(request) =
+            self.inner.verification.borrow().clone()
+        {
+            let inner = self.inner.clone();
+            Weechat::spawn(async move { inner.start_sas(request).await })
+                .detach();
+        } else {
+            self.print_raw(&[], "Can't start emoji verification")
+        }
     }
 
     pub fn confirm(&self) {
@@ -290,11 +406,15 @@ impl VerificationBuffer {
         Weechat::spawn(async move { inner.confirm(buffer).await }).detach();
     }
 
-    pub async fn update_qr(&mut self, qr: QrVerification) {
+    pub async fn update_qr(&self, qr: QrVerification) {
         *self.inner.verification.borrow_mut() = qr.into();
     }
 
-    pub async fn update(&mut self, sas: SasVerification) -> Result<(), Error> {
+    pub fn replace_verification(&self, verification: impl Into<Verification>) {
+        *self.inner.verification.borrow_mut() = verification.into();
+    }
+
+    pub async fn update(&self, sas: SasVerification) -> Result<(), Error> {
         *self.inner.verification.borrow_mut() = sas.into();
         let verification = self.inner.verification.borrow().clone();
 
@@ -308,6 +428,11 @@ impl VerificationBuffer {
     }
 
     pub async fn handle_event(&self, event: &AnyToDeviceEvent) {
+        if let Some(info) = self.inner.verification.borrow().cancel_info() {
+            self.inner.print_cancel(self.buffer(), Some(info));
+            return;
+        }
+
         match event {
             AnyToDeviceEvent::KeyVerificationRequest(e) => {
                 if let Verification::Request(request) =
@@ -315,7 +440,7 @@ impl VerificationBuffer {
                 {
                     let content = e
                         .content
-                        .render(&VerificationContext::ToDevice(request));
+                        .render(&VerificationRequestContext::ToDevice(request));
 
                     self.print(&content);
                 }
@@ -324,44 +449,39 @@ impl VerificationBuffer {
                 let verification = self.inner.verification.borrow().clone();
 
                 if let Ok(verification) = verification.try_into() {
-                    let content =
-                        e.content.render(&StartVerificationContext::ToDevice(
-                            e.sender.clone(),
-                            verification,
-                        ));
+                    let content = e
+                        .content
+                        .render(&VerificationContext::ToDevice(verification));
 
                     self.print(&content);
                 }
             }
-            AnyToDeviceEvent::KeyVerificationCancel(_) => {
-                // let message =
-                //     format!("The verification flow has been canceled");
-                // self.print(&message);
-            }
             AnyToDeviceEvent::KeyVerificationKey(e) => {
                 self.print_sas(&e.content);
             }
-            AnyToDeviceEvent::KeyVerificationMac(_) => {
-                if let Verification::Sas(sas) =
-                    self.inner.verification.borrow().clone()
-                {
-                    if sas.is_done() {
-                        self.inner.print_done(self.buffer.clone());
-                    }
+            AnyToDeviceEvent::KeyVerificationMac(_)
+            | AnyToDeviceEvent::KeyVerificationDone(_) => {
+                if self.inner.verification.borrow().is_done() {
+                    self.inner.print_done(self.buffer.clone());
                 }
             }
-            AnyToDeviceEvent::KeyVerificationDone(_) => {}
             _ => {}
         }
     }
 
-    fn print(&self, message: &RenderedContent) {
+    fn print_raw(&self, tags: &[String], message: &str) {
+        let tags: Vec<&str> = tags.iter().map(|t| t.as_str()).collect();
+
         if let Ok(buffer) = self.buffer.upgrade() {
-            for line in &message.lines {
-                buffer.print_date_tags(0, &[], &line.message);
-            }
+            buffer.print_date_tags(0, &tags, message);
         } else {
-            Weechat::print("BUFFER CLOSED");
+            Weechat::print("Error: The verification buffer has been closed");
+        }
+    }
+
+    fn print(&self, message: &RenderedContent) {
+        for line in &message.lines {
+            self.print_raw(&line.tags, &line.message);
         }
     }
 
