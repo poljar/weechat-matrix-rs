@@ -283,19 +283,23 @@ impl CommandCallback for MatrixCommand {
 
         let argparse = Argparse::new("matrix")
             .about("Matrix chat protocol command.")
-            .global_setting(ArgParseSettings::DisableHelpFlags)
-            .global_setting(ArgParseSettings::DisableVersion)
-            .global_setting(ArgParseSettings::VersionlessSubcommands)
+            .global_settings(&[
+                ArgParseSettings::DisableHelpFlags,
+                ArgParseSettings::DisableVersion,
+                ArgParseSettings::VersionlessSubcommands,
+            ])
             .setting(ArgParseSettings::SubcommandRequiredElseHelp)
             .subcommand(server_command)
             .subcommand(
                 SubCommand::with_name("devices")
                     .about(DevicesCommand::DESCRIPTION)
+                    .settings(DevicesCommand::SETTINGS)
                     .subcommands(DevicesCommand::subcommands()),
             )
             .subcommand(
                 SubCommand::with_name("keys")
                     .about(KeysCommand::DESCRIPTION)
+                    .settings(KeysCommand::SETTINGS)
                     .subcommands(KeysCommand::subcommands()),
             )
             .subcommand(
