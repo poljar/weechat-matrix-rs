@@ -1,48 +1,8 @@
 on: [push]
 
-name: build-and-test-and-release
+name: build-test-release
 
 jobs:
-  x86_64_musl:
-    name: Ubuntu 18.04
-    runs-on: ubuntu-18.04
-    strategy:
-      matrix:
-        rust:
-          - stable
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-
-      - name: Install toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: x86_64-unknown-linux-musl
-          override: true
-
-      - name: Install dependencies for musl libc
-        run: |
-          sudo apt-get update
-          sudo apt-get install musl-tools
-      - name: Run cargo build
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --release --target x86_64-unknown-linux-musl
-
-      - name: Run cargo test
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --target x86_64-unknown-linux-musl
-
-      - name: Upload binary
-        uses: actions/upload-artifact@v2
-        with:
-          name: 'weechat-matrix-rs-x86_64-unknown-linux-musl'
-          path: target/x86_64-unknown-linux-musl/release/weechat-matrix-rs
-
   x86_64_glibc:
     name: Ubuntu 18.04 (glibc)
     runs-on: ubuntu-18.04
@@ -77,4 +37,3 @@ jobs:
         with:
           name: 'weechat-matrix-rs-x86_64-unknown-linux-gnu'
           path: target/release/weechat-matrix-rs
-
