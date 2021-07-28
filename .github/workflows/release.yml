@@ -20,7 +20,8 @@ jobs:
           echo "deb-src https://weechat.org/ubuntu bionic main" | sudo tee -a /etc/apt/sources.list.d/weechat.list
           sudo apt update
           sudo apt install weechat-curses weechat-plugins weechat-python weechat-perl weechat-dev
-          grep -m 1  "WEECHAT_PLUGIN_API_VERSION" "/usr/include/weechat/weechat-plugin.h"
+          echo "version of weechat-plugin.h that weechat-sys uses by default:"
+          grep -m 1 -n -H "WEECHAT_PLUGIN_API_VERSION" "/usr/include/weechat/weechat-plugin.h"
 
       - name: Checkout sources
         uses: actions/checkout@v2
