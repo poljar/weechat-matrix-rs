@@ -399,7 +399,8 @@ impl MatrixRoom {
     }
 
     pub fn cancel_verification(&self) {
-        todo!()
+        let verification = self.verification.clone();
+        Weechat::spawn(async move { verification.cancel().await }).detach();
     }
 
     async fn redact_event(&self, event: &SyncRedactionEvent) {
@@ -831,9 +832,12 @@ impl MatrixRoom {
         // ourselves, the content will be in the outgoing message queue and it
         // may have been printed out as a local echo.
         if let Some(id) = &event.unsigned().transaction_id {
-            if let Ok(id) = Uuid::parse_str(id) {
-                self.handle_outgoing_message(id, event.event_id()).await;
-                return;
+            // We don't support local echo for verification events.
+            if !event.is_verification() {
+                if let Ok(id) = Uuid::parse_str(id) {
+                    self.handle_outgoing_message(id, event.event_id()).await;
+                    return;
+                }
             }
         }
 

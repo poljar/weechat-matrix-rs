@@ -8,12 +8,18 @@ use matrix_sdk::{
         },
         identifiers::UserId,
     },
-    verification::{SasVerification, VerificationRequest},
+    verification::{
+        CancelInfo, SasVerification, Verification as SdkVerification,
+        VerificationRequest,
+    },
+    Result,
 };
 
 use crate::{
     connection::Connection,
-    render::{Render, VerificationContext, VerificationRequestContext},
+    render::{
+        CancelContext, Render, VerificationContext, VerificationRequestContext,
+    },
 };
 
 use super::{buffer::RoomBuffer, members::Members};
@@ -38,6 +44,20 @@ impl ActiveVerification {
         match self {
             ActiveVerification::Request(v) => v.is_done(),
             ActiveVerification::Sas(v) => v.is_done(),
+        }
+    }
+
+    fn cancel_info(&self) -> Option<CancelInfo> {
+        match self {
+            ActiveVerification::Request(v) => v.cancel_info(),
+            ActiveVerification::Sas(v) => v.cancel_info(),
+        }
+    }
+
+    async fn cancel(&self) -> Result<()> {
+        match self {
+            ActiveVerification::Request(v) => v.cancel().await,
+            ActiveVerification::Sas(v) => v.cancel().await,
         }
     }
 }
@@ -79,6 +99,17 @@ impl Verification {
             {
                 let ret =
                     c.spawn(async move { verification.confirm().await }).await;
+            }
+        }
+    }
+
+    pub async fn cancel(&self) {
+        let connection = self.connection.borrow().clone();
+
+        if let Some(c) = connection {
+            if let Some(verification) = self.inner.borrow().clone() {
+                let ret =
+                    c.spawn(async move { verification.cancel().await }).await;
             }
         }
     }
@@ -166,9 +197,6 @@ impl Verification {
                     }
                 }
             }
-            AnySyncMessageEvent::KeyVerificationCancel(_) => {
-                self.inner.borrow_mut().take();
-            }
             AnySyncMessageEvent::KeyVerificationAccept(_) => {}
             AnySyncMessageEvent::KeyVerificationKey(e) => {
                 let flow_id = &e.content.relates_to.event_id;
@@ -196,6 +224,47 @@ impl Verification {
                 {
                     self.inner.borrow_mut().take();
                     todo!("Print done");
+                }
+            }
+            AnySyncMessageEvent::KeyVerificationCancel(e) => {
+                let flow_id = &e.content.relates_to.event_id;
+
+                let cancelled = self
+                    .inner
+                    .borrow()
+                    .as_ref()
+                    .map(|v| v.cancel_info())
+                    .unwrap_or_default();
+
+                if let Some(cancel_info) = cancelled {
+                    let verification =
+                        if let Some(v) = self.inner.borrow_mut().take() {
+                            v
+                        } else {
+                            return;
+                        };
+
+                    let member = if cancel_info.cancelled_by_us() {
+                        own_member.clone()
+                    } else {
+                        sender.clone()
+                    };
+
+                    let verification = match verification {
+                        ActiveVerification::Request(r) => r.into(),
+                        ActiveVerification::Sas(v) => {
+                            SdkVerification::from(v).into()
+                        }
+                    };
+
+                    let context = CancelContext::Room(member, verification);
+                    let rendered = cancel_info.render_with_prefix(
+                        send_time,
+                        &e.event_id,
+                        &sender.clone(),
+                        &context,
+                    );
+                    self.buffer.replace_verification_event(flow_id, rendered);
                 }
             }
             AnySyncMessageEvent::RoomMessage(e) => {

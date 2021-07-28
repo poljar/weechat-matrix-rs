@@ -109,7 +109,7 @@ impl RoomBuffer {
                 // Our prefixes always come with a \t character, but when we
                 // replace stuff we're able to replace the prefix and the
                 // message separately, so trim the whitespace in the prefix.
-                prefix: Some(event.prefix.trim_end()),
+                prefix: Some(&event.prefix.trim_end_matches("\t")),
                 message: Some(&new.message),
                 ..Default::default()
             };
@@ -121,13 +121,48 @@ impl RoomBuffer {
             Ordering::Greater => {
                 for line in &lines[event.content.lines.len()..] {
                     line.set_message("");
+                    line.set_prefix("");
                 }
             }
             Ordering::Less => {
+                let event_id_tags: Vec<String> = lines
+                    .get(0)
+                    .map(|l| {
+                        l.tags()
+                            .iter()
+                            .filter_map(|t| {
+                                if t.starts_with("matrix_id") {
+                                    Some(t.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let event_id_tag = if let Some(event_id_tag) =
+                    event_id_tags.first()
+                {
+                    event_id_tag
+                } else {
+                    Weechat::print("Error replacing event, the original event doesn't have an event id tag");
+                    return;
+                };
+
                 for line in &event.content.lines[lines.len()..] {
                     let message = format!("{}{}", &event.prefix, &line.message);
-                    let tags: Vec<&str> =
-                        line.tags.iter().map(|t| t.as_str()).collect();
+                    let tags: Vec<&str> = line
+                        .tags
+                        .iter()
+                        .map(|t| {
+                            if t.starts_with("matrix_id") {
+                                event_id_tag.as_str()
+                            } else {
+                                t.as_str()
+                            }
+                        })
+                        .collect();
                     buffer.print_date_tags(date, &tags, &message)
                 }
 
