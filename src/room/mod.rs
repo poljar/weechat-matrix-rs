@@ -278,6 +278,11 @@ impl RoomHandle {
         buffer.set_localvar("nick", &own_nick);
         buffer.set_localvar("domain", room.room_id().server_name().as_str());
         buffer.set_localvar("room_id", room.room_id().as_str());
+        if room.is_direct() {
+            buffer.set_localvar("type", "private")
+        } else {
+            buffer.set_localvar("type", "channel")
+        }
 
         if let Some(alias) = room.alias() {
             buffer.set_localvar("alias", alias.as_str());
@@ -356,6 +361,10 @@ impl MatrixRoom {
 
     pub fn is_public(&self) -> bool {
         self.room.is_public()
+    }
+
+    pub fn is_direct(&self) -> bool {
+        self.room.is_direct()
     }
 
     pub fn alias(&self) -> Option<RoomAliasId> {
