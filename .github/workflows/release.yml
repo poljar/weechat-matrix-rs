@@ -1,27 +1,37 @@
-on: [push]
+on: [push, pull_request]
 
 name: build-test-release
 
 jobs:
-  x86_64_glibc:
-    name: Ubuntu 18.04 (glibc)
-    runs-on: ubuntu-18.04
+  publish:
+    name: Publish for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-18.04]
+        include:
+          - os: ubuntu-18.04
+            artifact_name: libmatrix.so
+            asset_name: libmatrix.so-ubuntu-18.04
         rust:
           - stable
+      fail-fast: false
+
     steps:
-      - name: Install latest-stable weechat for Ubuntu 18.04
+      - name: Install latest-stable weechat for Ubuntu
+        id: build_env
         run: |
           sudo apt update
           sudo apt install dirmngr gpg-agent apt-transport-https
           sudo apt-key adv --keyserver hkps://keys.openpgp.org --recv-keys 11E9DE8848F2B65222AA75B8D1820DB22A11534E
-          echo "deb https://weechat.org/ubuntu bionic main" | sudo tee /etc/apt/sources.list.d/weechat.list
-          echo "deb-src https://weechat.org/ubuntu bionic main" | sudo tee -a /etc/apt/sources.list.d/weechat.list
+          echo "deb https://weechat.org/ubuntu $(lsb_release -c | awk '{ print $NF }') main" | sudo tee /etc/apt/sources.list.d/weechat.list
+          echo "deb-src https://weechat.org/ubuntu $(lsb_release -c | awk '{ print $NF }') main" | sudo tee -a /etc/apt/sources.list.d/weechat.list
           sudo apt update
           sudo apt install weechat-curses weechat-plugins weechat-python weechat-perl weechat-dev
           echo "version of weechat-plugin.h that weechat-sys uses by default:"
           grep -m 1 -n -H "WEECHAT_PLUGIN_API_VERSION" "/usr/include/weechat/weechat-plugin.h"
+          v="$(grep -m 1 -o  'WEECHAT_PLUGIN_API_VERSION.*' '/usr/include/weechat/weechat-plugin.h')"
+          echo "::set-output name=W_API_V::$v"
 
       - name: Checkout sources
         uses: actions/checkout@v2
@@ -44,8 +54,14 @@ jobs:
           command: test
           args: --release
 
-      - name: Upload binary
-        uses: actions/upload-artifact@v2
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
         with:
-          name: 'weechat-matrix-rs-x86_64-unknown-linux-gnu'
-          path: target/release/libmatrix.so
+          release_name: ${{ matrix.artifact_name }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/release/${{ matrix.artifact_name }}
+          asset_name: ${{ matrix.asset_name }}
+          tag: ${{ github.ref }}
+          overwrite: true
+          prerelease: true
+          body: Unstable binary for `${{ matrix.os }}` built against `${{ steps.build_env.outputs.W_API_V }}`. Rename it to `matrix.so` and put it inside `$WEECHAT_HOME/plugins`
