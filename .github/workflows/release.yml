@@ -8,11 +8,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-18.04]
+        os: [ubuntu-18.04, ubuntu-latest]
         include:
           - os: ubuntu-18.04
             artifact_name: libmatrix.so
             asset_name: libmatrix.so-ubuntu-18.04
+          - os: ubuntu-latest
+            artifact_name: libmatrix.so
+            asset_name: libmatrix.so-ubuntu-latest
         rust:
           - stable
       fail-fast: false
@@ -54,14 +57,8 @@ jobs:
           command: test
           args: --release
 
-      - name: Upload binaries to release
-        uses: svenstaro/upload-release-action@v2
+      - name: Upload binary
+        uses: actions/upload-artifact@v2
         with:
-          release_name: ${{ matrix.artifact_name }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: target/release/${{ matrix.artifact_name }}
-          asset_name: ${{ matrix.asset_name }}
-          tag: ${{ github.ref }}
-          overwrite: true
-          prerelease: true
-          body: Unstable binary for `${{ matrix.os }}` built against `${{ steps.build_env.outputs.W_API_V }}`. Rename it to `matrix.so` and put it inside `$WEECHAT_HOME/plugins`
+          name: 'libmatrix.so-${{ matrix.os }}'
+          path: target/release/libmatrix.so
