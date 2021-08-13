@@ -28,6 +28,16 @@ impl BarItemCallback for Status {
                 signs.push(
                     server.config().borrow().look().encrypted_room_sign(),
                 );
+
+                if !room.contains_only_verified_devices() {
+                    signs.push(
+                        server
+                            .config()
+                            .borrow()
+                            .look()
+                            .encryption_warning_sign(),
+                    );
+                }
             }
 
             if room.is_public() {

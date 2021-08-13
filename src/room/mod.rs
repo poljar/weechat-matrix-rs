@@ -372,6 +372,10 @@ impl MatrixRoom {
         self.room.is_encrypted()
     }
 
+    pub fn contains_only_verified_devices(&self) -> bool {
+        block_on(self.room.contains_only_verified_devices()).unwrap_or_default()
+    }
+
     pub fn is_public(&self) -> bool {
         self.room.is_public()
     }
