@@ -93,6 +93,13 @@ config!(
             "🔒",
         },
 
+        encryption_warning_sign: String {
+            // Description.
+            "A sign that is used to show that the current room contains unverified devices",
+            // Default value.
+            "❗",
+        },
+
         public_room_sign: String {
             // Description.
             "A sign indicating that the current room is public",
