@@ -38,7 +38,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Mutex, MutexGuard,
     },
-    time::SystemTime,
 };
 
 use futures::executor::block_on;
@@ -49,20 +48,22 @@ use url::Url;
 use matrix_sdk::{
     async_trait,
     deserialized_responses::AmbiguityChange,
-    events::{
-        room::{
-            member::MemberEventContent,
-            message::{
-                MessageEventContent, MessageType, TextMessageEventContent,
-            },
-            redaction::SyncRedactionEvent,
-        },
-        AnyMessageEventContent, AnyRedactedSyncMessageEvent, AnyRoomEvent,
-        AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
-        SyncMessageEvent, SyncStateEvent,
-    },
-    identifiers::{EventId, RoomAliasId, RoomId, UserId},
     room::Joined,
+    ruma::{
+        events::{
+            room::{
+                member::MemberEventContent,
+                message::{
+                    MessageEventContent, MessageType, TextMessageEventContent,
+                },
+                redaction::SyncRedactionEvent,
+            },
+            AnyMessageEventContent, AnyRedactedSyncMessageEvent, AnyRoomEvent,
+            AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
+            SyncMessageEvent, SyncStateEvent,
+        },
+        EventId, MilliSecondsSinceUnixEpoch, RoomAliasId, RoomId, UserId,
+    },
     uuid::Uuid,
     StoreError,
 };
@@ -497,7 +498,7 @@ impl MatrixRoom {
     async fn render_message_content(
         &self,
         event_id: &EventId,
-        send_time: &SystemTime,
+        send_time: &MilliSecondsSinceUnixEpoch,
         sender: &WeechatRoomMember,
         content: &AnyMessageEventContent,
     ) -> Option<RenderedEvent> {
@@ -840,7 +841,7 @@ impl MatrixRoom {
         if let Some((echo, content)) = self.outgoing_messages.remove(uuid) {
             let event = SyncMessageEvent {
                 sender: (&*self.own_user_id).clone(),
-                origin_server_ts: std::time::SystemTime::now(),
+                origin_server_ts: MilliSecondsSinceUnixEpoch::now(),
                 event_id: event_id.clone(),
                 content,
                 unsigned: Default::default(),

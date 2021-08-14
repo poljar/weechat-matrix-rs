@@ -36,4 +36,5 @@ features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
 git = "https://github.com/matrix-org/matrix-rust-sdk"
+rev = "48b3307934cee814919f828e2aa5b22011b8cc3d"
 features = ["markdown"]

@@ -1,9 +1,9 @@
-use matrix_sdk::{
+use matrix_sdk::ruma::{
     events::{
         room::message::{MessageEventContent, Relation},
         AnyMessageEvent, AnySyncMessageEvent,
     },
-    identifiers::{EventId, UserId},
+    EventId, UserId,
 };
 
 pub trait ToTag {
@@ -29,18 +29,12 @@ pub trait Edit {
 
 impl Edit for MessageEventContent {
     fn is_edit(&self) -> bool {
-        if let Some(Relation::Replacement(_)) = self.relates_to.as_ref() {
-            self.new_content.is_some()
-        } else {
-            false
-        }
+        matches!(self.relates_to.as_ref(), Some(Relation::Replacement(_)))
     }
 
     fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)> {
         if let Some(Relation::Replacement(r)) = self.relates_to.as_ref() {
-            self.new_content
-                .as_ref()
-                .map(|content| (&r.event_id, content.as_ref()))
+            Some((&r.event_id, &r.new_content))
         } else {
             None
         }

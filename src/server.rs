@@ -67,14 +67,16 @@ use url::Url;
 
 use matrix_sdk::{
     self,
-    api::r0::session::login::Response as LoginResponse,
     deserialized_responses::AmbiguityChange,
-    events::{
-        room::member::MemberEventContent, AnySyncRoomEvent, AnySyncStateEvent,
-        SyncStateEvent,
-    },
-    identifiers::{DeviceIdBox, DeviceKeyAlgorithm, RoomId, UserId},
     room::Joined,
+    ruma::{
+        api::client::r0::session::login::Response as LoginResponse,
+        events::{
+            room::member::MemberEventContent, AnySyncRoomEvent,
+            AnySyncStateEvent, SyncStateEvent,
+        },
+        DeviceIdBox, DeviceKeyAlgorithm, RoomId, UserId,
+    },
     Client, ClientConfig,
 };
 
@@ -909,11 +911,15 @@ impl InnerServer {
                 )
                 .expect("Can't get device color");
 
-                let last_seen_date =
-                    device_info.last_seen_ts.map_or("?".to_owned(), |d| {
-                        let date: DateTime<Utc> = d.into();
-                        date.format("%Y/%m/%d %H:%M").to_string()
-                    });
+                let last_seen_date = device_info
+                    .last_seen_ts
+                    .and_then(|d| {
+                        d.to_system_time().map(|d| {
+                            let date: DateTime<Utc> = d.into();
+                            date.format("%Y/%m/%d %H:%M").to_string()
+                        })
+                    })
+                    .unwrap_or_else(|| "?".to_string());
 
                 let last_seen = format!(
                     "{} @ {}",

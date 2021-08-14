@@ -1,23 +1,25 @@
-use std::{convert::TryInto, time::SystemTime};
 use url::Url;
 
 use matrix_sdk::{
-    events::{
-        room::{
-            encrypted::EncryptedEventContent,
-            member::{MemberEventContent, MembershipChange},
-            message::{
-                AudioMessageEventContent, EmoteMessageEventContent,
-                FileMessageEventContent, ImageMessageEventContent,
-                LocationMessageEventContent, NoticeMessageEventContent,
-                RedactedMessageEventContent, ServerNoticeMessageEventContent,
-                TextMessageEventContent, VideoMessageEventContent,
+    ruma::{
+        events::{
+            room::{
+                encrypted::EncryptedEventContent,
+                member::{MemberEventContent, MembershipChange},
+                message::{
+                    AudioMessageEventContent, EmoteMessageEventContent,
+                    FileMessageEventContent, ImageMessageEventContent,
+                    LocationMessageEventContent, NoticeMessageEventContent,
+                    RedactedMessageEventContent,
+                    ServerNoticeMessageEventContent, TextMessageEventContent,
+                    VideoMessageEventContent,
+                },
+                EncryptedFile,
             },
-            EncryptedFile,
+            RedactedSyncMessageEvent, SyncStateEvent,
         },
-        RedactedSyncMessageEvent, SyncStateEvent,
+        uint, EventId, MilliSecondsSinceUnixEpoch, UserId,
     },
-    identifiers::{EventId, UserId},
     uuid::Uuid,
 };
 
@@ -113,19 +115,14 @@ pub trait Render {
     /// Render the event.
     fn render_with_prefix(
         &self,
-        timestamp: &SystemTime,
+        timestamp: &MilliSecondsSinceUnixEpoch,
         event_id: &EventId,
         sender: &WeechatRoomMember,
         context: &Self::RenderContext,
     ) -> RenderedEvent {
         let prefix = self.prefix(sender);
         let mut content = self.render(context);
-        let timestamp: i64 = timestamp
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .try_into()
-            .unwrap_or_default();
+        let timestamp: i64 = (timestamp.0 / uint!(1000)).into();
 
         let tags = self.event_tags(
             event_id,
@@ -716,7 +713,10 @@ pub fn render_membership(
 
 #[cfg(test)]
 mod tests {
-    use matrix_sdk::identifiers::MxcUri;
+    use matrix_sdk::ruma::{
+        events::room::{EncryptedFileInit, JsonWebKeyInit},
+        MxcUri,
+    };
 
     use super::*;
 
@@ -731,26 +731,27 @@ mod tests {
 
     #[test]
     fn test_emxc_to_http() {
-        use matrix_sdk::events::room::JsonWebKey;
         use std::collections::BTreeMap;
 
         let homeserver = url::Url::parse("https://matrix.org").unwrap();
         let mxc_url = "mxc://matrix.org/some-media-id";
         let mut hashes: BTreeMap<String, String> = BTreeMap::new();
         hashes.insert("sha256".to_string(), "some-sha256".to_string());
-        let encrypt_info = EncryptedFile {
-            key: JsonWebKey {
+        let encrypt_info = EncryptedFileInit {
+            key: JsonWebKeyInit {
                 k: "some-secret-key".to_string(),
                 kty: "oct".to_string(),
                 key_ops: vec![],
                 ext: true,
                 alg: "A256CTR".to_string(),
-            },
+            }
+            .into(),
             iv: "some-test-iv".to_string(),
             v: "v2".to_string(),
             url: MxcUri::from("mxc://some-url"),
             hashes,
-        };
+        }
+        .into();
         let expected =
             "emxc://matrix.org:443/_matrix/media/r0/download/matrix.org/some-media-id?key=some-secret-key&hash=some-sha256&iv=some-test-iv";
         assert_eq!(

@@ -1,12 +1,10 @@
 use std::{
-    collections::BTreeMap,
     future::Future,
     path::PathBuf,
     rc::{Rc, Weak},
     time::Duration,
 };
 
-use serde_json::json;
 use tokio::{
     runtime::Runtime,
     sync::mpsc::{channel, Receiver, Sender},
@@ -17,31 +15,33 @@ use uuid::Uuid;
 
 use matrix_sdk::{
     self,
-    api::r0::{
-        device::{
-            delete_devices::Response as DeleteDevicesResponse,
-            get_devices::Response as DevicesResponse,
-        },
-        filter::{
-            FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
-        },
-        message::{
-            get_message_events::{
-                Request as MessagesRequest, Response as MessagesResponse,
-            },
-            send_message_event::Response as RoomSendResponse,
-        },
-        session::login::Response as LoginResponse,
-        sync::sync_events::Filter,
-        uiaa::AuthData,
-    },
     deserialized_responses::AmbiguityChange,
-    events::{
-        room::member::MemberEventContent, AnyMessageEventContent,
-        AnySyncRoomEvent, AnySyncStateEvent, SyncStateEvent,
-    },
-    identifiers::{DeviceIdBox, RoomId},
     room::Joined,
+    ruma::{
+        api::client::r0::{
+            device::{
+                delete_devices::Response as DeleteDevicesResponse,
+                get_devices::Response as DevicesResponse,
+            },
+            filter::{
+                FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
+            },
+            message::{
+                get_message_events::{
+                    Request as MessagesRequest, Response as MessagesResponse,
+                },
+                send_message_event::Response as RoomSendResponse,
+            },
+            session::login::Response as LoginResponse,
+            sync::sync_events::Filter,
+            uiaa::{AuthData, Password, UserIdentifier},
+        },
+        events::{
+            room::member::MemberEventContent, AnyMessageEventContent,
+            AnySyncRoomEvent, AnySyncStateEvent, SyncStateEvent,
+        },
+        DeviceIdBox, RoomId,
+    },
     Client, LoopCtrl, Result as MatrixResult, SyncSettings,
 };
 
@@ -62,24 +62,10 @@ pub struct InteractiveAuthInfo {
 
 impl InteractiveAuthInfo {
     pub fn as_auth_data(&self) -> AuthData<'_> {
-        let mut auth_parameters = BTreeMap::new();
-        let identifier = json!({
-            "type": "m.id.user",
-            "user": self.user,
-        });
-
-        auth_parameters.insert("identifier".to_owned(), identifier);
-        auth_parameters
-            .insert("password".to_owned(), self.password.clone().into());
-
-        // This is needed because of https://github.com/matrix-org/synapse/issues/5665
-        auth_parameters.insert("user".to_owned(), self.user.clone().into());
-
-        AuthData::DirectRequest {
-            kind: "m.login.password",
-            auth_parameters,
-            session: self.session.as_deref(),
-        }
+        AuthData::Password(Password::new(
+            UserIdentifier::MatrixId(&self.user),
+            &self.password,
+        ))
     }
 }
 
@@ -189,15 +175,16 @@ impl Connection {
         auth_info: Option<InteractiveAuthInfo>,
     ) -> MatrixResult<DeleteDevicesResponse> {
         let client = self.client.clone();
-        self.spawn(async move {
-            if let Some(info) = auth_info {
-                let auth = Some(info.as_auth_data());
-                client.delete_devices(&devices, auth).await
-            } else {
-                client.delete_devices(&devices, None).await
-            }
-        })
-        .await
+        Ok(self
+            .spawn(async move {
+                if let Some(info) = auth_info {
+                    let auth = Some(info.as_auth_data());
+                    client.delete_devices(&devices, auth).await
+                } else {
+                    client.delete_devices(&devices, None).await
+                }
+            })
+            .await?)
     }
 
     /// Fetch historical messages for the given room.
@@ -206,25 +193,26 @@ impl Connection {
         room: Joined,
         prev_batch: PrevBatch,
     ) -> MatrixResult<MessagesResponse> {
-        self.spawn(async move {
-            let request = match &prev_batch {
-                PrevBatch::Backwards(t) => {
-                    MessagesRequest::backward(&room.room_id(), &t)
-                }
-                PrevBatch::Forward(t) => {
-                    MessagesRequest::forward(&room.room_id(), &t)
-                }
-            };
+        Ok(self
+            .spawn(async move {
+                let request = match &prev_batch {
+                    PrevBatch::Backwards(t) => {
+                        MessagesRequest::backward(&room.room_id(), &t)
+                    }
+                    PrevBatch::Forward(t) => {
+                        MessagesRequest::forward(&room.room_id(), &t)
+                    }
+                };
 
-            room.messages(request).await
-        })
-        .await
+                room.messages(request).await
+            })
+            .await?)
     }
 
     /// Get the list of our own devices.
     pub async fn devices(&self) -> MatrixResult<DevicesResponse> {
         let client = self.client.clone();
-        self.spawn(async move { client.devices().await }).await
+        Ok(self.spawn(async move { client.devices().await }).await?)
     }
 
     /// Set or reset a typing notice.

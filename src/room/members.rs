@@ -6,12 +6,14 @@ use tracing::{error, info};
 
 use matrix_sdk::{
     deserialized_responses::AmbiguityChange,
-    events::{
-        room::member::{MemberEventContent, MembershipState},
-        SyncStateEvent,
-    },
-    identifiers::UserId,
     room::Joined,
+    ruma::{
+        events::{
+            room::member::{MemberEventContent, MembershipState},
+            SyncStateEvent,
+        },
+        uint, UserId,
+    },
     RoomMember, StoreError,
 };
 
@@ -349,12 +351,8 @@ impl Members {
                 }
             };
 
-            let timestamp: u64 = event
-                .origin_server_ts
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-
+            let timestamp: i64 =
+                (event.origin_server_ts.0 / uint!(1000)).into();
             buffer.print_date_tags(timestamp as i64, &[], &message);
         }
     }
