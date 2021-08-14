@@ -1,12 +1,10 @@
 use std::{
-    collections::BTreeMap,
     future::Future,
     path::PathBuf,
     rc::{Rc, Weak},
     time::Duration,
 };
 
-use serde_json::json;
 use tokio::{
     runtime::Runtime,
     sync::mpsc::{channel, Receiver, Sender},
@@ -36,7 +34,7 @@ use matrix_sdk::{
             },
             session::login::Response as LoginResponse,
             sync::sync_events::Filter,
-            uiaa::AuthData,
+            uiaa::{AuthData, Password, UserIdentifier},
         },
         events::{
             room::member::MemberEventContent, AnyMessageEventContent,
@@ -65,24 +63,10 @@ pub struct InteractiveAuthInfo {
 
 impl InteractiveAuthInfo {
     pub fn as_auth_data(&self) -> AuthData<'_> {
-        let mut auth_parameters = BTreeMap::new();
-        let identifier = json!({
-            "type": "m.id.user",
-            "user": self.user,
-        });
-
-        auth_parameters.insert("identifier".to_owned(), identifier);
-        auth_parameters
-            .insert("password".to_owned(), self.password.clone().into());
-
-        // This is needed because of https://github.com/matrix-org/synapse/issues/5665
-        auth_parameters.insert("user".to_owned(), self.user.clone().into());
-
-        AuthData::DirectRequest {
-            kind: "m.login.password",
-            auth_parameters,
-            session: self.session.as_deref(),
-        }
+        AuthData::Password(Password::new(
+            UserIdentifier::MatrixId(&self.user),
+            &self.password,
+        ))
     }
 }
 
