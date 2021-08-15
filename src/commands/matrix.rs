@@ -49,8 +49,8 @@ Use /matrix [command] help to find out more.\n",
                 DevicesCommand::DESCRIPTION,
                 KeysCommand::DESCRIPTION,
             ))
-            .add_completion("server |add|delete|list|listfull")
-            .add_completion("devices |list|delete|set-name")
+            .add_completion("server add|delete|list|listfull")
+            .add_completion("devices list|delete|set-name %(matrix-users)")
             .add_completion(&format!("keys {}", KeysCommand::COMPLETION))
             .add_completion("connect %(matrix_servers)")
             .add_completion("disconnect %(matrix_servers)")
