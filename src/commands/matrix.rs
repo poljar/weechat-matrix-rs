@@ -53,8 +53,8 @@ Use /matrix [command] help to find out more.\n",
                 KeysCommand::DESCRIPTION,
                 VerificationCommand::DESCRIPTION,
             ))
-            .add_completion("server |add|delete|list|listfull")
-            .add_completion("devices |list|delete|set-name")
+            .add_completion("server add|delete|list|listfull")
+            .add_completion("devices list|delete|set-name %(matrix-users)")
             .add_completion(&format!("keys {}", KeysCommand::COMPLETION))
             .add_completion(&format!(
                 "verification {}",

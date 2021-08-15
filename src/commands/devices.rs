@@ -40,7 +40,7 @@ impl DevicesCommand {
                 "device-id: The unique id of the device that should be deleted.
      name: The name that the device name should be set to.",
             )
-            .add_completion("list")
+            .add_completion("list %(matrix-users)")
             .add_completion("delete %(matrix-own-devices)")
             .add_completion("set-name %(matrix-own-devices)")
             .add_completion("help list|delete|set-name");

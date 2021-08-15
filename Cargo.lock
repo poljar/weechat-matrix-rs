@@ -1499,9 +1499,9 @@ dependencies = [
 
 [[package]]
 name = "olm-rs"
-version = "1.0.1"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8962a1fc909accf520991dcda872888554ecf16320097e02d3bd9981844a24ae"
+checksum = "ef7488387767b2a6cabb941ff858fa95a7adc7f1b00d53ab48cfe9fdb42cc53e"
 dependencies = [
  "getrandom 0.2.3",
  "olm-sys",
@@ -2029,6 +2029,8 @@ dependencies = [
 [[package]]
 name = "ruma"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efd3b567d0ca13e963145e1700d4182fa371ce08b090245b1dd62c703b4579b4"
 dependencies = [
  "assign",
  "js_int",
@@ -2046,6 +2048,8 @@ dependencies = [
 [[package]]
 name = "ruma-api"
 version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "554ace014d5f0c68218fbacfa4a02f8f57cd0cca14bede7968631af678fb6d42"
 dependencies = [
  "bytes",
  "http",
@@ -2061,6 +2065,8 @@ dependencies = [
 [[package]]
 name = "ruma-api-macros"
 version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11ad68a96afcd26ae5ab99f4fc950db8acbe2e556528c655caebf4caa6e50d4c"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2 1.0.28",
@@ -2071,6 +2077,8 @@ dependencies = [
 [[package]]
 name = "ruma-client-api"
 version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa52a3c5929303da5b1bb75e3a0bd166121521ca58add65d0e9a2f04d3f2c452"
 dependencies = [
  "assign",
  "bytes",
@@ -2090,6 +2098,8 @@ dependencies = [
 [[package]]
 name = "ruma-common"
 version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41d5b7605f58dc0d9cf1848cc7f1af2bae4e4bcd1d2b7a87bbb9864c8a785b91"
 dependencies = [
  "indexmap",
  "js_int",
@@ -2103,7 +2113,9 @@ dependencies = [
 
 [[package]]
 name = "ruma-events"
-version = "0.24.2"
+version = "0.24.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e90d604673211d5b24399cf8a0559cbf5745e577c5c04d24b4078b588c65bab4"
 dependencies = [
  "indoc",
  "js_int",
@@ -2119,7 +2131,9 @@ dependencies = [
 
 [[package]]
 name = "ruma-events-macros"
-version = "0.24.2"
+version = "0.24.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e94b9f2882f27d1e10df2cd4aa3dcfcf4a974dda0581712399aed344a60f2b3"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2 1.0.28",
@@ -2130,6 +2144,8 @@ dependencies = [
 [[package]]
 name = "ruma-federation-api"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c61c9adbe1a29c301ae627604406d60102c89fc833b110cd35bbf29ae205ea6c"
 dependencies = [
  "js_int",
  "ruma-api",
@@ -2144,6 +2160,8 @@ dependencies = [
 [[package]]
 name = "ruma-identifiers"
 version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb417d091e8dd5a633e4e5998231a156049d7fcc221045cfdc0642eb72067732"
 dependencies = [
  "paste",
  "ruma-identifiers-macros",
@@ -2156,6 +2174,8 @@ dependencies = [
 [[package]]
 name = "ruma-identifiers-macros"
 version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c708edad7f605638f26c951cbad7501fbf28ab01009e5ca65ea5a2db74a882b1"
 dependencies = [
  "quote 1.0.9",
  "ruma-identifiers-validation",
@@ -2165,10 +2185,14 @@ dependencies = [
 [[package]]
 name = "ruma-identifiers-validation"
 version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42285e7fb5d5f2d5268e45bb683e36d5c6fd9fc1e11a4559ba3c3521f3bbb2cb"
 
 [[package]]
 name = "ruma-serde"
 version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b2b22aae842e7ecda695e42b7b39d4558959d9d9a27acc2a16acf4f4f7f00c3"
 dependencies = [
  "bytes",
  "form_urlencoded",
@@ -2182,6 +2206,8 @@ dependencies = [
 [[package]]
 name = "ruma-serde-macros"
 version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "243e9bef188b08f94c79bc2f8fd1eb307a9e636b2b8e4571acf8c7be16381d28"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2 1.0.28",
@@ -2192,6 +2218,8 @@ dependencies = [
 [[package]]
 name = "ruma-signatures"
 version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a4f64027165b59500162d10d435b1253898bf3ad4f5002cb0d56913fe7f76d7"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -2208,6 +2236,8 @@ dependencies = [
 [[package]]
 name = "ruma-state-res"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab9e0bcdd66308d640c56ad17ea077c8ca80073852ed6692b455b39866b99c74"
 dependencies = [
  "itertools",
  "js_int",
