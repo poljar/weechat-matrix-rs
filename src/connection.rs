@@ -17,31 +17,34 @@ use uuid::Uuid;
 
 use matrix_sdk::{
     self,
-    api::r0::{
-        device::{
-            delete_devices::Response as DeleteDevicesResponse,
-            get_devices::Response as DevicesResponse,
-        },
-        filter::{
-            FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
-        },
-        message::{
-            get_message_events::{
-                Request as MessagesRequest, Response as MessagesResponse,
-            },
-            send_message_event::Response as RoomSendResponse,
-        },
-        session::login::Response as LoginResponse,
-        sync::sync_events::Filter,
-        uiaa::AuthData,
-    },
     deserialized_responses::AmbiguityChange,
-    events::{
-        room::member::MemberEventContent, AnyMessageEventContent,
-        AnySyncRoomEvent, AnySyncStateEvent, SyncStateEvent,
-    },
-    identifiers::{DeviceIdBox, RoomId},
     room::Joined,
+    ruma::{
+        api::client::r0::{
+            device::{
+                delete_devices::Response as DeleteDevicesResponse,
+                get_devices::Response as DevicesResponse,
+            },
+            filter::{
+                FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
+            },
+            message::{
+                get_message_events::{
+                    Request as MessagesRequest, Response as MessagesResponse,
+                },
+                send_message_event::Response as RoomSendResponse,
+            },
+            session::login::Response as LoginResponse,
+            sync::sync_events::Filter,
+            uiaa::AuthData,
+        },
+        events::{
+            room::member::MemberEventContent, AnyMessageEventContent,
+            AnySyncRoomEvent, AnySyncStateEvent, AnyToDeviceEvent,
+            SyncStateEvent,
+        },
+        identifiers::{DeviceIdBox, RoomId},
+    },
     Client, LoopCtrl, Result as MatrixResult, SyncSettings,
 };
 
@@ -87,6 +90,7 @@ pub enum ClientMessage {
     LoginMessage(LoginResponse),
     SyncState(RoomId, AnySyncStateEvent),
     SyncEvent(RoomId, AnySyncRoomEvent),
+    ToDeviceEvent(AnyToDeviceEvent),
     MemberEvent(
         RoomId,
         SyncStateEvent<MemberEventContent>,
@@ -297,6 +301,7 @@ impl Connection {
             match message {
                 Ok(message) => match message {
                     ClientMessage::LoginMessage(r) => server.receive_login(r),
+
                     ClientMessage::SyncEvent(r, e) => {
                         server.receive_joined_timeline_event(&r, e).await
                     }
@@ -315,6 +320,9 @@ impl Connection {
                         server
                             .receive_member(room_id, e, is_state, change)
                             .await
+                    }
+                    ClientMessage::ToDeviceEvent(e) => {
+                        server.receive_to_device_event(e).await
                     }
                 },
                 Err(e) => server.print_error(&format!("Ruma error {}", e)),
@@ -446,6 +454,21 @@ impl Connection {
 
         client
             .sync_with_callback(sync_settings, |response| async move {
+                for event in response
+                    .to_device
+                    .events
+                    .iter()
+                    .filter_map(|e| e.deserialize().ok())
+                {
+                    if sync_channel
+                        .send(Ok(ClientMessage::ToDeviceEvent(event)))
+                        .await
+                        .is_err()
+                    {
+                        return LoopCtrl::Break;
+                    }
+                }
+
                 for (room_id, room) in response.rooms.join {
                     for event in room
                         .state

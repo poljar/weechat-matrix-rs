@@ -35,7 +35,8 @@ impl BarItemCallback for BufferName {
                 )
             }
 
-            BufferOwner::Room(server, _) => {
+            BufferOwner::Room(server, _)
+            | BufferOwner::Verification(server, _) => {
                 let color = if server.is_connection_secure() {
                     "status_name_ssl"
                 } else {

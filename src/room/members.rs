@@ -1,33 +1,38 @@
-use std::{cell::RefCell, convert::TryFrom, rc::Rc};
+use std::{convert::TryFrom, rc::Rc};
 
 use dashmap::DashMap;
-use futures::executor::block_on;
+
 use tracing::{error, info};
 
 use matrix_sdk::{
     deserialized_responses::AmbiguityChange,
-    events::{
-        room::member::{MemberEventContent, MembershipState},
-        SyncStateEvent,
-    },
-    identifiers::UserId,
     room::Joined,
-    RoomMember, StoreError,
+    ruma::{
+        events::{
+            room::member::{MemberEventContent, MembershipState},
+            SyncStateEvent,
+        },
+        identifiers::UserId,
+        uint,
+    },
+    RoomMember,
 };
 
 use weechat::{
-    buffer::{Buffer, BufferHandle, NickSettings},
+    buffer::{Buffer, NickSettings},
     Prefix, Weechat,
 };
 
 use crate::render::render_membership;
+
+use super::buffer::RoomBuffer;
 
 #[derive(Clone)]
 pub struct Members {
     room: Joined,
     ambiguity_map: Rc<DashMap<UserId, bool>>,
     nicks: Rc<DashMap<UserId, String>>,
-    pub(super) buffer: Rc<RefCell<Option<BufferHandle>>>,
+    buffer: RoomBuffer,
 }
 
 #[derive(Clone, Debug)]
@@ -37,21 +42,20 @@ pub struct WeechatRoomMember {
     ambiguous_nick: Rc<bool>,
 }
 
+impl PartialEq for WeechatRoomMember {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner.user_id() == other.inner.user_id()
+    }
+}
+
 impl Members {
-    pub fn new(room: Joined) -> Self {
+    pub fn new(room: Joined, buffer: RoomBuffer) -> Self {
         Self {
             room,
             nicks: DashMap::new().into(),
             ambiguity_map: DashMap::new().into(),
-            buffer: RefCell::new(None).into(),
+            buffer,
         }
-    }
-
-    fn buffer(&self) -> BufferHandle {
-        self.buffer
-            .borrow()
-            .clone()
-            .expect("Members struct wasn't initialized properly")
     }
 
     fn add_nick(&self, buffer: &Buffer, member: &WeechatRoomMember) {
@@ -81,14 +85,6 @@ impl Members {
     }
 
     pub async fn restore_member(&self, user_id: &UserId) {
-        let buffer = self.buffer();
-
-        let buffer = if let Ok(b) = buffer.upgrade() {
-            b
-        } else {
-            return;
-        };
-
         match self.room().get_member_no_sync(user_id).await {
             Ok(Some(member)) => {
                 self.ambiguity_map
@@ -99,7 +95,7 @@ impl Members {
                 panic!(
                     "Couldn't find member {} in {}",
                     user_id,
-                    buffer.short_name()
+                    self.buffer.short_name()
                 )
             }
             Err(e) => {
@@ -113,7 +109,7 @@ impl Members {
     }
 
     pub async fn update_member(&self, user_id: &UserId) {
-        let buffer = self.buffer();
+        let buffer = self.buffer.buffer_handle();
 
         let buffer = if let Ok(b) = buffer.upgrade() {
             b
@@ -183,7 +179,7 @@ impl Members {
             }
         }
 
-        let buffer = self.buffer();
+        let buffer = self.buffer.buffer_handle();
 
         let buffer = if let Ok(b) = buffer.upgrade() {
             b
@@ -231,49 +227,13 @@ impl Members {
         &self.room
     }
 
-    pub fn calculate_buffer_name(&self) -> Result<String, StoreError> {
-        let room = self.room();
-        let room_name = block_on(room.display_name())?;
-
-        let room_name = if room_name == "#" {
-            "##".to_owned()
-        } else if room_name.starts_with('#') || room.is_direct() {
-            room_name
-        } else {
-            format!("#{}", room_name)
-        };
-
-        Ok(room_name)
-    }
-
-    pub fn update_buffer_name(&self) {
-        let buffer = self.buffer();
-
-        let buffer = if let Ok(b) = buffer.upgrade() {
-            b
-        } else {
-            return;
-        };
-
-        match self.calculate_buffer_name() {
-            Ok(name) => buffer.set_short_name(&name),
-            Err(e) => {
-                Weechat::print(&format!(
-                    "{}: Error fetching the room name from the store: {}",
-                    Weechat::prefix(Prefix::Error),
-                    e.to_string(),
-                ));
-            }
-        }
-    }
-
     pub async fn handle_membership_event(
         &self,
         event: &SyncStateEvent<MemberEventContent>,
         state_event: bool,
         ambiguity_change: Option<&AmbiguityChange>,
     ) {
-        let buffer = self.buffer();
+        let buffer = self.buffer.buffer_handle();
         let buffer = if let Ok(b) = buffer.upgrade() {
             b
         } else {
@@ -320,7 +280,7 @@ impl Members {
 
         // Names of rooms without display names can get affected by the
         // member list so we need to update them.
-        self.update_buffer_name();
+        self.buffer.update_buffer_name();
 
         if !state_event {
             let sender = self.get(&sender_id).await;
@@ -349,12 +309,8 @@ impl Members {
                 }
             };
 
-            let timestamp: u64 = event
-                .origin_server_ts
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-
+            let timestamp: i64 =
+                (event.origin_server_ts.0 / uint!(1000)).into();
             buffer.print_date_tags(timestamp as i64, &[], &message);
         }
     }

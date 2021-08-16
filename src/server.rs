@@ -66,15 +66,17 @@ use tracing::error;
 use url::Url;
 
 use matrix_sdk::{
-    self,
-    api::r0::session::login::Response as LoginResponse,
     deserialized_responses::AmbiguityChange,
-    events::{
-        room::member::MemberEventContent, AnySyncRoomEvent, AnySyncStateEvent,
-        SyncStateEvent,
-    },
-    identifiers::{DeviceIdBox, DeviceKeyAlgorithm, RoomId, UserId},
     room::Joined,
+    ruma::{
+        api::client::r0::session::login::Response as LoginResponse,
+        events::{
+            room::member::MemberEventContent, AnySyncRoomEvent,
+            AnySyncStateEvent, AnyToDeviceEvent, SyncStateEvent,
+        },
+        identifiers::{DeviceIdBox, DeviceKeyAlgorithm, RoomId, UserId},
+    },
+    verification::Verification,
     Client, ClientConfig,
 };
 
@@ -88,6 +90,7 @@ use crate::{
     config::ServerBuffer,
     connection::{Connection, InteractiveAuthInfo},
     room::RoomHandle,
+    verification_buffer::VerificationBuffer,
     ConfigHandle, Servers, PLUGIN_NAME,
 };
 
@@ -161,6 +164,7 @@ pub struct InnerServer {
     login_state: Rc<RefCell<Option<LoginInfo>>>,
     connection: Rc<RefCell<Option<Connection>>>,
     server_buffer: Rc<RefCell<Option<BufferHandle>>>,
+    verification_buffers: Rc<RefCell<HashMap<UserId, VerificationBuffer>>>,
 }
 
 impl MatrixServer {
@@ -183,6 +187,7 @@ impl MatrixServer {
             login_state: Rc::new(RefCell::new(None)),
             connection: Rc::new(RefCell::new(None)),
             server_buffer: Rc::new(RefCell::new(None)),
+            verification_buffers: Rc::new(RefCell::new(HashMap::new())),
         };
 
         let server = server.into();
@@ -439,6 +444,14 @@ impl InnerServer {
         self.rooms.borrow().values().cloned().collect()
     }
 
+    pub fn verifications(&self) -> Vec<VerificationBuffer> {
+        self.verification_buffers
+            .borrow()
+            .values()
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn get_or_create_room(&self, room_id: &RoomId) -> RoomHandle {
         if !self.rooms.borrow().contains_key(room_id) {
             let homeserver = self
@@ -659,6 +672,131 @@ impl InnerServer {
         self.connection.borrow().is_some()
     }
 
+    pub async fn receive_to_device_event(&self, event: AnyToDeviceEvent) {
+        let handle_event = |event: AnyToDeviceEvent| async move {
+            if let Some(b) =
+                self.verification_buffers.borrow().get(event.sender())
+            {
+                b.handle_event(&event).await;
+            }
+        };
+
+        match &event {
+            AnyToDeviceEvent::RoomKey(_) => {}
+            AnyToDeviceEvent::RoomKeyRequest(_) => {}
+            AnyToDeviceEvent::KeyVerificationRequest(e) => {
+                if let Some(client) = self.get_client() {
+                    if let Some(request) = client
+                        .get_verification_request(
+                            &e.sender,
+                            &e.content.transaction_id,
+                        )
+                        .await
+                    {
+                        let buffer = self
+                            .verification_buffers
+                            .borrow()
+                            .get(request.other_user_id())
+                            .cloned();
+
+                        if let Some(buffer) = buffer {
+                            buffer.replace_verification(request);
+                            buffer.handle_event(&event).await;
+                        } else if let Ok(buffer) = VerificationBuffer::new(
+                            &self.server_name,
+                            &e.sender,
+                            request.clone(),
+                            self.connection.clone(),
+                            &self.verification_buffers,
+                        ) {
+                            buffer.handle_event(&event).await;
+                            self.verification_buffers.borrow_mut().insert(
+                                request.other_user_id().to_owned(),
+                                buffer,
+                            );
+                        } else {
+                            self.print_error(&format!(
+                                "Error creating a verification buffer for {}",
+                                e.sender
+                            ));
+                        }
+                    }
+                }
+            }
+            AnyToDeviceEvent::KeyVerificationStart(e) => {
+                if let Some(client) = self.get_client() {
+                    match client
+                        .get_verification(&e.sender, &e.content.transaction_id)
+                        .await
+                    {
+                        Some(Verification::SasV1(sas)) => {
+                            if !sas.is_cancelled() {
+                                let buffer = self
+                                    .verification_buffers
+                                    .borrow()
+                                    .get(&e.sender)
+                                    .cloned();
+
+                                if let Some(buffer) = buffer {
+                                    if sas.started_from_request() {
+                                        if let Err(e) = buffer.update(sas).await
+                                        {
+                                            self.print_error(&format!("Error updating the verification buffer {:?}", e))
+                                        }
+                                    } else {
+                                        buffer.replace_verification(sas);
+                                    }
+                                    buffer.handle_event(&event).await;
+                                } else {
+                                    if let Ok(buffer) = VerificationBuffer::new(
+                                        &self.server_name,
+                                        &e.sender,
+                                        sas.clone(),
+                                        self.connection.clone(),
+                                        &self.verification_buffers,
+                                    ) {
+                                        buffer.handle_event(&event).await;
+
+                                        self.verification_buffers
+                                            .borrow_mut()
+                                            .insert(
+                                                sas.other_user_id().to_owned(),
+                                                buffer,
+                                            );
+                                    } else {
+                                        self.print_error(
+                                            &format!(
+                                                "Error creating a verification buffer for {}", e.sender
+                                            )
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        Some(Verification::QrV1(qr)) => {
+                            if let Some(buffer) = self
+                                .verification_buffers
+                                .borrow_mut()
+                                .get_mut(qr.other_user_id())
+                            {
+                                buffer.update_qr(qr).await;
+                                buffer.handle_event(&event).await;
+                            }
+                        }
+                        None => todo!(),
+                    }
+                }
+            }
+            AnyToDeviceEvent::KeyVerificationCancel(_)
+            | AnyToDeviceEvent::KeyVerificationAccept(_)
+            | AnyToDeviceEvent::KeyVerificationKey(_)
+            | AnyToDeviceEvent::KeyVerificationMac(_) => {
+                handle_event(event).await
+            }
+            _ => {}
+        }
+    }
+
     pub async fn receive_member(
         &self,
         room_id: RoomId,
@@ -872,6 +1010,12 @@ impl InnerServer {
     }
 
     pub async fn devices(&self) {
+        enum DeviceTrust {
+            Verified,
+            Unverified,
+            Unsupported,
+        }
+
         if let Some(c) = self.connection() {
             let mut response = match c.devices().await {
                 Ok(r) => r,
@@ -909,11 +1053,15 @@ impl InnerServer {
                 )
                 .expect("Can't get device color");
 
-                let last_seen_date =
-                    device_info.last_seen_ts.map_or("?".to_owned(), |d| {
-                        let date: DateTime<Utc> = d.into();
-                        date.format("%Y/%m/%d %H:%M").to_string()
-                    });
+                let last_seen_date = device_info
+                    .last_seen_ts
+                    .and_then(|d| {
+                        d.to_system_time().map(|d| {
+                            let date: DateTime<Utc> = d.into();
+                            date.format("%Y/%m/%d %H:%M").to_string()
+                        })
+                    })
+                    .unwrap_or_else(|| "?".to_string());
 
                 let last_seen = format!(
                     "{} @ {}",
@@ -943,32 +1091,87 @@ impl InnerServer {
                             d.get_key(DeviceKeyAlgorithm::Ed25519).cloned()
                         })
                         .flatten()
-                }
-                .unwrap_or_else(|| "-".to_owned());
+                };
 
-                let fingerprint = fingerprint
-                    .chars()
-                    .collect::<Vec<char>>()
-                    .chunks(4)
-                    .map(|c| c.iter().collect::<String>())
-                    .collect::<Vec<String>>()
-                    .join(" ");
+                let verified = if is_own_device {
+                    DeviceTrust::Verified
+                } else {
+                    c.client()
+                        .get_device(&own_user_id, &device_info.device_id)
+                        .await
+                        .unwrap()
+                        .map(|d| {
+                            if d.verified() {
+                                DeviceTrust::Verified
+                            } else {
+                                DeviceTrust::Unverified
+                            }
+                        })
+                        .unwrap_or(DeviceTrust::Unsupported)
+                };
+
+                let verified = match verified {
+                    DeviceTrust::Verified => {
+                        format!(
+                            "{}Trusted{}",
+                            Weechat::color("green"),
+                            Weechat::color("reset")
+                        )
+                    }
+                    DeviceTrust::Unverified => {
+                        format!(
+                            "{}Not trusted{}",
+                            Weechat::color("red"),
+                            Weechat::color("reset")
+                        )
+                    }
+                    DeviceTrust::Unsupported => {
+                        format!(
+                            "{}No encryption support{}",
+                            Weechat::color("darkgray"),
+                            Weechat::color("reset")
+                        )
+                    }
+                };
+
+                let fingerprint = if let Some(fingerprint) = fingerprint {
+                    let fingerprint = fingerprint
+                        .chars()
+                        .collect::<Vec<char>>()
+                        .chunks(4)
+                        .map(|c| c.iter().collect::<String>())
+                        .collect::<Vec<String>>()
+                        .join(" ");
+
+                    format!(
+                        "{}{}{}",
+                        Weechat::color("magenta"),
+                        fingerprint,
+                        Weechat::color("reset")
+                    )
+                } else {
+                    format!(
+                        "{}-{}",
+                        Weechat::color("darkgray"),
+                        Weechat::color("reset")
+                    )
+                };
 
                 let info = format!(
                     "       \
                             Name: {}{}\n  \
-                       Device ID: {}{}{}\n  \
-                       Last seen: {}\n\
-                     Fingerprint: {}{}{}\n",
+                       Device ID: {}{}{}\n   \
+                        Security: {}\n\
+                     Fingerprint: {}\n  \
+                       Last seen: {}\n",
                     bold,
                     device_info.display_name.as_deref().unwrap_or(""),
                     Weechat::color(&color),
                     device_info.device_id.as_str(),
                     Weechat::color("reset"),
-                    last_seen,
-                    Weechat::color("magenta"),
+                    verified,
                     fingerprint,
-                    Weechat::color("reset"),
+                    last_seen,
                 );
 
                 lines.push(info);

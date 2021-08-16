@@ -21,6 +21,12 @@ pub struct KeysCommand {
 impl KeysCommand {
     pub const DESCRIPTION: &'static str = "Import or export E2EE keys.";
     pub const COMPLETION: &'static str = "import|export %(filename)";
+    pub const SETTINGS: &'static [ArgParseSettings] = &[
+        ArgParseSettings::DisableHelpFlags,
+        ArgParseSettings::DisableVersion,
+        ArgParseSettings::VersionlessSubcommands,
+        ArgParseSettings::SubcommandRequiredElseHelp,
+    ];
 
     pub fn create(servers: &Servers) -> Result<Command, ()> {
         let settings = CommandSettings::new("keys")
@@ -116,10 +122,7 @@ impl CommandCallback for KeysCommand {
     fn callback(&mut self, _: &Weechat, buffer: &Buffer, arguments: Args) {
         let argparse = Argparse::new("keys")
             .about(Self::DESCRIPTION)
-            .global_setting(ArgParseSettings::DisableHelpFlags)
-            .global_setting(ArgParseSettings::DisableVersion)
-            .global_setting(ArgParseSettings::VersionlessSubcommands)
-            .setting(ArgParseSettings::SubcommandRequiredElseHelp)
+            .settings(Self::SETTINGS)
             .subcommands(Self::subcommands());
 
         parse_and_run(argparse, arguments, |matches| {

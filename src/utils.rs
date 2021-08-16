@@ -1,6 +1,6 @@
-use matrix_sdk::{
+use matrix_sdk::ruma::{
     events::{
-        room::message::{MessageEventContent, Relation},
+        room::message::{MessageEventContent, MessageType, Relation},
         AnyMessageEvent, AnySyncMessageEvent,
     },
     identifiers::{EventId, UserId},
@@ -27,20 +27,40 @@ pub trait Edit {
     fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)>;
 }
 
+pub trait VerificationEvent {
+    fn is_verification(&self) -> bool;
+}
+
+impl VerificationEvent for AnySyncMessageEvent {
+    fn is_verification(&self) -> bool {
+        match self {
+            AnySyncMessageEvent::KeyVerificationReady(_)
+            | AnySyncMessageEvent::KeyVerificationStart(_)
+            | AnySyncMessageEvent::KeyVerificationCancel(_)
+            | AnySyncMessageEvent::KeyVerificationAccept(_)
+            | AnySyncMessageEvent::KeyVerificationKey(_)
+            | AnySyncMessageEvent::KeyVerificationMac(_)
+            | AnySyncMessageEvent::KeyVerificationDone(_) => true,
+            AnySyncMessageEvent::RoomMessage(m) => {
+                if let MessageType::VerificationRequest(_) = m.content.msgtype {
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+}
+
 impl Edit for MessageEventContent {
     fn is_edit(&self) -> bool {
-        if let Some(Relation::Replacement(_)) = self.relates_to.as_ref() {
-            self.new_content.is_some()
-        } else {
-            false
-        }
+        matches!(self.relates_to.as_ref(), Some(Relation::Replacement(_)))
     }
 
     fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)> {
         if let Some(Relation::Replacement(r)) = self.relates_to.as_ref() {
-            self.new_content
-                .as_ref()
-                .map(|content| (&r.event_id, content.as_ref()))
+            Some((&r.event_id, &r.new_content))
         } else {
             None
         }
