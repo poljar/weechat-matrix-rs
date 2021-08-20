@@ -62,23 +62,17 @@ impl VerificationCommand {
         let buffer_owner = servers.buffer_owner(buffer);
 
         match buffer_owner {
-            BufferOwner::Room(_, b) => match command {
-                CommandType::Accept => b.accept_verification(),
-                CommandType::Confirm => b.confirm_verification(),
-                CommandType::Cancel => b.cancel_verification(),
-                CommandType::UseEmoji => Weechat::print(
-                    "The 'use-emoji' command can only be used for self verifications"
-                ),
-            },
             BufferOwner::Verification(_, b) => match command {
                 CommandType::Accept => b.accept(),
                 CommandType::Confirm => b.confirm(),
                 CommandType::Cancel => b.cancel(),
                 CommandType::UseEmoji => b.start_sas(),
             },
-            BufferOwner::Server(_) | BufferOwner::None => {
+            BufferOwner::Room(_, _)
+            | BufferOwner::Server(_)
+            | BufferOwner::None => {
                 Weechat::print(
-                    "The verification command needs to be executed in a room or \
+                    "The verification command needs to be executed in a \
                     verification buffer",
                 );
             }

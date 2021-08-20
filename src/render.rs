@@ -488,44 +488,19 @@ impl Render for RedactedSyncMessageEvent<RedactedMessageEventContent> {
     }
 }
 
-pub enum VerificationContext {
-    Room(WeechatRoomMember, Verification),
-    ToDevice(Verification),
-}
-
-impl VerificationContext {
-    fn other_users_nick(&self) -> String {
-        match self {
-            VerificationContext::Room(s, _) => s.nick_colored(),
-            VerificationContext::ToDevice(v) => v.other_user_id().to_string(),
-        }
-    }
-
-    fn verification(&self) -> &Verification {
-        match self {
-            VerificationContext::Room(_, v) => &v,
-            VerificationContext::ToDevice(v) => &v,
-        }
-    }
-
-    fn we_started(&self) -> bool {
-        self.verification().we_started()
-    }
-}
-
 macro_rules! render_start_content {
     ($type: ident) => {
         impl Render for $type {
             const TAGS: &'static [&'static str] = &["notify_highlight"];
 
-            type RenderContext = VerificationContext;
+            type RenderContext = Verification;
 
             fn prefix(&self, _: &WeechatRoomMember) -> String {
                 Weechat::prefix(Prefix::Network)
             }
 
-            fn render(&self, context: &Self::RenderContext) -> RenderedContent {
-                let message = match context.verification() {
+            fn render(&self, verification: &Self::RenderContext) -> RenderedContent {
+                let message = match verification {
                     Verification::SasV1(sas) => {
                         if sas.we_started() {
                             if sas.is_self_verification() {
@@ -580,14 +555,14 @@ macro_rules! render_start_content {
                                 format!(
                                     "{} has scanned our QR code, confirm that he \
                                         has done so TODO",
-                                    context.other_users_nick(),
+                                    verification.other_user_id(),
                                 )
                             }
                         }
                     }
                 };
 
-                let tags = if context.verification().we_started() {
+                let tags = if verification.we_started() {
                     vec![]
                 } else {
                     vec!["notify_highlight".to_string()]
@@ -607,45 +582,24 @@ macro_rules! render_start_content {
 render_start_content!(StartEventContent);
 render_start_content!(StartToDeviceEventContent);
 
-pub enum VerificationRequestContext {
-    Room(VerificationRequest, WeechatRoomMember, WeechatRoomMember),
-    ToDevice(VerificationRequest),
-}
-
-impl VerificationRequestContext {
-    fn verification_request(&self) -> &VerificationRequest {
-        match self {
-            VerificationRequestContext::Room(v, _, _) => &v,
-            VerificationRequestContext::ToDevice(v) => &v,
-        }
-    }
-}
-
 macro_rules! render_request_content {
     ($type: ident) => {
         impl Render for $type {
             const TAGS: &'static [&'static str] = &["notify_highlight"];
 
-            type RenderContext = VerificationRequestContext;
+            type RenderContext = VerificationRequest;
 
             fn prefix(&self, _: &WeechatRoomMember) -> String {
                 Weechat::prefix(Prefix::Network)
             }
 
-            fn render(&self, context: &Self::RenderContext) -> RenderedContent {
-                let (message, tags) = if context.verification_request().we_started() {
+            fn render(&self, request: &Self::RenderContext) -> RenderedContent {
+                let (message, tags) = if request.we_started() {
                     ("You sent a verification request".to_string(), vec![])
                 } else {
-                    let nick = match context {
-                        VerificationRequestContext::Room(
-                            _,
-                            _,
-                            sender,
-                        ) => sender.nick_colored(),
-                        VerificationRequestContext::ToDevice(r) => r.other_user_id().to_string(),
-                    };
+                    let nick = request.other_user_id().to_string();
 
-                    let message = if context.verification_request().is_self_verification() {
+                    let message = if request.is_self_verification() {
                         format!("You sent a verification request from another \
                                 device, accept the request with '/verification accept`")
                     } else {
@@ -675,19 +629,19 @@ macro_rules! render_ready_content {
         impl Render for $type {
             const TAGS: &'static [&'static str] = &[];
 
-            type RenderContext = VerificationContext;
+            type RenderContext = Verification;
 
             fn prefix(&self, _: &WeechatRoomMember) -> String {
                 Weechat::prefix(Prefix::Network)
             }
 
-            fn render(&self, context: &Self::RenderContext) -> RenderedContent {
+            fn render(&self, verification: &Self::RenderContext) -> RenderedContent {
                 // TODO print out a help, how to transition into emoji
                 // verification or if we're waiting for a QR code to be scanned.
-                let message = if context.we_started() {
+                let message = if verification.we_started() {
                     format!(
                         "{} has answered the verification request",
-                        context.other_users_nick(),
+                        verification.other_user_id(),
                     )
                 } else {
                     "You answered the verification request".to_string()
@@ -843,21 +797,18 @@ impl From<Verification> for CancelVerification {
 }
 
 pub enum CancelContext {
-    Room(WeechatRoomMember, CancelVerification),
     ToDevice(CancelVerification),
 }
 
 impl CancelContext {
     fn verification(&self) -> &CancelVerification {
         match self {
-            CancelContext::Room(_, v) => &v,
             CancelContext::ToDevice(v) => &v,
         }
     }
 
     fn other_users_nick(&self) -> String {
         match self {
-            CancelContext::Room(s, _) => s.nick_colored(),
             CancelContext::ToDevice(v) => v.other_user_id().to_string(),
         }
     }

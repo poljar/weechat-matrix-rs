@@ -31,6 +31,7 @@ uuid = { version = "0.8.2", features = ["v4"] }
 unicode-segmentation = "1.7.1"
 qrcode = { version = "0.12.0", default-features = false }
 image = "0.23.14"
+anyhow = "1.0.41"
 
 [dependencies.weechat]
 git = "https://github.com/poljar/rust-weechat"
@@ -38,6 +39,7 @@ rev = "8209460a4313bdcaef161ec423ae8de97a6ee412"
 features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
-git = "https://github.com/matrix-org/matrix-rust-sdk/"
-rev = "d39980a716cd4cc4e7fabc7162d59071824b1eca"
+path = "/home/poljar/werk/matrix/nio-rust/matrix_sdk"
+# git = "https://github.com/matrix-org/matrix-rust-sdk/"
+# rev = "d39980a716cd4cc4e7fabc7162d59071824b1eca"
 features = ["markdown"]

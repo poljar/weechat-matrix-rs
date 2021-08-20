@@ -98,6 +98,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.43"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28ae2b3dec75a406790005a200b1bd89785afc02517a00ca99ecfe093ee9e6cf"
+
+[[package]]
 name = "assign"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -221,9 +227,9 @@ dependencies = [
 
 [[package]]
 name = "bitflags"
-version = "1.3.1"
+version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2da1976d75adbe5fbc88130ecd119529cf1cc6a93ae1546d8696ee66f0d21af1"
+checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "block-buffer"
@@ -2047,9 +2053,9 @@ dependencies = [
 
 [[package]]
 name = "ruma-api"
-version = "0.18.1"
+version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "554ace014d5f0c68218fbacfa4a02f8f57cd0cca14bede7968631af678fb6d42"
+checksum = "2667b4f14fab3088e0d6ad81e124a7a35cf4fa9806aabb1b756a8c97c4b160c2"
 dependencies = [
  "bytes",
  "http",
@@ -2064,9 +2070,9 @@ dependencies = [
 
 [[package]]
 name = "ruma-api-macros"
-version = "0.18.1"
+version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11ad68a96afcd26ae5ab99f4fc950db8acbe2e556528c655caebf4caa6e50d4c"
+checksum = "39af5de08d02eddf4e0fd074d6b510d2a1a4da4d12e104cebe4404881107d92d"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2 1.0.28",
@@ -2113,9 +2119,9 @@ dependencies = [
 
 [[package]]
 name = "ruma-events"
-version = "0.24.3"
+version = "0.24.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e90d604673211d5b24399cf8a0559cbf5745e577c5c04d24b4078b588c65bab4"
+checksum = "0d57fc671b688a4ce783ca5f6fa9075c1ff23673c36df5dca96ccca0e7a6052f"
 dependencies = [
  "indoc",
  "js_int",
@@ -2131,9 +2137,9 @@ dependencies = [
 
 [[package]]
 name = "ruma-events-macros"
-version = "0.24.3"
+version = "0.24.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e94b9f2882f27d1e10df2cd4aa3dcfcf4a974dda0581712399aed344a60f2b3"
+checksum = "445d5e41b376a679b6c81d046da583a0b0be8e93c65345b917046619529fcfdd"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2 1.0.28",
@@ -3175,6 +3181,7 @@ dependencies = [
 name = "weechat-matrix"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "clap",
  "dashmap",

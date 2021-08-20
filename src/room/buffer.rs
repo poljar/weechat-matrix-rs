@@ -268,23 +268,6 @@ impl RoomBuffer {
         }
     }
 
-    pub fn replace_verification_event(
-        &self,
-        event_id: &EventId,
-        event: RenderedEvent,
-    ) {
-        if let Ok(buffer) = self.buffer_handle().upgrade() {
-            let event_id_tag = Cow::from(event_id.to_tag());
-
-            let lines: Vec<BufferLine> = buffer
-                .lines()
-                .filter(|l| l.tags().contains(&event_id_tag))
-                .collect();
-
-            self.replace_event_helper(&buffer, lines, event);
-        }
-    }
-
     pub fn print_rendered_event(&self, rendered: RenderedEvent) {
         let buffer = self.buffer_handle();
 

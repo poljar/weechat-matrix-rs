@@ -22,7 +22,8 @@ use matrix_sdk::{
             key::verification::{
                 key::KeyToDeviceEventContent, VerificationMethod,
             },
-            AnyToDeviceEvent,
+            room::message::MessageType,
+            AnySyncMessageEvent, AnyToDeviceEvent,
         },
         identifiers::UserId,
     },
@@ -35,10 +36,7 @@ use matrix_sdk::{
 
 use crate::{
     connection::Connection,
-    render::{
-        CancelContext, Render, RenderedContent, VerificationContext,
-        VerificationRequestContext,
-    },
+    render::{CancelContext, Render, RenderedContent},
 };
 
 #[derive(Clone)]
@@ -90,6 +88,14 @@ impl Verification {
             Verification::Request(r) => r.is_done(),
             Verification::Sas(v) => v.is_done(),
             Verification::Qr(v) => v.is_done(),
+        }
+    }
+
+    fn we_started(&self) -> bool {
+        match self {
+            Verification::Request(v) => v.we_started(),
+            Verification::Sas(v) => v.we_started(),
+            Verification::Qr(v) => v.we_started(),
         }
     }
 
@@ -357,9 +363,9 @@ impl VerificationBuffer {
         buffer.enable_multiline();
 
         let buffer_name = if verification.is_self_verification() {
-            format!("Verification with {}", sender)
-        } else {
             "Self verification".to_owned()
+        } else {
+            format!("Verification with {}", sender)
         };
 
         buffer.set_short_name(&buffer_name);
@@ -427,6 +433,51 @@ impl VerificationBuffer {
         Ok(())
     }
 
+    pub async fn handle_room_event(&self, event: &AnySyncMessageEvent) {
+        match event {
+            AnySyncMessageEvent::KeyVerificationStart(e) => {
+                let verification = self.inner.verification.borrow().clone();
+
+                if verification.we_started() {
+                    self.accept()
+                }
+
+                if let Ok(verification) = verification.try_into() {
+                    let content = e.content.render(&verification);
+
+                    self.print(&content);
+                }
+            }
+            AnySyncMessageEvent::KeyVerificationKey(e) => {
+                if let Verification::Sas(sas) =
+                    self.inner.verification.borrow().clone()
+                {
+                    let message = e.content.render(&sas);
+                    self.print(&message);
+                }
+            }
+            AnySyncMessageEvent::KeyVerificationMac(_)
+            | AnySyncMessageEvent::KeyVerificationDone(_) => {
+                if self.inner.verification.borrow().is_done() {
+                    self.inner.print_done(self.buffer.clone());
+                }
+            }
+            AnySyncMessageEvent::RoomMessage(m) => {
+                if let MessageType::VerificationRequest(m) = &m.content.msgtype
+                {
+                    if let Verification::Request(request) =
+                        self.inner.verification.borrow().clone()
+                    {
+                        let content = m.render(&request);
+
+                        self.print(&content);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub async fn handle_event(&self, event: &AnyToDeviceEvent) {
         if let Some(info) = self.inner.verification.borrow().cancel_info() {
             self.inner.print_cancel(self.buffer(), Some(info));
@@ -438,9 +489,7 @@ impl VerificationBuffer {
                 if let Verification::Request(request) =
                     self.inner.verification.borrow().clone()
                 {
-                    let content = e
-                        .content
-                        .render(&VerificationRequestContext::ToDevice(request));
+                    let content = e.content.render(&request);
 
                     self.print(&content);
                 }
@@ -448,10 +497,12 @@ impl VerificationBuffer {
             AnyToDeviceEvent::KeyVerificationStart(e) => {
                 let verification = self.inner.verification.borrow().clone();
 
+                if verification.we_started() {
+                    self.accept()
+                }
+
                 if let Ok(verification) = verification.try_into() {
-                    let content = e
-                        .content
-                        .render(&VerificationContext::ToDevice(verification));
+                    let content = e.content.render(&verification);
 
                     self.print(&content);
                 }

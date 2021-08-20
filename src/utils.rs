@@ -1,7 +1,7 @@
 use matrix_sdk::ruma::{
     events::{
         room::message::{MessageEventContent, MessageType, Relation},
-        AnyMessageEvent, AnySyncMessageEvent,
+        AnyMessageEvent, AnySyncMessageEvent, AnySyncRoomEvent,
     },
     identifiers::{EventId, UserId},
 };
@@ -29,6 +29,17 @@ pub trait Edit {
 
 pub trait VerificationEvent {
     fn is_verification(&self) -> bool;
+}
+
+impl VerificationEvent for AnySyncRoomEvent {
+    fn is_verification(&self) -> bool {
+        match self {
+            AnySyncRoomEvent::Message(m) => m.is_verification(),
+            AnySyncRoomEvent::State(_)
+            | AnySyncRoomEvent::RedactedMessage(_)
+            | AnySyncRoomEvent::RedactedState(_) => false,
+        }
+    }
 }
 
 impl VerificationEvent for AnySyncMessageEvent {

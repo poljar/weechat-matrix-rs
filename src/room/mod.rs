@@ -24,13 +24,11 @@
 
 mod buffer;
 mod members;
-mod verification;
 
 use buffer::RoomBuffer;
 use members::Members;
 pub use members::WeechatRoomMember;
 use tracing::{debug, trace};
-use verification::Verification;
 
 use std::{
     borrow::Cow,
@@ -166,7 +164,6 @@ pub struct MatrixRoom {
     outgoing_messages: MessageQueue,
 
     members: Members,
-    verification: Verification,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -215,13 +212,6 @@ impl RoomHandle {
 
         let own_user_id: Rc<UserId> = own_user_id.to_owned().into();
 
-        let verification = Verification::new(
-            own_user_id.clone(),
-            connection.clone(),
-            members.clone(),
-            buffer.clone(),
-        );
-
         let room = MatrixRoom {
             homeserver: Rc::new(homeserver),
             room_id: Rc::new(room_id.clone()),
@@ -233,7 +223,6 @@ impl RoomHandle {
             own_user_id,
             members,
             buffer,
-            verification,
             outgoing_messages: MessageQueue::new(),
             messages_in_flight: IntMutex::new(),
             room,
@@ -390,21 +379,6 @@ impl MatrixRoom {
 
     pub fn buffer_handle(&self) -> BufferHandle {
         self.buffer.buffer_handle()
-    }
-
-    pub fn accept_verification(&self) {
-        let verification = self.verification.clone();
-        Weechat::spawn(async move { verification.accept().await }).detach();
-    }
-
-    pub fn confirm_verification(&self) {
-        let verification = self.verification.clone();
-        Weechat::spawn(async move { verification.confirm().await }).detach();
-    }
-
-    pub fn cancel_verification(&self) {
-        let verification = self.verification.clone();
-        Weechat::spawn(async move { verification.cancel().await }).detach();
     }
 
     async fn redact_event(&self, event: &SyncRedactionEvent) {
@@ -847,8 +821,6 @@ impl MatrixRoom {
 
         if let AnySyncMessageEvent::RoomRedaction(r) = event {
             self.redact_event(r).await;
-        } else if event.is_verification() {
-            self.verification.handle_room_verification(event).await;
         } else if event.is_edit() {
             self.handle_edits(event).await;
         } else if let Some(rendered) = self.render_sync_message(event).await {

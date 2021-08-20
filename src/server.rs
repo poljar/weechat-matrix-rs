@@ -71,8 +71,9 @@ use matrix_sdk::{
     ruma::{
         api::client::r0::session::login::Response as LoginResponse,
         events::{
-            room::member::MemberEventContent, AnySyncRoomEvent,
-            AnySyncStateEvent, AnyToDeviceEvent, SyncStateEvent,
+            room::{member::MemberEventContent, message::MessageType},
+            AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
+            AnyToDeviceEvent, SyncStateEvent,
         },
         identifiers::{DeviceIdBox, DeviceKeyAlgorithm, RoomId, UserId},
         DeviceId, MilliSecondsSinceUnixEpoch,
@@ -91,6 +92,7 @@ use crate::{
     config::ServerBuffer,
     connection::{Connection, InteractiveAuthInfo},
     room::RoomHandle,
+    utils::VerificationEvent,
     verification_buffer::VerificationBuffer,
     ConfigHandle, Servers, PLUGIN_NAME,
 };
@@ -680,6 +682,140 @@ impl InnerServer {
         self.connection.borrow().is_some()
     }
 
+    async fn handle_verification_request(
+        &self,
+        sender: &UserId,
+        flow_id: &str,
+    ) {
+        if let Some(client) = self.get_client() {
+            if let Some(request) =
+                client.get_verification_request(sender, flow_id).await
+            {
+                let buffer = self
+                    .verification_buffers
+                    .borrow()
+                    .get(request.other_user_id())
+                    .cloned();
+
+                if let Some(buffer) = buffer {
+                    buffer.replace_verification(request);
+                } else if let Ok(buffer) = VerificationBuffer::new(
+                    &self.server_name,
+                    sender,
+                    request.clone(),
+                    self.connection.clone(),
+                    &self.verification_buffers,
+                ) {
+                    self.verification_buffers
+                        .borrow_mut()
+                        .insert(request.other_user_id().to_owned(), buffer);
+                } else {
+                    self.print_error(&format!(
+                        "Error creating a verification buffer for {}",
+                        sender
+                    ));
+                }
+            }
+        }
+    }
+
+    async fn handle_verification_start(&self, sender: &UserId, flow_id: &str) {
+        if let Some(client) = self.get_client() {
+            match client.get_verification(sender, flow_id).await {
+                Some(Verification::SasV1(sas)) => {
+                    if !sas.is_cancelled() {
+                        let buffer = self
+                            .verification_buffers
+                            .borrow()
+                            .get(sender)
+                            .cloned();
+
+                        if let Some(buffer) = buffer {
+                            if sas.started_from_request() {
+                                if let Err(e) = buffer.update(sas).await {
+                                    self.print_error(&format!("Error updating the verification buffer {:?}", e))
+                                }
+                            } else {
+                                buffer.replace_verification(sas);
+                            }
+                        } else {
+                            if let Ok(buffer) = VerificationBuffer::new(
+                                &self.server_name,
+                                sender,
+                                sas.clone(),
+                                self.connection.clone(),
+                                &self.verification_buffers,
+                            ) {
+                                self.verification_buffers.borrow_mut().insert(
+                                    sas.other_user_id().to_owned(),
+                                    buffer,
+                                );
+                            } else {
+                                self.print_error(
+                                    &format!("Error creating a verification buffer for {}", sender)
+                                );
+                            }
+                        }
+                    }
+                }
+                Some(Verification::QrV1(qr)) => {
+                    if let Some(buffer) = self
+                        .verification_buffers
+                        .borrow_mut()
+                        .get_mut(qr.other_user_id())
+                    {
+                        buffer.update_qr(qr).await;
+                    }
+                }
+                None => todo!(),
+            }
+        }
+    }
+
+    pub async fn receive_room_verification_event(
+        &self,
+        event: &AnySyncMessageEvent,
+    ) {
+        let handle_event = |event: AnySyncMessageEvent| async move {
+            if let Some(b) =
+                self.verification_buffers.borrow().get(event.sender())
+            {
+                b.handle_room_event(&event).await;
+            }
+        };
+
+        match event {
+            AnySyncMessageEvent::RoomMessage(e) => {
+                if let MessageType::VerificationRequest(_) = &e.content.msgtype
+                {
+                    self.handle_verification_request(
+                        &e.sender,
+                        e.event_id.as_str(),
+                    )
+                    .await;
+                    handle_event(event.clone()).await;
+                }
+            }
+            AnySyncMessageEvent::KeyVerificationStart(e) => {
+                self.handle_verification_start(
+                    &e.sender,
+                    e.content.relates_to.event_id.as_str(),
+                )
+                .await;
+                handle_event(event.clone()).await;
+            }
+            AnySyncMessageEvent::KeyVerificationReady(_)
+            | AnySyncMessageEvent::KeyVerificationCancel(_)
+            | AnySyncMessageEvent::KeyVerificationAccept(_)
+            | AnySyncMessageEvent::KeyVerificationKey(_)
+            | AnySyncMessageEvent::KeyVerificationMac(_)
+            | AnySyncMessageEvent::KeyVerificationDone(_) => {
+                handle_event(event.clone()).await;
+            }
+            _ => {}
+        }
+    }
+
     pub async fn receive_to_device_event(&self, event: AnyToDeviceEvent) {
         let handle_event = |event: AnyToDeviceEvent| async move {
             if let Some(b) =
@@ -693,107 +829,20 @@ impl InnerServer {
             AnyToDeviceEvent::RoomKey(_) => {}
             AnyToDeviceEvent::RoomKeyRequest(_) => {}
             AnyToDeviceEvent::KeyVerificationRequest(e) => {
-                if let Some(client) = self.get_client() {
-                    if let Some(request) = client
-                        .get_verification_request(
-                            &e.sender,
-                            &e.content.transaction_id,
-                        )
-                        .await
-                    {
-                        let buffer = self
-                            .verification_buffers
-                            .borrow()
-                            .get(request.other_user_id())
-                            .cloned();
-
-                        if let Some(buffer) = buffer {
-                            buffer.replace_verification(request);
-                            buffer.handle_event(&event).await;
-                        } else if let Ok(buffer) = VerificationBuffer::new(
-                            &self.server_name,
-                            &e.sender,
-                            request.clone(),
-                            self.connection.clone(),
-                            &self.verification_buffers,
-                        ) {
-                            buffer.handle_event(&event).await;
-                            self.verification_buffers.borrow_mut().insert(
-                                request.other_user_id().to_owned(),
-                                buffer,
-                            );
-                        } else {
-                            self.print_error(&format!(
-                                "Error creating a verification buffer for {}",
-                                e.sender
-                            ));
-                        }
-                    }
-                }
+                self.handle_verification_request(
+                    &e.sender,
+                    &e.content.transaction_id,
+                )
+                .await;
+                handle_event(event).await;
             }
             AnyToDeviceEvent::KeyVerificationStart(e) => {
-                if let Some(client) = self.get_client() {
-                    match client
-                        .get_verification(&e.sender, &e.content.transaction_id)
-                        .await
-                    {
-                        Some(Verification::SasV1(sas)) => {
-                            if !sas.is_cancelled() {
-                                let buffer = self
-                                    .verification_buffers
-                                    .borrow()
-                                    .get(&e.sender)
-                                    .cloned();
-
-                                if let Some(buffer) = buffer {
-                                    if sas.started_from_request() {
-                                        if let Err(e) = buffer.update(sas).await
-                                        {
-                                            self.print_error(&format!("Error updating the verification buffer {:?}", e))
-                                        }
-                                    } else {
-                                        buffer.replace_verification(sas);
-                                    }
-                                    buffer.handle_event(&event).await;
-                                } else {
-                                    if let Ok(buffer) = VerificationBuffer::new(
-                                        &self.server_name,
-                                        &e.sender,
-                                        sas.clone(),
-                                        self.connection.clone(),
-                                        &self.verification_buffers,
-                                    ) {
-                                        buffer.handle_event(&event).await;
-
-                                        self.verification_buffers
-                                            .borrow_mut()
-                                            .insert(
-                                                sas.other_user_id().to_owned(),
-                                                buffer,
-                                            );
-                                    } else {
-                                        self.print_error(
-                                            &format!(
-                                                "Error creating a verification buffer for {}", e.sender
-                                            )
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        Some(Verification::QrV1(qr)) => {
-                            if let Some(buffer) = self
-                                .verification_buffers
-                                .borrow_mut()
-                                .get_mut(qr.other_user_id())
-                            {
-                                buffer.update_qr(qr).await;
-                                buffer.handle_event(&event).await;
-                            }
-                        }
-                        None => todo!(),
-                    }
-                }
+                self.handle_verification_start(
+                    &e.sender,
+                    &e.content.transaction_id,
+                )
+                .await;
+                handle_event(event).await;
             }
             AnyToDeviceEvent::KeyVerificationCancel(_)
             | AnyToDeviceEvent::KeyVerificationAccept(_)
@@ -840,6 +889,10 @@ impl InnerServer {
         room_id: &RoomId,
         event: AnySyncRoomEvent,
     ) {
+        if let AnySyncRoomEvent::Message(e) = &event {
+            self.receive_room_verification_event(e).await
+        }
+
         let room = self.get_or_create_room(room_id);
         room.handle_sync_room_event(event).await
     }
