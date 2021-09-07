@@ -78,7 +78,7 @@ use matrix_sdk::{
         identifiers::{DeviceIdBox, DeviceKeyAlgorithm, RoomId, UserId},
         DeviceId, MilliSecondsSinceUnixEpoch,
     },
-    verification::Verification,
+    verification::{Verification, VerificationRequest},
     Client, ClientConfig, Error,
 };
 
@@ -92,7 +92,6 @@ use crate::{
     config::ServerBuffer,
     connection::{Connection, InteractiveAuthInfo},
     room::RoomHandle,
-    utils::VerificationEvent,
     verification_buffer::VerificationBuffer,
     ConfigHandle, Servers, PLUGIN_NAME,
 };
@@ -682,6 +681,38 @@ impl InnerServer {
         self.connection.borrow().is_some()
     }
 
+    pub fn create_or_update_verification_buffer(
+        &self,
+        verification: VerificationRequest,
+    ) {
+        let other_user = verification.other_user_id().to_owned();
+
+        let buffer = self
+            .verification_buffers
+            .borrow()
+            .get(verification.other_user_id())
+            .cloned();
+
+        if let Some(buffer) = buffer {
+            buffer.replace_verification(verification);
+        } else if let Ok(buffer) = VerificationBuffer::new(
+            &self.server_name,
+            &other_user,
+            verification,
+            self.connection.clone(),
+            &self.verification_buffers,
+        ) {
+            self.verification_buffers
+                .borrow_mut()
+                .insert(other_user, buffer);
+        } else {
+            self.print_error(&format!(
+                "Error creating a verification buffer for {}",
+                other_user,
+            ));
+        }
+    }
+
     async fn handle_verification_request(
         &self,
         sender: &UserId,
@@ -691,36 +722,17 @@ impl InnerServer {
             if let Some(request) =
                 client.get_verification_request(sender, flow_id).await
             {
-                let buffer = self
-                    .verification_buffers
-                    .borrow()
-                    .get(request.other_user_id())
-                    .cloned();
-
-                if let Some(buffer) = buffer {
-                    buffer.replace_verification(request);
-                } else if let Ok(buffer) = VerificationBuffer::new(
-                    &self.server_name,
-                    sender,
-                    request.clone(),
-                    self.connection.clone(),
-                    &self.verification_buffers,
-                ) {
-                    self.verification_buffers
-                        .borrow_mut()
-                        .insert(request.other_user_id().to_owned(), buffer);
-                } else {
-                    self.print_error(&format!(
-                        "Error creating a verification buffer for {}",
-                        sender
-                    ));
-                }
+                self.create_or_update_verification_buffer(request)
             }
         }
     }
 
     async fn handle_verification_start(&self, sender: &UserId, flow_id: &str) {
         if let Some(client) = self.get_client() {
+            if Some(sender) == client.user_id().await.as_ref() {
+                return
+            }
+
             match client.get_verification(sender, flow_id).await {
                 Some(Verification::SasV1(sas)) => {
                     if !sas.is_cancelled() {
@@ -767,7 +779,10 @@ impl InnerServer {
                         buffer.update_qr(qr).await;
                     }
                 }
-                None => todo!(),
+                None => {
+                    // Check if we're passive and print a message if there's a
+                    // buffer, otherwise this might be a stale start event.
+                }
             }
         }
     }

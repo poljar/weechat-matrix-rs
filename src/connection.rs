@@ -43,7 +43,7 @@ use matrix_sdk::{
         },
         identifiers::{DeviceIdBox, RoomId},
     },
-    Client, LoopCtrl, Result as MatrixResult, SyncSettings,
+    Client, LoopCtrl, Result as MatrixResult, SyncSettings, HttpResult,
 };
 
 use weechat::{Task, Weechat};
@@ -175,7 +175,7 @@ impl Connection {
         &self,
         devices: Vec<DeviceIdBox>,
         auth_info: Option<InteractiveAuthInfo>,
-    ) -> MatrixResult<DeleteDevicesResponse> {
+    ) -> HttpResult<DeleteDevicesResponse> {
         let client = self.client.clone();
         self.spawn(async move {
             if let Some(info) = auth_info {
@@ -193,7 +193,7 @@ impl Connection {
         &self,
         room: Joined,
         prev_batch: PrevBatch,
-    ) -> MatrixResult<MessagesResponse> {
+    ) -> HttpResult<MessagesResponse> {
         self.spawn(async move {
             let request = match &prev_batch {
                 PrevBatch::Backwards(t) => {
@@ -210,7 +210,7 @@ impl Connection {
     }
 
     /// Get the list of our own devices.
-    pub async fn devices(&self) -> MatrixResult<DevicesResponse> {
+    pub async fn devices(&self) -> HttpResult<DevicesResponse> {
         let client = self.client.clone();
         self.spawn(async move { client.devices().await }).await
     }

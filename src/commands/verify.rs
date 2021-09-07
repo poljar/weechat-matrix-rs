@@ -3,10 +3,7 @@ use std::convert::TryFrom;
 use anyhow::{bail, Result};
 use clap::{App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches};
 
-use matrix_sdk::{
-    ruma::{DeviceIdBox, DeviceKeyAlgorithm, UserId},
-    Error,
-};
+use matrix_sdk::ruma::{DeviceIdBox, DeviceKeyAlgorithm, UserId};
 use weechat::{
     buffer::Buffer,
     hooks::{Command, CommandCallback, CommandSettings},
@@ -37,12 +34,12 @@ impl VerifyCommand {
             .description(Self::DESCRIPTION)
             .add_argument("verify <user> [<device>] [<fingerprint>]")
             .arguments_description(
-                "accept: accept the verification request
-                use-emoji: switch to emoji verification QR code verification \
-                isn't possible
-                confirm: confirm that the emojis match on both sides or \
-                confirm that the other side has scanned our QR code
-                cancel: cancel the verification flow or request",
+                "user: the user we wish to verify
+                device: the device we wish to verify, this is optional and if \
+                not given all devices will receive the verification request \
+                but only one will answer
+                fingerprint: if given, the user or device will manually be \
+                marked as verified",
             )
             .add_completion(Self::COMPLETION);
 
@@ -73,24 +70,26 @@ impl VerifyCommand {
                 user_id, device_id)
         };
 
-        let verification = if let Some(c) = server.connection() {
+        if let Some(c) = server.connection() {
             match (device_id, fingerprint) {
                 (None, None) => {
                     if let Some(identity) =
-                        c.client().get_user_identity(&user_id).await.unwrap()
+                        c.client().get_user_identity(&user_id).await?
                     {
                         let request = || async move {
                             identity.request_verification().await
                         };
 
-                        Some(c.spawn(request()).await?)
+                        server.create_or_update_verification_buffer(
+                            c.spawn(request()).await?,
+                        );
                     } else {
                         no_identity()?
                     }
                 }
                 (None, Some(fingerprint)) => {
                     if let Some(identity) =
-                        c.client().get_user_identity(&user_id).await.unwrap()
+                        c.client().get_user_identity(&user_id).await?
                     {
                         if Some(fingerprint.as_str())
                             == identity.master_key().get_first_key()
@@ -99,7 +98,6 @@ impl VerifyCommand {
                                 || async move { identity.verify().await };
 
                             c.spawn(request()).await?;
-                            None
                         } else {
                             bail!("The given master key fingerprint doesn't match, expected {:?}, got {}",
                                   identity.master_key().get_first_key(), fingerprint)
@@ -109,27 +107,23 @@ impl VerifyCommand {
                     }
                 }
                 (Some(device_id), None) => {
-                    if let Some(device) = c
-                        .client()
-                        .get_device(&user_id, &device_id)
-                        .await
-                        .unwrap()
+                    if let Some(device) =
+                        c.client().get_device(&user_id, &device_id).await?
                     {
                         let request = || async move {
                             device.request_verification().await
                         };
 
-                        Some(c.spawn(request()).await?)
+                        server.create_or_update_verification_buffer(
+                            c.spawn(request()).await?,
+                        )
                     } else {
                         no_device(device_id)?
                     }
                 }
                 (Some(device_id), Some(fingerprint)) => {
-                    if let Some(device) = c
-                        .client()
-                        .get_device(&user_id, &device_id)
-                        .await
-                        .unwrap()
+                    if let Some(device) =
+                        c.client().get_device(&user_id, &device_id).await?
                     {
                         if device.get_key(DeviceKeyAlgorithm::Ed25519)
                             == Some(&fingerprint)
@@ -138,7 +132,6 @@ impl VerifyCommand {
                                 || async move { device.verify().await };
 
                             c.spawn(verify()).await?;
-                            None
                         } else {
                             bail!("The given device fingerprint doesn't match, expected {:?}, got {}",
                                   device.get_key(DeviceKeyAlgorithm::Ed25519), fingerprint)
@@ -151,21 +144,6 @@ impl VerifyCommand {
         } else {
             bail!("You need to be connected for the verification to proceed")
         };
-
-        // if let Some(verification) = verification {
-        //     let buffer = VerificationBuffer::new(
-        //         &self.server_name,
-        //         &verification.own_user_id().to_owned(),
-        //         verification,
-        //         self.connection.clone(),
-        //         &self.verification_buffers,
-        //     )
-        //     .unwrap();
-
-        //     self.verification_buffers
-        //         .borrow_mut()
-        //         .insert(user_id, buffer);
-        // }
 
         Ok(())
     }
