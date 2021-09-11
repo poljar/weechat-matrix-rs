@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use futures::executor::block_on;
 use weechat::{
     buffer::Buffer,
     hooks::{
@@ -10,15 +11,17 @@ use weechat::{
 
 use crate::Servers;
 
+#[allow(dead_code)]
 pub struct Completions {
-    #[allow(dead_code)]
     servers: CompletionHook,
+    users: CompletionHook,
 }
 
 impl Completions {
     pub fn hook_all(servers: Servers) -> Result<Self, ()> {
         Ok(Self {
-            servers: ServersCompletion::create(servers)?,
+            servers: ServersCompletion::create(servers.clone())?,
+            users: UsersCompletion::create(servers)?,
         })
     }
 }
@@ -54,6 +57,49 @@ impl CompletionCallback for ServersCompletion {
                 CompletionPosition::Sorted,
             );
         }
+        Ok(())
+    }
+}
+
+struct UsersCompletion {
+    servers: Servers,
+}
+
+impl UsersCompletion {
+    fn create(servers: Servers) -> Result<CompletionHook, ()> {
+        let comp = UsersCompletion { servers };
+
+        CompletionHook::new(
+            "matrix-users",
+            "Completion for the list of Matrix users",
+            comp,
+        )
+    }
+}
+
+impl CompletionCallback for UsersCompletion {
+    fn callback(
+        &mut self,
+        _: &Weechat,
+        buffer: &Buffer,
+        _: Cow<str>,
+        completion: &Completion,
+    ) -> Result<(), ()> {
+        if let Some(server) = self.servers.find_server(buffer) {
+            if let Some(connection) = server.connection() {
+                let tracked_users =
+                    block_on(connection.client().tracked_users());
+
+                for user in tracked_users.into_iter() {
+                    completion.add_with_options(
+                        user.as_str(),
+                        true,
+                        CompletionPosition::Sorted,
+                    )
+                }
+            }
+        }
+
         Ok(())
     }
 }

@@ -1,8 +1,10 @@
+use std::convert::TryFrom;
+
 use clap::{
     App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
     SubCommand,
 };
-use matrix_sdk::ruma::DeviceIdBox;
+use matrix_sdk::ruma::{DeviceIdBox, UserId};
 
 use weechat::{
     buffer::Buffer,
@@ -38,7 +40,7 @@ impl DevicesCommand {
                 "device-id: The unique id of the device that should be deleted.
      name: The name that the device name should be set to.",
             )
-            .add_completion("list")
+            .add_completion("list %(matrix-users)")
             .add_completion("delete %(matrix-own-devices)")
             .add_completion("set-name %(matrix-own-devices)")
             .add_completion("help list|delete|set-name");
@@ -64,12 +66,12 @@ impl DevicesCommand {
         }
     }
 
-    fn list(servers: &Servers, buffer: &Buffer) {
+    fn list(servers: &Servers, buffer: &Buffer, user_id: Option<UserId>) {
         let server = servers.find_server(buffer);
 
         if let Some(s) = server {
             let devices = || async move {
-                s.devices().await;
+                s.devices(user_id).await;
             };
             Weechat::spawn(devices()).detach();
         } else {
@@ -79,7 +81,18 @@ impl DevicesCommand {
 
     pub fn run(buffer: &Buffer, servers: &Servers, args: &ArgMatches) {
         match args.subcommand() {
-            ("list", _) => Self::list(servers, buffer),
+            ("list", args) => {
+                let user_id = args.and_then(|a| {
+                    a.args.get("user-id").and_then(|a| {
+                        a.vals.first().map(|u| {
+                            UserId::try_from(u.to_string_lossy().as_ref())
+                                .expect("Argument wasn't a valid user id")
+                        })
+                    })
+                });
+
+                Self::list(servers, buffer, user_id);
+            }
             ("delete", args) => {
                 let devices = args
                     .and_then(|a| a.args.get("device-id"))
@@ -101,6 +114,13 @@ impl DevicesCommand {
     pub fn subcommands() -> Vec<Argparse<'static, 'static>> {
         vec![
             SubCommand::with_name("list")
+                .arg(Arg::with_name("user-id").required(false).validator(|u| {
+                    UserId::try_from(u)
+                        .map_err(|_| {
+                            "The given user isn't a valid user ID".to_owned()
+                        })
+                        .map(|_| ())
+                }))
                 .about("List your own Matrix devices on the server."),
             SubCommand::with_name("delete")
                 .about("Delete the given device")

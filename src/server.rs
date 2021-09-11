@@ -75,9 +75,10 @@ use matrix_sdk::{
             room::member::MemberEventContent, AnySyncRoomEvent,
             AnySyncStateEvent, SyncStateEvent,
         },
-        DeviceIdBox, DeviceKeyAlgorithm, RoomId, UserId,
+        DeviceId, DeviceIdBox, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
+        RoomId, UserId,
     },
-    Client, ClientConfig,
+    Client, ClientConfig, Error,
 };
 
 use weechat::{
@@ -97,6 +98,13 @@ use crate::{
 pub enum ServerError {
     StartError(String),
     IoError(String),
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DeviceTrust {
+    Verified,
+    Unverified,
+    Unsupported,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -873,116 +881,260 @@ impl InnerServer {
         };
     }
 
-    pub async fn devices(&self) {
-        if let Some(c) = self.connection() {
-            let mut response = match c.devices().await {
-                Ok(r) => r,
-                Err(e) => {
-                    self.print_error(&format!(
-                        "Error fetching devices {:?}",
-                        e
-                    ));
-                    return;
-                }
+    async fn list_own_devices(
+        &self,
+        connection: Connection,
+    ) -> Result<(), Error> {
+        let mut response = connection.devices().await?;
+
+        if response.devices.is_empty() {
+            self.print_error("No devices were found for this server");
+            return Ok(());
+        }
+
+        self.print_network(&format!(
+            "Devices for server {}{}{}:",
+            Weechat::color("chat_server"),
+            self.name(),
+            Weechat::color("reset")
+        ));
+
+        response.devices.sort_by_key(|d| Reverse(d.last_seen_ts));
+        let own_device_id = connection.client().device_id().await;
+        let own_user_id = connection
+            .client()
+            .user_id()
+            .await
+            .expect("Getting our own devices while not being logged in");
+
+        let mut lines: Vec<String> = Vec::new();
+
+        for device_info in response.devices {
+            let device = connection
+                .client()
+                .get_device(&own_user_id, &device_info.device_id)
+                .await?;
+
+            let own_device =
+                own_device_id.as_ref() == Some(&device_info.device_id);
+
+            let device_trust = if own_device {
+                DeviceTrust::Verified
+            } else {
+                device
+                    .as_ref()
+                    .map(|d| {
+                        if d.verified() {
+                            DeviceTrust::Verified
+                        } else {
+                            DeviceTrust::Unverified
+                        }
+                    })
+                    .unwrap_or(DeviceTrust::Unsupported)
             };
 
-            if response.devices.is_empty() {
-                self.print_error("No devices were found for this server");
-                return;
-            }
+            let info = Self::format_device(
+                &device_info.device_id,
+                device
+                    .and_then(|d| {
+                        d.get_key(DeviceKeyAlgorithm::Ed25519)
+                            .map(|f| f.to_string())
+                    })
+                    .as_deref(),
+                device_info.display_name.as_deref(),
+                own_device,
+                device_trust,
+                device_info.last_seen_ip,
+                device_info.last_seen_ts,
+            );
 
+            lines.push(info);
+        }
+
+        let line = lines.join("\n");
+        self.print(&line);
+
+        Ok(())
+    }
+
+    async fn list_other_devices(
+        &self,
+        connection: Connection,
+        user_id: UserId,
+    ) -> Result<(), Error> {
+        let devices = connection.client().get_user_devices(&user_id).await?;
+
+        let lines: Vec<_> = devices
+            .devices()
+            .map(|device| {
+                let device_trust = if device.verified() {
+                    DeviceTrust::Verified
+                } else {
+                    DeviceTrust::Unverified
+                };
+
+                Self::format_device(
+                    device.device_id(),
+                    device
+                        .get_key(DeviceKeyAlgorithm::Ed25519)
+                        .map(|f| f.as_str()),
+                    device.display_name().as_deref(),
+                    false,
+                    device_trust,
+                    None,
+                    None,
+                )
+            })
+            .collect();
+
+        let user_color = Weechat::info_get("nick_color_name", user_id.as_str())
+            .expect("Can't get user color");
+
+        if lines.is_empty() {
+            self.print_error(&format!(
+                "No devices were found for user {}{}{} on this server",
+                Weechat::color(&user_color),
+                user_id.as_str(),
+                Weechat::color("reset"),
+            ));
+        } else {
             self.print_network(&format!(
-                "Devices for server {}{}{}:",
+                "Devices for user {}{}{} on server {}{}{}:",
+                Weechat::color(&user_color),
+                user_id.as_str(),
+                Weechat::color("reset"),
                 Weechat::color("chat_server"),
                 self.name(),
                 Weechat::color("reset")
             ));
 
-            response.devices.sort_by_key(|d| Reverse(d.last_seen_ts));
-            let own_device_id = c.client().device_id().await;
-            let own_user_id = c.client().user_id().await.unwrap();
-
-            let mut lines: Vec<String> = Vec::new();
-
-            for device_info in response.devices {
-                let device_color = Weechat::info_get(
-                    "nick_color_name",
-                    device_info.device_id.as_str(),
-                )
-                .expect("Can't get device color");
-
-                let last_seen_date = device_info
-                    .last_seen_ts
-                    .and_then(|d| {
-                        d.to_system_time().map(|d| {
-                            let date: DateTime<Utc> = d.into();
-                            date.format("%Y/%m/%d %H:%M").to_string()
-                        })
-                    })
-                    .unwrap_or_else(|| "?".to_string());
-
-                let last_seen = format!(
-                    "{} @ {}",
-                    device_info.last_seen_ip.as_deref().unwrap_or("-"),
-                    last_seen_date
-                );
-
-                let is_own_device = own_device_id
-                    .as_ref()
-                    .map(|o| o == &device_info.device_id)
-                    .unwrap_or(false);
-
-                let (bold, color) = if is_own_device {
-                    (Weechat::color("bold"), format!("*{}", device_color))
-                } else {
-                    ("", device_color)
-                };
-
-                let fingerprint = if is_own_device {
-                    c.client().ed25519_key().await
-                } else {
-                    c.client()
-                        .get_device(&own_user_id, &device_info.device_id)
-                        .await
-                        .unwrap()
-                        .map(|d| {
-                            d.get_key(DeviceKeyAlgorithm::Ed25519).cloned()
-                        })
-                        .flatten()
-                }
-                .unwrap_or_else(|| "-".to_owned());
-
-                let fingerprint = fingerprint
-                    .chars()
-                    .collect::<Vec<char>>()
-                    .chunks(4)
-                    .map(|c| c.iter().collect::<String>())
-                    .collect::<Vec<String>>()
-                    .join(" ");
-
-                let info = format!(
-                    "       \
-                            Name: {}{}\n  \
-                       Device ID: {}{}{}\n  \
-                       Last seen: {}\n\
-                     Fingerprint: {}{}{}\n",
-                    bold,
-                    device_info.display_name.as_deref().unwrap_or(""),
-                    Weechat::color(&color),
-                    device_info.device_id.as_str(),
-                    Weechat::color("reset"),
-                    last_seen,
-                    Weechat::color("magenta"),
-                    fingerprint,
-                    Weechat::color("reset"),
-                );
-
-                lines.push(info);
-            }
-
             let line = lines.join("\n");
             self.print(&line);
+        }
+
+        Ok(())
+    }
+
+    fn format_device(
+        device_id: &DeviceId,
+        fingerprint: Option<&str>,
+        display_name: Option<&str>,
+        is_own_device: bool,
+        device_trust: DeviceTrust,
+        last_seen_ip: Option<String>,
+        last_seen_ts: Option<MilliSecondsSinceUnixEpoch>,
+    ) -> String {
+        let device_color =
+            Weechat::info_get("nick_color_name", device_id.as_str())
+                .expect("Can't get device color");
+
+        let last_seen_date = last_seen_ts
+            .and_then(|d| {
+                d.to_system_time().map(|d| {
+                    let date: DateTime<Utc> = d.into();
+                    date.format("%Y/%m/%d %H:%M").to_string()
+                })
+            })
+            .unwrap_or_else(|| "?".to_string());
+
+        let last_seen = format!(
+            "{} @ {}",
+            last_seen_ip.as_deref().unwrap_or("-"),
+            last_seen_date
+        );
+
+        let (bold, color) = if is_own_device {
+            (Weechat::color("bold"), format!("*{}", device_color))
+        } else {
+            ("", device_color)
         };
+
+        let verified = match device_trust {
+            DeviceTrust::Verified => {
+                format!(
+                    "{}Trusted{}",
+                    Weechat::color("green"),
+                    Weechat::color("reset")
+                )
+            }
+            DeviceTrust::Unverified => {
+                format!(
+                    "{}Not trusted{}",
+                    Weechat::color("red"),
+                    Weechat::color("reset")
+                )
+            }
+            DeviceTrust::Unsupported => {
+                format!(
+                    "{}No encryption support{}",
+                    Weechat::color("darkgray"),
+                    Weechat::color("reset")
+                )
+            }
+        };
+
+        let fingerprint = if let Some(fingerprint) = fingerprint {
+            let fingerprint = fingerprint
+                .chars()
+                .collect::<Vec<char>>()
+                .chunks(4)
+                .map(|c| c.iter().collect::<String>())
+                .collect::<Vec<String>>()
+                .join(" ");
+
+            format!(
+                "{}{}{}",
+                Weechat::color("magenta"),
+                fingerprint,
+                Weechat::color("reset")
+            )
+        } else {
+            format!(
+                "{}-{}",
+                Weechat::color("darkgray"),
+                Weechat::color("reset")
+            )
+        };
+
+        format!(
+            "       \
+                                    Name: {}{}\n  \
+                               Device ID: {}{}{}\n   \
+                                Security: {}\n\
+                             Fingerprint: {}\n  \
+                               Last seen: {}\n",
+            bold,
+            display_name.as_deref().unwrap_or(""),
+            Weechat::color(&color),
+            device_id.as_str(),
+            Weechat::color("reset"),
+            verified,
+            fingerprint,
+            last_seen,
+        )
+    }
+
+    pub async fn devices(&self, user_id: Option<UserId>) {
+        let connection = if let Some(c) = self.connection() {
+            c
+        } else {
+            self.print_error("You must be connected to execute this command");
+            return;
+        };
+
+        let ret = if let Some(user_id) = user_id {
+            if Some(&user_id) == connection.client().user_id().await.as_ref() {
+                self.list_own_devices(connection).await
+            } else {
+                self.list_other_devices(connection, user_id).await
+            }
+        } else {
+            self.list_own_devices(connection).await
+        };
+
+        if let Err(e) = ret {
+            self.print_error(&format!("Error fetching devices {:?}", e));
+        }
     }
 
     pub fn autoconnect(&self) -> bool {
