@@ -1,7 +1,7 @@
 WEECHAT_HOME ?= $(HOME)/.weechat
 PREFIX ?= $(WEECHAT_HOME)
 
-SOURCES := $(wildcard src/*.rs src/commands/*.rs)
+SOURCES := $(wildcard src/*.rs src/commands/*.rs Cargo.lock)
 
 .PHONY: install install-dir lint
 
