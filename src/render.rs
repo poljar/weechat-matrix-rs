@@ -1,16 +1,25 @@
+use qrcode::{render::unicode::Dense1x2, QrCode};
 use url::Url;
 
 use matrix_sdk::{
+    encryption::verification::{CancelInfo, Verification, VerificationRequest},
     ruma::{
         events::{
+            key::verification::{
+                cancel::CancelCode,
+                ready::{
+                    KeyVerificationReadyEventContent,
+                    ToDeviceKeyVerificationReadyEventContent,
+                },
+            },
             room::{
-                encrypted::EncryptedEventContent,
-                member::{MemberEventContent, MembershipChange},
+                encrypted::RoomEncryptedEventContent,
+                member::{MembershipChange, RoomMemberEventContent},
                 message::{
                     AudioMessageEventContent, EmoteMessageEventContent,
                     FileMessageEventContent, ImageMessageEventContent,
                     LocationMessageEventContent, NoticeMessageEventContent,
-                    RedactedMessageEventContent,
+                    RedactedRoomMessageEventContent,
                     ServerNoticeMessageEventContent, TextMessageEventContent,
                     VideoMessageEventContent,
                 },
@@ -18,7 +27,8 @@ use matrix_sdk::{
             },
             RedactedSyncMessageEvent, SyncStateEvent,
         },
-        uint, EventId, MilliSecondsSinceUnixEpoch, UserId,
+        identifiers::{EventId, UserId},
+        uint, MilliSecondsSinceUnixEpoch,
     },
     uuid::Uuid,
 };
@@ -65,7 +75,7 @@ pub struct RenderedLine {
     pub message: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct RenderedContent {
     /// The collection of lines that the event has.
     pub lines: Vec<RenderedLine>,
@@ -74,7 +84,7 @@ pub struct RenderedContent {
 /// Trait allowing events to be rendered for Weechat.
 pub trait Render {
     /// The event specific tags that should be attached to the rendered event.
-    const TAGS: &'static [&'static str];
+    const TAGS: &'static [&'static str] = &[];
 
     /// Some events might need additional context to be rendered. For example,
     /// instead of displaying the MXID for the sender, we might want to display
@@ -427,7 +437,7 @@ impl<C: HasUrlOrFile> Render for C {
     }
 }
 
-impl Render for EncryptedEventContent {
+impl Render for RoomEncryptedEventContent {
     const TAGS: &'static [&'static str] = &["matrix_encrypted"];
     type RenderContext = ();
 
@@ -451,7 +461,7 @@ impl Render for EncryptedEventContent {
     }
 }
 
-impl Render for RedactedSyncMessageEvent<RedactedMessageEventContent> {
+impl Render for RedactedSyncMessageEvent<RedactedRoomMessageEventContent> {
     type RenderContext = WeechatRoomMember;
     const TAGS: &'static [&'static str] = &["matrix_redacted"];
 
@@ -472,6 +482,166 @@ impl Render for RedactedSyncMessageEvent<RedactedMessageEventContent> {
         };
 
         RenderedContent { lines: vec![line] }
+    }
+}
+
+macro_rules! render_ready_content {
+    ($type: ident) => {
+        impl Render for $type {
+            const TAGS: &'static [&'static str] = &[];
+
+            type RenderContext = Verification;
+
+            fn prefix(&self, _: &WeechatRoomMember) -> String {
+                Weechat::prefix(Prefix::Network)
+            }
+
+            fn render(
+                &self,
+                verification: &Self::RenderContext,
+            ) -> RenderedContent {
+                // TODO print out a help, how to transition into emoji
+                // verification or if we're waiting for a QR code to be scanned.
+                let message = if verification.we_started() {
+                    format!(
+                        "{} has answered the verification request",
+                        verification.other_user_id(),
+                    )
+                } else {
+                    "You answered the verification request".to_string()
+                };
+
+                RenderedContent {
+                    lines: vec![RenderedLine {
+                        message,
+                        tags: self.tags(),
+                    }],
+                }
+            }
+        }
+    };
+}
+
+render_ready_content!(KeyVerificationReadyEventContent);
+render_ready_content!(ToDeviceKeyVerificationReadyEventContent);
+
+pub enum CancelVerification {
+    Request(VerificationRequest),
+    Verification(Verification),
+}
+
+impl CancelVerification {
+    fn is_self_verification(&self) -> bool {
+        match self {
+            CancelVerification::Request(r) => r.is_self_verification(),
+            CancelVerification::Verification(v) => v.is_self_verification(),
+        }
+    }
+
+    fn other_user_id(&self) -> &UserId {
+        match self {
+            CancelVerification::Request(r) => r.other_user_id(),
+            CancelVerification::Verification(v) => v.other_user_id(),
+        }
+    }
+}
+
+impl From<VerificationRequest> for CancelVerification {
+    fn from(v: VerificationRequest) -> Self {
+        Self::Request(v)
+    }
+}
+
+impl From<Verification> for CancelVerification {
+    fn from(v: Verification) -> Self {
+        Self::Verification(v)
+    }
+}
+
+pub enum CancelContext {
+    ToDevice(CancelVerification),
+}
+
+impl CancelContext {
+    fn verification(&self) -> &CancelVerification {
+        match self {
+            CancelContext::ToDevice(v) => &v,
+        }
+    }
+
+    fn other_users_nick(&self) -> String {
+        match self {
+            CancelContext::ToDevice(v) => v.other_user_id().to_string(),
+        }
+    }
+}
+
+impl Render for CancelInfo {
+    const TAGS: &'static [&'static str] = &[];
+
+    type RenderContext = CancelContext;
+
+    fn prefix(&self, _: &WeechatRoomMember) -> String {
+        Weechat::prefix(Prefix::Network)
+    }
+
+    fn render(&self, context: &Self::RenderContext) -> RenderedContent {
+        let verification = context.verification();
+
+        let message =
+            if self.cancelled_by_us() || verification.is_self_verification() {
+                if self.cancel_code() == &CancelCode::User {
+                    "You cancelled the verification flow".to_owned()
+                } else {
+                    format!(
+                        "The verification flow has been cancelled: {}",
+                        self.reason(),
+                    )
+                }
+            } else {
+                format!(
+                    "{} has cancelled the verification flow: {}",
+                    context.other_users_nick(),
+                    self.reason(),
+                )
+            };
+
+        RenderedContent {
+            lines: vec![RenderedLine {
+                message,
+                tags: self.tags(),
+            }],
+        }
+    }
+}
+
+impl Render for QrCode {
+    const TAGS: &'static [&'static str] = &[];
+
+    type RenderContext = ();
+
+    fn render(&self, _: &Self::RenderContext) -> RenderedContent {
+        let qr_code = self
+            .render::<Dense1x2>()
+            .light_color(Dense1x2::Dark)
+            .dark_color(Dense1x2::Light)
+            .build();
+
+        RenderedContent {
+            lines: vec![
+                RenderedLine {
+                    message: qr_code,
+                    tags: self.tags(),
+                },
+                RenderedLine {
+                    message:
+                        "Scan the QR code on your other device or switch to \
+                         emoji verification using '/verification use-emoji'"
+                            .to_string(),
+                    tags: self.tags(),
+                },
+            ],
+        }
     }
 }
 
@@ -560,7 +730,7 @@ has_url_or_file!(VideoMessageEventContent);
 /// Rendering implementation for membership events (joins, leaves, bans, profile
 /// changes, etc).
 pub fn render_membership(
-    event: &SyncStateEvent<MemberEventContent>,
+    event: &SyncStateEvent<RoomMemberEventContent>,
     sender: &WeechatRoomMember,
     target: &WeechatRoomMember,
 ) -> String {
@@ -715,10 +885,10 @@ pub fn render_membership(
 mod tests {
     use matrix_sdk::ruma::{
         events::room::{EncryptedFileInit, JsonWebKeyInit},
-        MxcUri,
+        identifiers::MxcUri,
     };
 
-    use super::*;
+    use crate::render::{mxc_to_emxc, mxc_to_http};
 
     #[test]
     fn test_mxc_to_http() {

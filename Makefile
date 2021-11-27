@@ -3,7 +3,7 @@ PREFIX ?= $(WEECHAT_HOME)
 
 SOURCES := $(wildcard src/*.rs src/commands/*.rs Cargo.lock)
 
-.PHONY: install install-dir lint
+.PHONY: install install-dir lint target/debug/libmatrix.so
 
 target/debug/libmatrix.so: $(SOURCES)
 	cargo build

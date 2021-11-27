@@ -4,7 +4,7 @@ use clap::{
     App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
     SubCommand,
 };
-use matrix_sdk::ruma::{DeviceIdBox, UserId};
+use matrix_sdk::ruma::{identifiers::DeviceIdBox, UserId};
 
 use weechat::{
     buffer::Buffer,
@@ -13,7 +13,7 @@ use weechat::{
 };
 
 use super::parse_and_run;
-use crate::Servers;
+use crate::{commands::validate_user_id, Servers};
 
 pub struct DevicesCommand {
     servers: Servers,
@@ -114,13 +114,11 @@ impl DevicesCommand {
     pub fn subcommands() -> Vec<Argparse<'static, 'static>> {
         vec![
             SubCommand::with_name("list")
-                .arg(Arg::with_name("user-id").required(false).validator(|u| {
-                    UserId::try_from(u)
-                        .map_err(|_| {
-                            "The given user isn't a valid user ID".to_owned()
-                        })
-                        .map(|_| ())
-                }))
+                .arg(
+                    Arg::with_name("user-id")
+                        .required(false)
+                        .validator(validate_user_id),
+                )
                 .about("List your own Matrix devices on the server."),
             SubCommand::with_name("delete")
                 .about("Delete the given device")

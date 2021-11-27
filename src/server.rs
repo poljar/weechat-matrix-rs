@@ -66,19 +66,21 @@ use tracing::error;
 use url::Url;
 
 use matrix_sdk::{
-    self,
+    config::ClientConfig,
     deserialized_responses::AmbiguityChange,
+    encryption::verification::{Verification, VerificationRequest},
     room::Joined,
     ruma::{
         api::client::r0::session::login::Response as LoginResponse,
         events::{
-            room::member::MemberEventContent, AnySyncRoomEvent,
-            AnySyncStateEvent, SyncStateEvent,
+            room::{member::RoomMemberEventContent, message::MessageType},
+            AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
+            AnyToDeviceEvent, SyncStateEvent,
         },
-        DeviceId, DeviceIdBox, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
-        RoomId, UserId,
+        identifiers::{DeviceIdBox, DeviceKeyAlgorithm, RoomId, UserId},
+        DeviceId, MilliSecondsSinceUnixEpoch,
     },
-    Client, ClientConfig, Error,
+    Client, Error,
 };
 
 use weechat::{
@@ -91,6 +93,7 @@ use crate::{
     config::ServerBuffer,
     connection::{Connection, InteractiveAuthInfo},
     room::RoomHandle,
+    verification_buffer::VerificationBuffer,
     ConfigHandle, Servers, PLUGIN_NAME,
 };
 
@@ -171,6 +174,7 @@ pub struct InnerServer {
     login_state: Rc<RefCell<Option<LoginInfo>>>,
     connection: Rc<RefCell<Option<Connection>>>,
     server_buffer: Rc<RefCell<Option<BufferHandle>>>,
+    verification_buffers: Rc<RefCell<HashMap<UserId, VerificationBuffer>>>,
 }
 
 impl MatrixServer {
@@ -193,6 +197,7 @@ impl MatrixServer {
             login_state: Rc::new(RefCell::new(None)),
             connection: Rc::new(RefCell::new(None)),
             server_buffer: Rc::new(RefCell::new(None)),
+            verification_buffers: Rc::new(RefCell::new(HashMap::new())),
         };
 
         let server = server.into();
@@ -449,6 +454,14 @@ impl InnerServer {
         self.rooms.borrow().values().cloned().collect()
     }
 
+    pub fn verifications(&self) -> Vec<VerificationBuffer> {
+        self.verification_buffers
+            .borrow()
+            .values()
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn get_or_create_room(&self, room_id: &RoomId) -> RoomHandle {
         if !self.rooms.borrow().contains_key(room_id) {
             let homeserver = self
@@ -669,10 +682,196 @@ impl InnerServer {
         self.connection.borrow().is_some()
     }
 
+    pub fn create_or_update_verification_buffer(
+        &self,
+        verification: VerificationRequest,
+    ) {
+        let other_user = verification.other_user_id().to_owned();
+
+        let buffer = self
+            .verification_buffers
+            .borrow()
+            .get(verification.other_user_id())
+            .cloned();
+
+        if let Some(buffer) = buffer {
+            buffer.replace_verification(verification);
+        } else if let Ok(buffer) = VerificationBuffer::new(
+            &self.server_name,
+            &other_user,
+            verification,
+            self.connection.clone(),
+            &self.verification_buffers,
+        ) {
+            self.verification_buffers
+                .borrow_mut()
+                .insert(other_user, buffer);
+        } else {
+            self.print_error(&format!(
+                "Error creating a verification buffer for {}",
+                other_user,
+            ));
+        }
+    }
+
+    async fn handle_verification_request(
+        &self,
+        sender: &UserId,
+        flow_id: &str,
+    ) {
+        if let Some(client) = self.get_client() {
+            if let Some(request) =
+                client.get_verification_request(sender, flow_id).await
+            {
+                self.create_or_update_verification_buffer(request)
+            }
+        }
+    }
+
+    async fn handle_verification_start(&self, sender: &UserId, flow_id: &str) {
+        if let Some(client) = self.get_client() {
+            match client.get_verification(sender, flow_id).await {
+                Some(Verification::SasV1(sas)) => {
+                    if !sas.is_cancelled() {
+                        let buffer = self
+                            .verification_buffers
+                            .borrow()
+                            .get(sender)
+                            .cloned();
+
+                        if let Some(buffer) = buffer {
+                            if sas.started_from_request() {
+                                if let Err(e) = buffer.update(sas).await {
+                                    self.print_error(&format!("Error updating the verification buffer {:?}", e))
+                                }
+                            } else {
+                                buffer.replace_verification(sas);
+                            }
+                        } else {
+                            if let Ok(buffer) = VerificationBuffer::new(
+                                &self.server_name,
+                                sender,
+                                sas.clone(),
+                                self.connection.clone(),
+                                &self.verification_buffers,
+                            ) {
+                                self.verification_buffers.borrow_mut().insert(
+                                    sas.other_user_id().to_owned(),
+                                    buffer,
+                                );
+                            } else {
+                                self.print_error(
+                                    &format!("Error creating a verification buffer for {}", sender)
+                                );
+                            }
+                        }
+                    }
+                }
+                Some(Verification::QrV1(qr)) => {
+                    if let Some(buffer) = self
+                        .verification_buffers
+                        .borrow_mut()
+                        .get_mut(qr.other_user_id())
+                    {
+                        buffer.update_qr(qr).await;
+                    }
+                }
+                None => {
+                    // Check if we're passive and print a message if there's a
+                    // buffer, otherwise this might be a stale start event.
+                }
+            }
+        }
+    }
+
+    pub async fn receive_room_verification_event(
+        &self,
+        event: &AnySyncMessageEvent,
+    ) {
+        let handle_event = |event: AnySyncMessageEvent| async move {
+            if let Some(b) =
+                self.verification_buffers.borrow().get(event.sender())
+            {
+                b.handle_room_event(&event).await;
+            }
+        };
+
+        match event {
+            AnySyncMessageEvent::RoomMessage(e) => {
+                if let MessageType::VerificationRequest(_) = &e.content.msgtype
+                {
+                    self.handle_verification_request(
+                        &e.sender,
+                        e.event_id.as_str(),
+                    )
+                    .await;
+                    handle_event(event.clone()).await;
+                }
+            }
+            AnySyncMessageEvent::KeyVerificationStart(e) => {
+                self.handle_verification_start(
+                    &e.sender,
+                    e.content.relates_to.event_id.as_str(),
+                )
+                .await;
+                handle_event(event.clone()).await;
+            }
+            AnySyncMessageEvent::KeyVerificationReady(_)
+            | AnySyncMessageEvent::KeyVerificationCancel(_)
+            | AnySyncMessageEvent::KeyVerificationAccept(_)
+            | AnySyncMessageEvent::KeyVerificationKey(_)
+            | AnySyncMessageEvent::KeyVerificationMac(_)
+            | AnySyncMessageEvent::KeyVerificationDone(_) => {
+                handle_event(event.clone()).await;
+            }
+            _ => {}
+        }
+    }
+
+    pub async fn receive_to_device_event(&self, event: AnyToDeviceEvent) {
+        let handle_event = |event: AnyToDeviceEvent| async move {
+            if let Some(b) =
+                self.verification_buffers.borrow().get(event.sender())
+            {
+                b.handle_event(&event).await;
+            }
+        };
+
+        match &event {
+            AnyToDeviceEvent::RoomKey(_) => {}
+            AnyToDeviceEvent::RoomKeyRequest(_) => {}
+            AnyToDeviceEvent::KeyVerificationRequest(e) => {
+                self.handle_verification_request(
+                    &e.sender,
+                    &e.content.transaction_id,
+                )
+                .await;
+                handle_event(event).await;
+            }
+            AnyToDeviceEvent::KeyVerificationStart(e) => {
+                self.handle_verification_start(
+                    &e.sender,
+                    &e.content.transaction_id,
+                )
+                .await;
+                handle_event(event).await;
+            }
+            AnyToDeviceEvent::KeyVerificationCancel(_)
+            | AnyToDeviceEvent::KeyVerificationAccept(_)
+            | AnyToDeviceEvent::KeyVerificationReady(_)
+            | AnyToDeviceEvent::KeyVerificationKey(_)
+            | AnyToDeviceEvent::KeyVerificationDone(_)
+            | AnyToDeviceEvent::KeyVerificationMac(_) => {
+                handle_event(event).await
+            }
+            _ => {}
+        }
+    }
+
     pub async fn receive_member(
         &self,
         room_id: RoomId,
-        member: SyncStateEvent<MemberEventContent>,
+        member: SyncStateEvent<RoomMemberEventContent>,
         is_state: bool,
         ambiguity_change: Option<AmbiguityChange>,
     ) {
@@ -704,6 +903,10 @@ impl InnerServer {
         room_id: &RoomId,
         event: AnySyncRoomEvent,
     ) {
+        if let AnySyncRoomEvent::Message(e) = &event {
+            self.receive_room_verification_event(e).await
+        }
+
         let room = self.get_or_create_room(room_id);
         room.handle_sync_room_event(event).await
     }
@@ -854,13 +1057,13 @@ impl InnerServer {
                 async move { client.import_keys(file, &passphrase).await };
 
             match c.spawn(import).await {
-                Ok((imported, total)) => {
-                    if imported > 0 {
+                Ok(counts) => {
+                    if counts.imported_count > 0 {
                         self.print_network(&format!(
                             "Sucessfully imported {} E2EE keys",
-                            imported
+                            counts.imported_count
                         ));
-                    } else if total > 0 {
+                    } else if counts.total_count > 0 {
                         self.print_network(
                             "No keys were imported, the key export contains only \
                             keys that we already have",
@@ -909,6 +1112,16 @@ impl InnerServer {
 
         let mut lines: Vec<String> = Vec::new();
 
+        let devices =
+            connection.client().get_user_devices(&own_user_id).await?;
+
+        for device in devices.devices() {
+            Weechat::print(&format!(
+                "Found device {}",
+                device.device_id().as_str()
+            ));
+        }
+
         for device_info in response.devices {
             let device = connection
                 .client()
@@ -918,20 +1131,16 @@ impl InnerServer {
             let own_device =
                 own_device_id.as_ref() == Some(&device_info.device_id);
 
-            let device_trust = if own_device {
-                DeviceTrust::Verified
-            } else {
-                device
-                    .as_ref()
-                    .map(|d| {
-                        if d.verified() {
-                            DeviceTrust::Verified
-                        } else {
-                            DeviceTrust::Unverified
-                        }
-                    })
-                    .unwrap_or(DeviceTrust::Unsupported)
-            };
+            let device_trust = device
+                .as_ref()
+                .map(|d| {
+                    if d.verified() {
+                        DeviceTrust::Verified
+                    } else {
+                        DeviceTrust::Unverified
+                    }
+                })
+                .unwrap_or(DeviceTrust::Unsupported);
 
             let info = Self::format_device(
                 &device_info.device_id,

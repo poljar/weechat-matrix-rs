@@ -1,9 +1,9 @@
 use matrix_sdk::ruma::{
     events::{
-        room::message::{MessageEventContent, Relation},
-        AnyMessageEvent, AnySyncMessageEvent,
+        room::message::{MessageType, Relation, RoomMessageEventContent},
+        AnyMessageEvent, AnySyncMessageEvent, AnySyncRoomEvent,
     },
-    EventId, UserId,
+    identifiers::{EventId, UserId},
 };
 
 pub trait ToTag {
@@ -24,15 +24,52 @@ impl ToTag for UserId {
 
 pub trait Edit {
     fn is_edit(&self) -> bool;
-    fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)>;
+    fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)>;
 }
 
-impl Edit for MessageEventContent {
+pub trait VerificationEvent {
+    fn is_verification(&self) -> bool;
+}
+
+impl VerificationEvent for AnySyncRoomEvent {
+    fn is_verification(&self) -> bool {
+        match self {
+            AnySyncRoomEvent::Message(m) => m.is_verification(),
+            AnySyncRoomEvent::State(_)
+            | AnySyncRoomEvent::RedactedMessage(_)
+            | AnySyncRoomEvent::RedactedState(_) => false,
+        }
+    }
+}
+
+impl VerificationEvent for AnySyncMessageEvent {
+    fn is_verification(&self) -> bool {
+        match self {
+            AnySyncMessageEvent::KeyVerificationReady(_)
+            | AnySyncMessageEvent::KeyVerificationStart(_)
+            | AnySyncMessageEvent::KeyVerificationCancel(_)
+            | AnySyncMessageEvent::KeyVerificationAccept(_)
+            | AnySyncMessageEvent::KeyVerificationKey(_)
+            | AnySyncMessageEvent::KeyVerificationMac(_)
+            | AnySyncMessageEvent::KeyVerificationDone(_) => true,
+            AnySyncMessageEvent::RoomMessage(m) => {
+                if let MessageType::VerificationRequest(_) = m.content.msgtype {
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Edit for RoomMessageEventContent {
     fn is_edit(&self) -> bool {
         matches!(self.relates_to.as_ref(), Some(Relation::Replacement(_)))
     }
 
-    fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)> {
+    fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)> {
         if let Some(Relation::Replacement(r)) = self.relates_to.as_ref() {
             Some((&r.event_id, &r.new_content))
         } else {
@@ -50,7 +87,7 @@ impl Edit for AnySyncMessageEvent {
         }
     }
 
-    fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)> {
+    fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)> {
         if let AnySyncMessageEvent::RoomMessage(c) = self {
             c.content.get_edit()
         } else {
@@ -68,7 +105,7 @@ impl Edit for AnyMessageEvent {
         }
     }
 
-    fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)> {
+    fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)> {
         if let AnyMessageEvent::RoomMessage(c) = self {
             c.content.get_edit()
         } else {

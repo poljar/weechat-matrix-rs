@@ -14,12 +14,14 @@ crate-type = ["cdylib"]
 default = []
 
 [dependencies]
+anyhow = "1.0.41"
 clap = "2.33.3"
 chrono = "0.4.19"
 dashmap = "4.0.2"
 futures = "0.3.14"
 indoc = "1.0.3"
 url = "2.2.1"
+qrcode = { version = "0.12.0", default-features = false }
 serde_json = "1.0.64"
 strum = "0.20.0"
 strum_macros = "0.20.1"
@@ -35,5 +37,6 @@ git = "https://github.com/poljar/rust-weechat"
 features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
-version = "0.4.0"
+# version = "0.4.0"
+path = "/home/poljar/werk/matrix/nio-rust/crates/matrix-sdk"
 features = ["markdown"]

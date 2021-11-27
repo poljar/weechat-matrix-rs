@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use matrix_sdk::{
     self,
+    config::SyncSettings,
     deserialized_responses::AmbiguityChange,
     room::Joined,
     ruma::{
@@ -37,12 +38,13 @@ use matrix_sdk::{
             uiaa::{AuthData, Password, UserIdentifier},
         },
         events::{
-            room::member::MemberEventContent, AnyMessageEventContent,
-            AnySyncRoomEvent, AnySyncStateEvent, SyncStateEvent,
+            room::member::RoomMemberEventContent, AnyMessageEventContent,
+            AnySyncRoomEvent, AnySyncStateEvent, AnyToDeviceEvent,
+            SyncStateEvent,
         },
-        DeviceIdBox, RoomId,
+        identifiers::{DeviceIdBox, RoomId},
     },
-    Client, LoopCtrl, Result as MatrixResult, SyncSettings,
+    Client, HttpResult, LoopCtrl, Result as MatrixResult,
 };
 
 use weechat::{Task, Weechat};
@@ -73,9 +75,10 @@ pub enum ClientMessage {
     LoginMessage(LoginResponse),
     SyncState(RoomId, AnySyncStateEvent),
     SyncEvent(RoomId, AnySyncRoomEvent),
+    ToDeviceEvent(AnyToDeviceEvent),
     MemberEvent(
         RoomId,
-        SyncStateEvent<MemberEventContent>,
+        SyncStateEvent<RoomMemberEventContent>,
         bool,
         Option<AmbiguityChange>,
     ),
@@ -173,18 +176,17 @@ impl Connection {
         &self,
         devices: Vec<DeviceIdBox>,
         auth_info: Option<InteractiveAuthInfo>,
-    ) -> MatrixResult<DeleteDevicesResponse> {
+    ) -> HttpResult<DeleteDevicesResponse> {
         let client = self.client.clone();
-        Ok(self
-            .spawn(async move {
-                if let Some(info) = auth_info {
-                    let auth = Some(info.as_auth_data());
-                    client.delete_devices(&devices, auth).await
-                } else {
-                    client.delete_devices(&devices, None).await
-                }
-            })
-            .await?)
+        self.spawn(async move {
+            if let Some(info) = auth_info {
+                let auth = Some(info.as_auth_data());
+                client.delete_devices(&devices, auth).await
+            } else {
+                client.delete_devices(&devices, None).await
+            }
+        })
+        .await
     }
 
     /// Fetch historical messages for the given room.
@@ -192,27 +194,26 @@ impl Connection {
         &self,
         room: Joined,
         prev_batch: PrevBatch,
-    ) -> MatrixResult<MessagesResponse> {
-        Ok(self
-            .spawn(async move {
-                let request = match &prev_batch {
-                    PrevBatch::Backwards(t) => {
-                        MessagesRequest::backward(&room.room_id(), &t)
-                    }
-                    PrevBatch::Forward(t) => {
-                        MessagesRequest::forward(&room.room_id(), &t)
-                    }
-                };
+    ) -> HttpResult<MessagesResponse> {
+        self.spawn(async move {
+            let request = match &prev_batch {
+                PrevBatch::Backwards(t) => {
+                    MessagesRequest::backward(&room.room_id(), &t)
+                }
+                PrevBatch::Forward(t) => {
+                    MessagesRequest::forward(&room.room_id(), &t)
+                }
+            };
 
-                room.messages(request).await
-            })
-            .await?)
+            room.messages(request).await
+        })
+        .await
     }
 
     /// Get the list of our own devices.
-    pub async fn devices(&self) -> MatrixResult<DevicesResponse> {
+    pub async fn devices(&self) -> HttpResult<DevicesResponse> {
         let client = self.client.clone();
-        Ok(self.spawn(async move { client.devices().await }).await?)
+        self.spawn(async move { client.devices().await }).await
     }
 
     /// Set or reset a typing notice.
@@ -285,6 +286,7 @@ impl Connection {
             match message {
                 Ok(message) => match message {
                     ClientMessage::LoginMessage(r) => server.receive_login(r),
+
                     ClientMessage::SyncEvent(r, e) => {
                         server.receive_joined_timeline_event(&r, e).await
                     }
@@ -303,6 +305,9 @@ impl Connection {
                         server
                             .receive_member(room_id, e, is_state, change)
                             .await
+                    }
+                    ClientMessage::ToDeviceEvent(e) => {
+                        server.receive_to_device_event(e).await
                     }
                 },
                 Err(e) => server.print_error(&format!("Ruma error {}", e)),
@@ -434,6 +439,21 @@ impl Connection {
 
         client
             .sync_with_callback(sync_settings, |response| async move {
+                for event in response
+                    .to_device
+                    .events
+                    .iter()
+                    .filter_map(|e| e.deserialize().ok())
+                {
+                    if sync_channel
+                        .send(Ok(ClientMessage::ToDeviceEvent(event)))
+                        .await
+                        .is_err()
+                    {
+                        return LoopCtrl::Break;
+                    }
+                }
+
                 for (room_id, room) in response.rooms.join {
                     for event in room
                         .state
