@@ -133,7 +133,7 @@ impl Verification {
 struct InnerVerificationBuffer {
     verification: Rc<RefCell<Verification>>,
     connection: Rc<RefCell<Option<Connection>>>,
-    verification_buffers: Weak<RefCell<HashMap<UserId, VerificationBuffer>>>,
+    verification_buffers: Weak<RefCell<HashMap<Box<UserId>, VerificationBuffer>>>,
 }
 
 impl InnerVerificationBuffer {
@@ -205,25 +205,35 @@ impl InnerVerificationBuffer {
             c.spawn(async move { verification_clone.accept().await })
                 .await?;
 
-            if let Verification::Request(request) = verification {
-                if request
-                    .their_supported_methods()
-                    .unwrap_or_default()
-                    .contains(&VerificationMethod::QrCodeScanV1)
+            self.something(verification, buffer).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn something(
+        &self,
+        verification: Verification,
+        buffer: BufferHandle,
+    ) -> Result<(), Error> {
+        if let Verification::Request(request) = verification {
+            if request
+                .their_supported_methods()
+                .unwrap_or_default()
+                .contains(&VerificationMethod::QrCodeScanV1)
+            {
+                if let Some(code) = request
+                    .generate_qr_code()
+                    .await?
+                    .and_then(|qr| qr.to_qr_code().ok())
                 {
-                    if let Some(code) = request
-                        .generate_qr_code()
-                        .await?
-                        .and_then(|qr| qr.to_qr_code().ok())
-                    {
-                        let content = <QrCode as Render>::render(&code, &());
-                        self.print(buffer, content)
-                    } else {
-                        self.start_sas(request).await?;
-                    }
+                    let content = <QrCode as Render>::render(&code, &());
+                    self.print(buffer, content)
                 } else {
                     self.start_sas(request).await?;
                 }
+            } else {
+                self.start_sas(request).await?;
             }
         }
 
@@ -328,7 +338,7 @@ impl VerificationBuffer {
         sender: &UserId,
         verification: impl Into<Verification>,
         connection: Rc<RefCell<Option<Connection>>>,
-        verification_buffers: &Rc<RefCell<HashMap<UserId, VerificationBuffer>>>,
+        verification_buffers: &Rc<RefCell<HashMap<Box<UserId>, VerificationBuffer>>>,
     ) -> Result<Self, ()> {
         let verification = verification.into();
 
@@ -455,6 +465,23 @@ impl VerificationBuffer {
         }
     }
 
+    fn handle_ready_event(&self) {
+        let verification = self.inner.verification.borrow().clone();
+        let inner = self.inner.clone();
+        let buffer = self.buffer();
+
+        Weechat::spawn(async move {
+            let ret = inner.something(verification, buffer).await;
+            if let Err(e) = ret {
+                Weechat::print(&format!(
+                    "Error readying the verification {:?}",
+                    e
+                ));
+            }
+        })
+        .detach();
+    }
+
     pub fn handle_request_event(&self) {
         let verification = self.inner.verification.borrow().clone().try_into();
 
@@ -483,6 +510,9 @@ impl VerificationBuffer {
             }
             AnyToDeviceEvent::KeyVerificationStart(_) => {
                 self.handle_start_event()
+            }
+            AnyToDeviceEvent::KeyVerificationReady(_) => {
+                self.handle_ready_event()
             }
             AnyToDeviceEvent::KeyVerificationKey(_) => self.handle_key_event(),
             AnyToDeviceEvent::KeyVerificationMac(_)

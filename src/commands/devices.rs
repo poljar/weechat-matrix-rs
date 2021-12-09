@@ -7,7 +7,7 @@ use clap::{
 };
 use matrix_sdk::{
     ruma::{
-        identifiers::DeviceIdBox, DeviceId, DeviceKeyAlgorithm,
+        DeviceId, DeviceKeyAlgorithm,
         MilliSecondsSinceUnixEpoch, UserId,
     },
     Error,
@@ -70,7 +70,7 @@ impl DevicesCommand {
         )
     }
 
-    fn delete(servers: &Servers, buffer: &Buffer, devices: Vec<DeviceIdBox>) {
+    fn delete(servers: &Servers, buffer: &Buffer, devices: Vec<Box<DeviceId>>) {
         let server = servers.find_server(buffer);
 
         if let Some(s) = server {
@@ -83,7 +83,7 @@ impl DevicesCommand {
         }
     }
 
-    fn list(servers: &Servers, buffer: &Buffer, user_id: Option<UserId>) {
+    fn list(servers: &Servers, buffer: &Buffer, user_id: Option<Box<UserId>>) {
         let server = servers.find_server(buffer);
 
         if let Some(s) = server {
@@ -102,7 +102,7 @@ impl DevicesCommand {
                 let user_id = args.and_then(|a| {
                     a.args.get("user-id").and_then(|a| {
                         a.vals.first().map(|u| {
-                            UserId::try_from(u.to_string_lossy().as_ref())
+                            Box::<UserId>::try_from(u.to_string_lossy().as_ref())
                                 .expect("Argument wasn't a valid user id")
                         })
                     })
@@ -114,7 +114,7 @@ impl DevicesCommand {
                 let devices = args
                     .and_then(|a| a.args.get("device-id"))
                     .expect("Args didn't contain any device ids");
-                let devices: Vec<DeviceIdBox> = devices
+                let devices: Vec<Box<DeviceId>> = devices
                     .vals
                     .iter()
                     .map(|d| d.clone().to_string_lossy().as_ref().into())
@@ -252,7 +252,7 @@ impl MatrixServer {
     async fn list_other_devices(
         &self,
         connection: Connection,
-        user_id: UserId,
+        user_id: &UserId,
     ) -> Result<(), Error> {
         let devices = connection.client().get_user_devices(&user_id).await?;
 
@@ -406,7 +406,7 @@ impl MatrixServer {
         )
     }
 
-    pub async fn devices(&self, user_id: Option<UserId>) {
+    pub async fn devices(&self, user_id: Option<Box<UserId>>) {
         let connection = if let Some(c) = self.connection() {
             c
         } else {
@@ -418,7 +418,7 @@ impl MatrixServer {
             if Some(&user_id) == connection.client().user_id().await.as_ref() {
                 self.list_own_devices(connection).await
             } else {
-                self.list_other_devices(connection, user_id).await
+                self.list_other_devices(connection, &user_id).await
             }
         } else {
             self.list_own_devices(connection).await
@@ -429,7 +429,7 @@ impl MatrixServer {
         }
     }
 
-    pub async fn delete_devices(&self, devices: Vec<DeviceIdBox>) {
+    pub async fn delete_devices(&self, devices: Vec<Box<DeviceId>>) {
         let formatted = devices
             .iter()
             .map(|d| d.to_string())

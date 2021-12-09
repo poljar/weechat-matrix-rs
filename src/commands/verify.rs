@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 use anyhow::{bail, Result};
 use clap::{App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches};
 
-use matrix_sdk::ruma::{DeviceIdBox, DeviceKeyAlgorithm, UserId};
+use matrix_sdk::ruma::{DeviceId, DeviceKeyAlgorithm, UserId};
 use weechat::{
     buffer::Buffer,
     hooks::{Command, CommandCallback, CommandSettings},
@@ -53,8 +53,8 @@ impl VerifyCommand {
 
     async fn verify(
         server: &MatrixServer,
-        user_id: UserId,
-        device_id: Option<DeviceIdBox>,
+        user_id: Box<UserId>,
+        device_id: Option<Box<DeviceId>>,
         fingerprint: Option<String>,
     ) -> Result<()> {
         let no_identity = || {
@@ -153,14 +153,14 @@ impl VerifyCommand {
             let user_id = args
                 .value_of_lossy("user-id")
                 .map(|u| {
-                    UserId::try_from(u.as_ref())
+                    Box::<UserId>::try_from(u.as_ref())
                         .expect("Argument wasn't a valid user id")
                 })
                 .expect("Verify command didn't contain a user id");
 
             let device_id = args
                 .value_of_lossy("device-id")
-                .map(|a| DeviceIdBox::from(a.as_ref()));
+                .map(|a| Box::<DeviceId>::from(a.as_ref()));
 
             let fingerprint =
                 args.value_of_lossy("fingerprint").map(|f| f.to_string());
@@ -183,23 +183,111 @@ impl VerifyCommand {
     pub fn args() -> [Arg<'static, 'static>; 3] {
         [
             Arg::with_name("user-id")
+                .index(1)
                 .required(true)
                 .validator(validate_user_id),
-            Arg::with_name("device-id").required(false),
-            Arg::with_name("fingerprint").required(false),
+            Arg::with_name("device-id").required(false).index(2),
+            Arg::with_name("fingerprint")
+                .required(false)
+                .short("f")
+                .long("fingerprint")
+                .takes_value(true),
         ]
+    }
+
+    pub fn argument_parser() -> Argparse<'static, 'static> {
+        Argparse::new("verify")
+            .about(Self::DESCRIPTION)
+            .settings(Self::SETTINGS)
+            .args(&Self::args())
     }
 }
 
 impl CommandCallback for VerifyCommand {
     fn callback(&mut self, _: &Weechat, buffer: &Buffer, arguments: Args) {
-        let argparse = Argparse::new("verify")
-            .about(Self::DESCRIPTION)
-            .settings(Self::SETTINGS)
-            .args(&Self::args());
+        let argparse = Self::argument_parser();
+
+        Weechat::print(&format!("{:?}", arguments));
 
         parse_and_run(argparse, arguments, |matches| {
             Self::run(buffer, &self.servers, &matches)
         });
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::VerifyCommand;
+
+    #[test]
+    fn test_argument_parsing() {
+        let parser = VerifyCommand::argument_parser();
+        parser
+            .get_matches_from_safe(["verify", "invalid_user", "DEVICEID"])
+            .expect_err("An invalid user id passes the parse");
+
+        let parser = VerifyCommand::argument_parser();
+        parser
+            .get_matches_from_safe(["verify", "@example:localhost", "DEVICEID"])
+            .expect("Couldn't parse a valid user id and device id");
+    }
+
+    #[test]
+    fn test_fingerprint_parsing() {
+        let parser = VerifyCommand::argument_parser();
+        let matches = parser
+            .get_matches_from_safe([
+                "verify",
+                "@example:localhost",
+                "-f",
+                "SOMEFINGERPRINT",
+            ])
+            .expect("Couldn't parse a valid user id and device id");
+
+        assert_eq!(
+            matches
+                .value_of_lossy("user-id")
+                .expect("Couldn't find a valid user id"),
+            "@example:localhost"
+        );
+        assert_eq!(
+            matches
+                .value_of_lossy("fingerprint")
+                .expect("Couldn't find a valid fingerprint"),
+            "SOMEFINGERPRINT"
+        );
+    }
+
+    #[test]
+    fn test_fingerprint_parsing_with_device() {
+        let parser = VerifyCommand::argument_parser();
+        let matches = parser
+            .get_matches_from_safe([
+                "verify",
+                "@example:localhost",
+                "DEVICEID",
+                "--fingerprint",
+                "SOMEFINGERPRINT",
+            ])
+            .expect("Couldn't parse a valid user id and device id");
+
+        assert_eq!(
+            matches
+                .value_of_lossy("user-id")
+                .expect("Couldn't find a valid user id"),
+            "@example:localhost"
+        );
+        assert_eq!(
+            matches
+                .value_of_lossy("fingerprint")
+                .expect("Couldn't find a valid fingerprint"),
+            "SOMEFINGERPRINT"
+        );
+        assert_eq!(
+            matches
+                .value_of_lossy("device-id")
+                .expect("Couldn't find a valid device-id"),
+            "DEVICEID"
+        );
     }
 }

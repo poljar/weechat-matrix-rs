@@ -30,8 +30,8 @@ use super::buffer::RoomBuffer;
 #[derive(Clone)]
 pub struct Members {
     room: Joined,
-    ambiguity_map: Rc<DashMap<UserId, bool>>,
-    nicks: Rc<DashMap<UserId, String>>,
+    ambiguity_map: Rc<DashMap<Box<UserId>, bool>>,
+    nicks: Rc<DashMap<Box<UserId>, String>>,
     buffer: RoomBuffer,
 }
 
@@ -88,7 +88,7 @@ impl Members {
         match self.room().get_member_no_sync(user_id).await {
             Ok(Some(member)) => {
                 self.ambiguity_map
-                    .insert(user_id.clone(), member.name_ambiguous());
+                    .insert(user_id.into(), member.name_ambiguous());
                 self.update_member(user_id).await;
             }
             Ok(None) => {
@@ -140,7 +140,7 @@ impl Members {
     ) {
         if let Some(change) = ambiguity_change {
             self.ambiguity_map
-                .insert(user_id.clone(), change.member_ambiguous);
+                .insert(user_id.into(), change.member_ambiguous);
 
             if let Some(disambiguated) = &change.disambiguated_member {
                 self.ambiguity_map.insert(disambiguated.clone(), false);
@@ -249,18 +249,18 @@ impl Members {
 
         let sender_id = event.sender.clone();
 
-        let target_id = if let Ok(t) = UserId::try_from(event.state_key.clone())
-        {
-            t
-        } else {
-            error!(
-                "Invalid state key in room {} from sender {}: {}",
-                buffer.short_name(),
-                event.sender,
-                event.state_key,
-            );
-            return;
-        };
+        let target_id =
+            if let Ok(t) = Box::<UserId>::try_from(event.state_key.clone()) {
+                t
+            } else {
+                error!(
+                    "Invalid state key in room {} from sender {}: {}",
+                    buffer.short_name(),
+                    event.sender,
+                    event.state_key,
+                );
+                return;
+            };
 
         use MembershipState::*;
 

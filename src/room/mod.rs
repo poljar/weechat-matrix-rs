@@ -199,7 +199,7 @@ impl RoomHandle {
         config: Rc<RefCell<Config>>,
         room: Joined,
         homeserver: Url,
-        room_id: RoomId,
+        room_id: &RoomId,
         own_user_id: &UserId,
     ) -> Self {
         let buffer = RoomBuffer::new(room.clone());
@@ -215,7 +215,7 @@ impl RoomHandle {
 
         let room = MatrixRoom {
             homeserver: Rc::new(homeserver),
-            room_id: Rc::new(room_id.clone()),
+            room_id: room_id.into(),
             connection: connection.clone(),
             config,
             prev_batch: Rc::new(RefCell::new(
@@ -317,7 +317,7 @@ impl RoomHandle {
             config,
             room_clone,
             homeserver,
-            room_id.clone(),
+            room_id,
             own_user_id,
         );
 
@@ -370,7 +370,7 @@ impl MatrixRoom {
         self.room.is_public()
     }
 
-    pub fn alias(&self) -> Option<RoomAliasId> {
+    pub fn alias(&self) -> Option<Box<RoomAliasId>> {
         self.room.canonical_alias()
     }
 
@@ -752,9 +752,9 @@ impl MatrixRoom {
     async fn handle_outgoing_message(&self, uuid: Uuid, event_id: &EventId) {
         if let Some((echo, content)) = self.outgoing_messages.remove(uuid) {
             let event = SyncMessageEvent {
-                sender: (&*self.own_user_id).clone(),
+                sender: (&*self.own_user_id).to_owned(),
                 origin_server_ts: MilliSecondsSinceUnixEpoch::now(),
-                event_id: event_id.clone(),
+                event_id: event_id.to_owned(),
                 content,
                 unsigned: Default::default(),
             };

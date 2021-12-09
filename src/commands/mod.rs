@@ -72,7 +72,7 @@ fn parse_and_run(
 }
 
 fn validate_user_id(user_id: String) -> Result<(), String> {
-    UserId::try_from(user_id)
+    Box::<UserId>::try_from(user_id)
         .map_err(|_| "The given user isn't a valid user ID".to_owned())
         .map(|_| ())
 }

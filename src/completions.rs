@@ -137,7 +137,7 @@ impl CompletionCallback for DeviceCompletion {
                 let args: Vec<_> = args.split_ascii_whitespace().collect();
 
                 if let Some(user_id) =
-                    args.first().and_then(|u| UserId::try_from(*u).ok())
+                    args.first().and_then(|u| Box::<UserId>::try_from(*u).ok())
                 {
                     let devices = block_on(
                         connection.client().get_user_devices(&user_id),

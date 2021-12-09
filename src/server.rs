@@ -132,7 +132,7 @@ impl ServerSettings {
 }
 
 pub struct LoginInfo {
-    user_id: UserId,
+    user_id: Box<UserId>,
 }
 
 #[derive(Clone)]
@@ -158,7 +158,7 @@ impl std::fmt::Debug for MatrixServer {
 pub struct InnerServer {
     servers: Servers,
     server_name: Rc<str>,
-    rooms: Rc<RefCell<HashMap<RoomId, RoomHandle>>>,
+    rooms: Rc<RefCell<HashMap<Box<RoomId>, RoomHandle>>>,
     settings: Rc<RefCell<ServerSettings>>,
     current_settings: Rc<RefCell<ServerSettings>>,
     config: ConfigHandle,
@@ -166,7 +166,7 @@ pub struct InnerServer {
     login_state: Rc<RefCell<Option<LoginInfo>>>,
     connection: Rc<RefCell<Option<Connection>>>,
     server_buffer: Rc<RefCell<Option<BufferHandle>>>,
-    verification_buffers: Rc<RefCell<HashMap<UserId, VerificationBuffer>>>,
+    verification_buffers: Rc<RefCell<HashMap<Box<UserId>, VerificationBuffer>>>,
 }
 
 impl MatrixServer {
@@ -494,10 +494,10 @@ impl InnerServer {
                 self.config.inner.clone(),
                 room,
                 homeserver,
-                room_id.clone(),
+                room_id,
                 &login_state.user_id,
             );
-            self.rooms.borrow_mut().insert(room_id.clone(), buffer);
+            self.rooms.borrow_mut().insert(room_id.into(), buffer);
         }
 
         self.rooms.borrow().get(room_id).cloned().unwrap()
@@ -872,7 +872,7 @@ impl InnerServer {
 
     pub async fn receive_member(
         &self,
-        room_id: RoomId,
+        room_id: Box<RoomId>,
         member: SyncStateEvent<RoomMemberEventContent>,
         is_state: bool,
         ambiguity_change: Option<AmbiguityChange>,

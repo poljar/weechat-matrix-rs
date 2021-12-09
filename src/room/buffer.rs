@@ -228,7 +228,7 @@ impl RoomBuffer {
         }
     }
 
-    fn alias(&self) -> Option<RoomAliasId> {
+    fn alias(&self) -> Option<Box<RoomAliasId>> {
         self.room.canonical_alias()
     }
 

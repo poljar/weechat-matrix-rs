@@ -42,7 +42,7 @@ use matrix_sdk::{
             AnySyncRoomEvent, AnySyncStateEvent, AnyToDeviceEvent,
             SyncStateEvent,
         },
-        identifiers::{DeviceIdBox, RoomId},
+        identifiers::{DeviceId, RoomId},
     },
     Client, HttpResult, LoopCtrl, Result as MatrixResult,
 };
@@ -73,11 +73,11 @@ impl InteractiveAuthInfo {
 
 pub enum ClientMessage {
     LoginMessage(LoginResponse),
-    SyncState(RoomId, AnySyncStateEvent),
-    SyncEvent(RoomId, AnySyncRoomEvent),
+    SyncState(Box<RoomId>, AnySyncStateEvent),
+    SyncEvent(Box<RoomId>, AnySyncRoomEvent),
     ToDeviceEvent(AnyToDeviceEvent),
     MemberEvent(
-        RoomId,
+        Box<RoomId>,
         SyncStateEvent<RoomMemberEventContent>,
         bool,
         Option<AmbiguityChange>,
@@ -174,7 +174,7 @@ impl Connection {
 
     pub async fn delete_devices(
         &self,
-        devices: Vec<DeviceIdBox>,
+        devices: Vec<Box<DeviceId>>,
         auth_info: Option<InteractiveAuthInfo>,
     ) -> HttpResult<DeleteDevicesResponse> {
         let client = self.client.clone();
