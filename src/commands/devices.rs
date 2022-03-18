@@ -6,10 +6,7 @@ use clap::{
     SubCommand,
 };
 use matrix_sdk::{
-    ruma::{
-        DeviceId, DeviceKeyAlgorithm,
-        MilliSecondsSinceUnixEpoch, UserId,
-    },
+    ruma::{DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch, UserId},
     Error,
 };
 
@@ -102,8 +99,10 @@ impl DevicesCommand {
                 let user_id = args.and_then(|a| {
                     a.args.get("user-id").and_then(|a| {
                         a.vals.first().map(|u| {
-                            Box::<UserId>::try_from(u.to_string_lossy().as_ref())
-                                .expect("Argument wasn't a valid user id")
+                            Box::<UserId>::try_from(
+                                u.to_string_lossy().as_ref(),
+                            )
+                            .expect("Argument wasn't a valid user id")
                         })
                     })
                 });
@@ -195,8 +194,11 @@ impl MatrixServer {
 
         let mut lines: Vec<String> = Vec::new();
 
-        let devices =
-            connection.client().get_user_devices(&own_user_id).await?;
+        let devices = connection
+            .client()
+            .encryption()
+            .get_user_devices(&own_user_id)
+            .await?;
 
         for device in devices.devices() {
             Weechat::print(&format!(
@@ -208,6 +210,7 @@ impl MatrixServer {
         for device_info in response.devices {
             let device = connection
                 .client()
+                .encryption()
                 .get_device(&own_user_id, &device_info.device_id)
                 .await?;
 
@@ -254,7 +257,11 @@ impl MatrixServer {
         connection: Connection,
         user_id: &UserId,
     ) -> Result<(), Error> {
-        let devices = connection.client().get_user_devices(&user_id).await?;
+        let devices = connection
+            .client()
+            .encryption()
+            .get_user_devices(&user_id)
+            .await?;
 
         let lines: Vec<_> = devices
             .devices()

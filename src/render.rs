@@ -28,9 +28,8 @@ use matrix_sdk::{
             RedactedSyncMessageEvent, SyncStateEvent,
         },
         identifiers::{EventId, UserId},
-        uint, MilliSecondsSinceUnixEpoch,
+        uint, MilliSecondsSinceUnixEpoch, TransactionId,
     },
-    uuid::Uuid,
 };
 
 use weechat::{Prefix, Weechat};
@@ -155,7 +154,7 @@ pub trait Render {
     fn render_with_prefix_for_echo(
         &self,
         sender: &WeechatRoomMember,
-        uuid: Uuid,
+        uuid: &TransactionId,
         context: &Self::RenderContext,
     ) -> RenderedEvent {
         let content = self.render_for_echo(uuid, context);
@@ -170,7 +169,7 @@ pub trait Render {
 
     fn render_for_echo(
         &self,
-        uuid: Uuid,
+        uuid: &TransactionId,
         context: &Self::RenderContext,
     ) -> RenderedContent {
         let mut content = self.render(context);
@@ -392,15 +391,16 @@ fn mxc_to_emxc(
     // Add query parameters
     emxc_url
         .query_pairs_mut()
-        .append_pair("key", &encrypted.key.k)
+        .append_pair("key", &encrypted.key.k.encode())
         .append_pair(
             "hash",
-            encrypted
+            &encrypted
                 .hashes
                 .get("sha256")
-                .ok_or("Missing sha256 hash")?,
+                .ok_or("Missing sha256 hash")?
+                .encode(),
         )
-        .append_pair("iv", &encrypted.iv);
+        .append_pair("iv", &encrypted.iv.encode());
 
     Ok(emxc_url.to_string())
 }

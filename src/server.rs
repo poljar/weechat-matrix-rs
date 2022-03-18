@@ -54,6 +54,7 @@
 //! receiver fetches events individually from a mpsc channel. This makes sure
 //! that processing events will not block the Weechat mainloop for too long.
 
+use futures::executor::block_on;
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
@@ -64,13 +65,12 @@ use tracing::error;
 use url::Url;
 
 use matrix_sdk::{
-    config::ClientConfig,
     deserialized_responses::AmbiguityChange,
     encryption::verification::{Verification, VerificationRequest},
     room::Joined,
     ruma::{
-        api::client::r0::{
-            session::login::Response as LoginResponse, uiaa::UiaaInfo,
+        api::client::{
+            session::login::v3::Response as LoginResponse, uiaa::UiaaInfo,
         },
         events::{
             room::{member::RoomMemberEventContent, message::MessageType},
@@ -79,6 +79,7 @@ use matrix_sdk::{
         },
         identifiers::{RoomId, UserId},
     },
+    store::{OpenStoreError, StateStore},
     Client,
 };
 
@@ -98,6 +99,7 @@ use crate::{
 
 #[derive(Debug)]
 pub enum ServerError {
+    Store(OpenStoreError),
     StartError(String),
     IoError(String),
 }
@@ -722,8 +724,10 @@ impl InnerServer {
         flow_id: &str,
     ) {
         if let Some(client) = self.get_client() {
-            if let Some(request) =
-                client.get_verification_request(sender, flow_id).await
+            if let Some(request) = client
+                .encryption()
+                .get_verification_request(sender, flow_id)
+                .await
             {
                 self.create_or_update_verification_buffer(request)
             }
@@ -732,7 +736,7 @@ impl InnerServer {
 
     async fn handle_verification_start(&self, sender: &UserId, flow_id: &str) {
         if let Some(client) = self.get_client() {
-            match client.get_verification(sender, flow_id).await {
+            match client.encryption().get_verification(sender, flow_id).await {
                 Some(Verification::SasV1(sas)) => {
                     if !sas.is_cancelled() {
                         let buffer = self
@@ -845,7 +849,7 @@ impl InnerServer {
             AnyToDeviceEvent::KeyVerificationRequest(e) => {
                 self.handle_verification_request(
                     &e.sender,
-                    &e.content.transaction_id,
+                    e.content.transaction_id.as_str(),
                 )
                 .await;
                 handle_event(event).await;
@@ -853,7 +857,7 @@ impl InnerServer {
             AnyToDeviceEvent::KeyVerificationStart(e) => {
                 self.handle_verification_start(
                     &e.sender,
-                    &e.content.transaction_id,
+                    e.content.transaction_id.as_str(),
                 )
                 .await;
                 handle_event(event).await;
@@ -957,20 +961,29 @@ impl InnerServer {
             ))
         })?;
 
-        let mut client_config = ClientConfig::new()
-            .store_path(self.get_server_path())
-            .passphrase("DEFAULT_PASSPHRASE".to_string());
+        let store = StateStore::open_with_passphrase(
+            self.get_server_path(),
+            "DEFAULT_PASSPHRASE",
+        )
+        .unwrap();
+        let crypto_store =
+            store.open_crypto_store(Some("DEFAULT_PASSPHRASE")).unwrap();
+
+        let mut builder = Client::builder()
+            .homeserver_url(homeserver)
+            .state_store(Box::new(store))
+            .crypto_store(Box::new(crypto_store));
 
         if let Some(proxy) = settings.proxy.as_ref() {
-            client_config = client_config.proxy(proxy.as_str()).unwrap();
+            builder = builder.proxy(proxy.as_str());
         }
 
         if !settings.ssl_verify {
-            client_config = client_config.disable_ssl_verification();
+            builder = builder.disable_ssl_verification();
         }
 
-        let client =
-            Client::new_with_config(homeserver.clone(), client_config).unwrap();
+        let client = block_on(builder.build()).unwrap();
+
         *self.current_settings.borrow_mut() = settings.clone();
         *self.client.borrow_mut() = Some(client.clone());
 
@@ -981,7 +994,10 @@ impl InnerServer {
         let client = self.get_client().unwrap();
 
         let export = async move {
-            client.export_keys(file, &passphrase, |_| true).await
+            client
+                .encryption()
+                .export_keys(file, &passphrase, |_| true)
+                .await
         };
 
         if let Some(c) = self.connection() {
@@ -1004,8 +1020,9 @@ impl InnerServer {
                 "Importing E2EE keys from {}, this may take a while..",
                 file.display()
             ));
-            let import =
-                async move { client.import_keys(file, &passphrase).await };
+            let import = async move {
+                client.encryption().import_keys(file, &passphrase).await
+            };
 
             match c.spawn(import).await {
                 Ok(counts) => {

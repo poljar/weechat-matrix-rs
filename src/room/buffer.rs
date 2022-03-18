@@ -3,7 +3,10 @@ use std::{borrow::Cow, cell::RefCell, rc::Rc};
 use futures::executor::block_on;
 use matrix_sdk::{
     room::Joined,
-    ruma::identifiers::{EventId, RoomAliasId, UserId},
+    ruma::{
+        identifiers::{EventId, RoomAliasId, UserId},
+        TransactionId,
+    },
     StoreError,
 };
 use uuid::Uuid;
@@ -45,7 +48,11 @@ impl RoomBuffer {
     }
 
     /// Replace the local echo of an event with a fully rendered one.
-    pub fn replace_local_echo(&self, uuid: Uuid, rendered: RenderedEvent) {
+    pub fn replace_local_echo(
+        &self,
+        uuid: &TransactionId,
+        rendered: RenderedEvent,
+    ) {
         if let Ok(buffer) = self.buffer_handle().upgrade() {
             let uuid_tag =
                 Cow::from(format!("matrix_echo_{}", uuid.to_string()));

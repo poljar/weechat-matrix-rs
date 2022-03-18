@@ -11,7 +11,6 @@ use tokio::{
 };
 
 use tracing::error;
-use uuid::Uuid;
 
 use matrix_sdk::{
     self,
@@ -19,22 +18,22 @@ use matrix_sdk::{
     deserialized_responses::AmbiguityChange,
     room::Joined,
     ruma::{
-        api::client::r0::{
+        api::client::{
             device::{
-                delete_devices::Response as DeleteDevicesResponse,
-                get_devices::Response as DevicesResponse,
+                delete_devices::v3::Response as DeleteDevicesResponse,
+                get_devices::v3::Response as DevicesResponse,
             },
             filter::{
                 FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
             },
             message::{
-                get_message_events::{
+                get_message_events::v3::{
                     Request as MessagesRequest, Response as MessagesResponse,
                 },
-                send_message_event::Response as RoomSendResponse,
+                send_message_event::v3::Response as RoomSendResponse,
             },
-            session::login::Response as LoginResponse,
-            sync::sync_events::Filter,
+            session::login::v3::Response as LoginResponse,
+            sync::sync_events::v3::Filter,
             uiaa::{AuthData, Password, UserIdentifier},
         },
         events::{
@@ -43,6 +42,7 @@ use matrix_sdk::{
             SyncStateEvent,
         },
         identifiers::{DeviceId, RoomId},
+        TransactionId,
     },
     Client, HttpResult, LoopCtrl, Result as MatrixResult,
 };
@@ -65,7 +65,7 @@ pub struct InteractiveAuthInfo {
 impl InteractiveAuthInfo {
     pub fn as_auth_data(&self) -> AuthData<'_> {
         AuthData::Password(Password::new(
-            UserIdentifier::MatrixId(&self.user),
+            UserIdentifier::UserIdOrLocalpart(&self.user),
             &self.password,
         ))
     }
@@ -160,14 +160,10 @@ impl Connection {
         &self,
         room: Joined,
         content: AnyMessageEventContent,
-        transaction_id: Option<Uuid>,
+        transaction_id: Option<Box<TransactionId>>,
     ) -> MatrixResult<RoomSendResponse> {
         self.spawn(async move {
-            room.send(
-                content,
-                Some(transaction_id.unwrap_or_else(Uuid::new_v4)),
-            )
-            .await
+            room.send(content, transaction_id.as_deref()).await
         })
         .await
     }
@@ -195,19 +191,20 @@ impl Connection {
         room: Joined,
         prev_batch: PrevBatch,
     ) -> HttpResult<MessagesResponse> {
-        self.spawn(async move {
-            let request = match &prev_batch {
-                PrevBatch::Backwards(t) => {
-                    MessagesRequest::backward(&room.room_id(), &t)
-                }
-                PrevBatch::Forward(t) => {
-                    MessagesRequest::forward(&room.room_id(), &t)
-                }
-            };
+        todo!()
+        // self.spawn(async move {
+        //     let request = match &prev_batch {
+        //         PrevBatch::Backwards(t) => {
+        //             MessagesRequest::backward(&room.room_id(), &t)
+        //         }
+        //         PrevBatch::Forward(t) => {
+        //             MessagesRequest::forward(&room.room_id(), &t)
+        //         }
+        //     };
 
-            room.messages(request).await
-        })
-        .await
+        //     room.messages(request).await
+        // })
+        // .await
     }
 
     /// Get the list of our own devices.

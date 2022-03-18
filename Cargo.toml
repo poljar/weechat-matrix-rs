@@ -38,5 +38,5 @@ features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
 # version = "0.4.0"
-path = "/home/poljar/werk/matrix/nio-rust/crates/matrix-sdk"
-features = ["markdown"]
+path = "/home/poljar/werk/matrix/matrix-rust-sdk/crates/matrix-sdk"
+features = ["markdown", "encryption", "sled_cryptostore"]

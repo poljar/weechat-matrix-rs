@@ -66,9 +66,8 @@ use matrix_sdk::{
             SyncMessageEvent, SyncStateEvent,
         },
         identifiers::{EventId, RoomAliasId, RoomId, UserId},
-        MilliSecondsSinceUnixEpoch,
+        MilliSecondsSinceUnixEpoch, TransactionId,
     },
-    uuid::Uuid,
     StoreError,
 };
 
@@ -169,7 +168,9 @@ pub struct MatrixRoom {
 
 #[derive(Debug, Clone, Default)]
 pub struct MessageQueue {
-    queue: Rc<RefCell<HashMap<Uuid, (bool, RoomMessageEventContent)>>>,
+    queue: Rc<
+        RefCell<HashMap<Box<TransactionId>, (bool, RoomMessageEventContent)>>,
+    >,
 }
 
 impl MessageQueue {
@@ -179,16 +180,23 @@ impl MessageQueue {
         }
     }
 
-    fn add(&self, uuid: Uuid, content: RoomMessageEventContent) {
+    fn add(&self, uuid: Box<TransactionId>, content: RoomMessageEventContent) {
         self.queue.borrow_mut().insert(uuid, (false, content));
     }
 
-    fn add_with_echo(&self, uuid: Uuid, content: RoomMessageEventContent) {
+    fn add_with_echo(
+        &self,
+        uuid: Box<TransactionId>,
+        content: RoomMessageEventContent,
+    ) {
         self.queue.borrow_mut().insert(uuid, (true, content));
     }
 
-    fn remove(&self, uuid: Uuid) -> Option<(bool, RoomMessageEventContent)> {
-        self.queue.borrow_mut().remove(&uuid)
+    fn remove(
+        &self,
+        uuid: &TransactionId,
+    ) -> Option<(bool, RoomMessageEventContent)> {
+        self.queue.borrow_mut().remove(uuid)
     }
 }
 
@@ -570,7 +578,7 @@ impl MatrixRoom {
     // a local echo line if local echo is enabled.
     async fn queue_outgoing_message(
         &self,
-        uuid: Uuid,
+        uuid: Box<TransactionId>,
         content: &RoomMessageEventContent,
     ) {
         if self.config.borrow().look().local_echo() {
@@ -581,7 +589,7 @@ impl MatrixRoom {
                     );
 
                 let local_echo = c
-                    .render_with_prefix_for_echo(&sender, uuid, &())
+                    .render_with_prefix_for_echo(&sender, &uuid, &())
                     .add_self_tags();
                 self.buffer.print_rendered_event(local_echo);
 
@@ -613,17 +621,18 @@ impl MatrixRoom {
     /// buffer.send_message(content).await
     /// ```
     pub async fn send_message(&self, content: RoomMessageEventContent) {
-        let uuid = Uuid::new_v4();
+        let uuid = TransactionId::new();
 
         let connection = self.connection.borrow().clone();
 
         if let Some(c) = connection {
-            self.queue_outgoing_message(uuid, &content).await;
+            self.queue_outgoing_message(uuid.clone(), &content).await;
+
             match c
                 .send_message(
                     self.room().clone(),
                     AnyMessageEventContent::RoomMessage(content),
-                    Some(uuid),
+                    Some(uuid.clone()),
                 )
                 .await
             {
@@ -633,7 +642,7 @@ impl MatrixRoom {
                 Err(_e) => {
                     // TODO print out an error, remember to modify the local
                     // echo line if there is one.
-                    self.outgoing_messages.remove(uuid);
+                    self.outgoing_messages.remove(&uuid);
                 }
             }
         } else if let Ok(buffer) = self.buffer_handle().upgrade() {
@@ -749,8 +758,12 @@ impl MatrixRoom {
         Weechat::bar_item_update("matrix_modes");
     }
 
-    async fn handle_outgoing_message(&self, uuid: Uuid, event_id: &EventId) {
-        if let Some((echo, content)) = self.outgoing_messages.remove(uuid) {
+    async fn handle_outgoing_message(
+        &self,
+        uuid: Box<TransactionId>,
+        event_id: &EventId,
+    ) {
+        if let Some((echo, content)) = self.outgoing_messages.remove(&uuid) {
             let event = SyncMessageEvent {
                 sender: (&*self.own_user_id).to_owned(),
                 origin_server_ts: MilliSecondsSinceUnixEpoch::now(),
@@ -767,7 +780,7 @@ impl MatrixRoom {
                 .expect("Sent out an event that we don't know how to render");
 
             if echo {
-                self.buffer.replace_local_echo(uuid, rendered);
+                self.buffer.replace_local_echo(&uuid, rendered);
             } else {
                 self.buffer.print_rendered_event(rendered);
             }
@@ -813,10 +826,9 @@ impl MatrixRoom {
         if let Some(id) = &event.unsigned().transaction_id {
             // We don't support local echo for verification events.
             if !event.is_verification() {
-                if let Ok(id) = Uuid::parse_str(id) {
-                    self.handle_outgoing_message(id, event.event_id()).await;
-                    return;
-                }
+                self.handle_outgoing_message(id.to_owned(), event.event_id())
+                    .await;
+                return;
             }
         }
 
