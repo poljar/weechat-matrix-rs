@@ -28,6 +28,7 @@ mod members;
 use buffer::RoomBuffer;
 use members::Members;
 pub use members::WeechatRoomMember;
+use tokio::runtime::Runtime;
 use tracing::{debug, trace};
 
 use std::{
@@ -41,8 +42,6 @@ use std::{
         Mutex, MutexGuard,
     },
 };
-
-use futures::executor::block_on;
 
 use unicode_segmentation::UnicodeSegmentation;
 use url::Url;
@@ -90,6 +89,7 @@ use crate::{
 #[derive(Clone)]
 pub struct RoomHandle {
     inner: MatrixRoom,
+    #[allow(dead_code)]
     buffer_handle: BufferHandle,
 }
 
@@ -152,6 +152,7 @@ pub struct MatrixRoom {
     homeserver: Rc<Url>,
     room_id: Rc<RoomId>,
     own_user_id: Rc<UserId>,
+    global_runtime: Rc<Runtime>,
     room: Joined,
     buffer: RoomBuffer,
 
@@ -203,6 +204,7 @@ impl MessageQueue {
 impl RoomHandle {
     pub fn new(
         server_name: &str,
+        runtime: Rc<Runtime>,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
         room: Joined,
@@ -210,10 +212,12 @@ impl RoomHandle {
         room_id: &RoomId,
         own_user_id: &UserId,
     ) -> Self {
-        let buffer = RoomBuffer::new(room.clone());
-        let members = Members::new(room.clone(), buffer.clone());
+        let buffer = RoomBuffer::new(room.clone(), runtime.clone());
+        let members =
+            Members::new(room.clone(), buffer.clone(), runtime.clone());
 
-        let own_nick = block_on(room.get_member_no_sync(own_user_id))
+        let own_nick = runtime
+            .block_on(room.get_member_no_sync(own_user_id))
             .ok()
             .flatten()
             .map(|m| m.name().to_owned())
@@ -224,6 +228,7 @@ impl RoomHandle {
         let room = MatrixRoom {
             homeserver: Rc::new(homeserver),
             room_id: room_id.into(),
+            global_runtime: runtime,
             connection: connection.clone(),
             config,
             prev_batch: Rc::new(RefCell::new(
@@ -310,6 +315,7 @@ impl RoomHandle {
     pub async fn restore(
         server_name: &str,
         room: Joined,
+        runtime: Rc<Runtime>,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
         homeserver: Url,
@@ -321,6 +327,7 @@ impl RoomHandle {
 
         let room_buffer = Self::new(
             server_name,
+            runtime.clone(),
             connection,
             config,
             room_clone,
@@ -331,11 +338,14 @@ impl RoomHandle {
 
         debug!("Restoring room {}", room.room_id());
 
-        let matrix_members = room.joined_user_ids().await?;
+        let matrix_members = runtime
+            .spawn(async move { room.joined_user_ids().await })
+            .await
+            .unwrap()?;
 
         for user_id in matrix_members {
             trace!("Restoring member {}", user_id);
-            room_buffer.members.restore_member(&user_id).await;
+            room_buffer.members.restore_member(user_id).await;
         }
 
         *room_buffer.prev_batch.borrow_mut() =
@@ -371,7 +381,9 @@ impl MatrixRoom {
     }
 
     pub fn contains_only_verified_devices(&self) -> bool {
-        block_on(self.room.contains_only_verified_devices()).unwrap_or_default()
+        self.global_runtime
+            .block_on(self.room.contains_only_verified_devices())
+            .unwrap_or_default()
     }
 
     pub fn is_public(&self) -> bool {
@@ -400,7 +412,7 @@ impl MatrixRoom {
         };
 
         // TODO remove this unwrap.
-        let redacter = self.members.get(&event.sender).await.unwrap();
+        let redacter = self.members.get(event.sender.clone()).await.unwrap();
 
         let event_id_tag =
             Cow::from(format!("{}_id_{}", PLUGIN_NAME, event.redacts));
@@ -552,7 +564,7 @@ impl MatrixRoom {
     ) -> Option<RenderedEvent> {
         // TODO remove this expect.
         let sender =
-            self.members.get(event.sender()).await.expect(
+            self.members.get(event.sender().into()).await.expect(
                 "Rendering a message but the sender isn't in the nicklist",
             );
 
@@ -583,10 +595,13 @@ impl MatrixRoom {
     ) {
         if self.config.borrow().look().local_echo() {
             if let MessageType::Text(c) = &content.msgtype {
-                let sender =
-                    self.members.get(&self.own_user_id).await.unwrap_or_else(
-                        || panic!("No own member {}", self.own_user_id),
-                    );
+                let sender = self
+                    .members
+                    .get(self.own_user_id.as_ref().into())
+                    .await
+                    .unwrap_or_else(|| {
+                        panic!("No own member {}", self.own_user_id)
+                    });
 
                 let local_echo = c
                     .render_with_prefix_for_echo(&sender, &uuid, &())
@@ -630,7 +645,7 @@ impl MatrixRoom {
 
             match c
                 .send_message(
-                    self.room().clone(),
+                    self.room.clone(),
                     AnyMessageEventContent::RoomMessage(content),
                     Some(uuid.clone()),
                 )
@@ -677,7 +692,7 @@ impl MatrixRoom {
         }
 
         let connection = self.connection.clone();
-        let room = self.room().clone();
+        let room = self.room.clone();
 
         let send = |typing: bool| async move {
             let connection = connection.borrow().clone();
@@ -730,10 +745,11 @@ impl MatrixRoom {
         Weechat::bar_item_update("matrix_modes");
 
         if let Some(connection) = connection {
-            let room = self.room().clone();
+            let room = self.room.clone();
 
             if let Ok(r) = connection.room_messages(room, prev_batch).await {
-                for event in r.chunk.iter().filter_map(|e| e.deserialize().ok())
+                for event in
+                    r.chunk.iter().filter_map(|e| e.event.deserialize().ok())
                 {
                     self.handle_room_event(&event).await;
                 }
@@ -790,7 +806,7 @@ impl MatrixRoom {
     async fn handle_edits(&self, event: &AnySyncMessageEvent) {
         // TODO remove this expect.
         let sender =
-            self.members.get(event.sender()).await.expect(
+            self.members.get(event.sender().into()).await.expect(
                 "Rendering a message but the sender isn't in the nicklist",
             );
 
@@ -851,10 +867,10 @@ impl MatrixRoom {
             // TODO remove those expects and unwraps.
             let redacter =
                 &e.unsigned.redacted_because.as_ref().unwrap().sender;
-            let redacter = self.members.get(redacter).await.expect(
+            let redacter = self.members.get(redacter.clone()).await.expect(
                 "Rendering a message but the sender isn't in the nicklist",
             );
-            let sender = self.members.get(&e.sender).await.expect(
+            let sender = self.members.get(e.sender.clone()).await.expect(
                 "Rendering a message but the sender isn't in the nicklist",
             );
             let rendered = e.render_with_prefix(
@@ -912,7 +928,7 @@ impl MatrixRoom {
                 // Only print out historical events if they aren't edits of
                 // other events.
                 if !event.is_edit() {
-                    let sender = self.members.get(event.sender()).await.expect(
+                    let sender = self.members.get(event.sender().to_owned()).await.expect(
                         "Rendering a message but the sender isn't in the nicklist",
                     );
 
@@ -938,9 +954,9 @@ impl MatrixRoom {
         }
     }
 
-    pub fn room(&self) -> &Joined {
-        &self.room
-    }
+    // pub fn room(&self) -> &Joined {
+    //     &self.room
+    // }
 
     pub async fn handle_sync_state_event(
         &self,

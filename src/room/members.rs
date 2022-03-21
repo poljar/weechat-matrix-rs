@@ -2,6 +2,7 @@ use std::{convert::TryFrom, rc::Rc};
 
 use dashmap::DashMap;
 
+use tokio::runtime::Runtime;
 use tracing::{error, info};
 
 use matrix_sdk::{
@@ -33,6 +34,7 @@ pub struct Members {
     ambiguity_map: Rc<DashMap<Box<UserId>, bool>>,
     nicks: Rc<DashMap<Box<UserId>, String>>,
     buffer: RoomBuffer,
+    runtime: Rc<Runtime>,
 }
 
 #[derive(Clone, Debug)]
@@ -49,12 +51,13 @@ impl PartialEq for WeechatRoomMember {
 }
 
 impl Members {
-    pub fn new(room: Joined, buffer: RoomBuffer) -> Self {
+    pub fn new(room: Joined, buffer: RoomBuffer, runtime: Rc<Runtime>) -> Self {
         Self {
             room,
             nicks: DashMap::new().into(),
             ambiguity_map: DashMap::new().into(),
             buffer,
+            runtime,
         }
     }
 
@@ -84,17 +87,25 @@ impl Members {
         self.nicks.insert(member.user_id().to_owned(), nick);
     }
 
-    pub async fn restore_member(&self, user_id: &UserId) {
-        match self.room().get_member_no_sync(user_id).await {
+    pub async fn restore_member(&self, user_id: Box<UserId>) {
+        let room = self.room.clone();
+        let user_id_clone = user_id.clone();
+
+        match self
+            .runtime
+            .spawn(async move { room.get_member_no_sync(&user_id_clone).await })
+            .await
+            .unwrap()
+        {
             Ok(Some(member)) => {
                 self.ambiguity_map
-                    .insert(user_id.into(), member.name_ambiguous());
+                    .insert(user_id.clone(), member.name_ambiguous());
                 self.update_member(user_id).await;
             }
             Ok(None) => {
                 panic!(
                     "Couldn't find member {} in {}",
-                    user_id,
+                    &user_id,
                     self.buffer.short_name()
                 )
             }
@@ -108,7 +119,7 @@ impl Members {
         }
     }
 
-    pub async fn update_member(&self, user_id: &UserId) {
+    pub async fn update_member(&self, user_id: Box<UserId>) {
         let buffer = self.buffer.buffer_handle();
 
         let buffer = if let Ok(b) = buffer.upgrade() {
@@ -117,11 +128,11 @@ impl Members {
             return;
         };
 
-        if let Some(nick) = self.nicks.get(user_id) {
+        if let Some(nick) = self.nicks.get(&user_id) {
             buffer.remove_nick(&nick);
         }
 
-        let member = self.get(user_id).await.unwrap_or_else(|| {
+        let member = self.get(user_id.clone()).await.unwrap_or_else(|| {
             panic!(
                 "Couldn't find member {} in {}",
                 user_id,
@@ -144,16 +155,16 @@ impl Members {
 
             if let Some(disambiguated) = &change.disambiguated_member {
                 self.ambiguity_map.insert(disambiguated.clone(), false);
-                self.update_member(disambiguated).await;
+                self.update_member(disambiguated.clone()).await;
             }
 
             if let Some(ambiguated) = &change.ambiguated_member {
                 self.ambiguity_map.insert(ambiguated.clone(), true);
-                self.update_member(ambiguated).await;
+                self.update_member(ambiguated.clone()).await;
             }
         }
 
-        self.update_member(user_id).await;
+        self.update_member(user_id.into()).await;
     }
 
     /// Remove a Weechat room member by user ID.
@@ -170,12 +181,12 @@ impl Members {
         if let Some(change) = ambiguity_change {
             if let Some(disambiguated) = &change.disambiguated_member {
                 self.ambiguity_map.insert(disambiguated.clone(), false);
-                self.update_member(disambiguated).await;
+                self.update_member(disambiguated.clone()).await;
             }
 
             if let Some(ambiguated) = &change.ambiguated_member {
                 self.ambiguity_map.insert(ambiguated.clone(), true);
-                self.update_member(ambiguated).await;
+                self.update_member(ambiguated.clone()).await;
             }
         }
 
@@ -193,15 +204,23 @@ impl Members {
     }
 
     /// Retrieve a reference to a Weechat room member by user ID.
-    pub async fn get(&self, user_id: &UserId) -> Option<WeechatRoomMember> {
-        let color = if self.room.own_user_id() == user_id {
+    pub async fn get(&self, user_id: Box<UserId>) -> Option<WeechatRoomMember> {
+        let color = if self.room.own_user_id() == &user_id {
             "weechat.color.chat_nick_self".into()
         } else {
             Weechat::info_get("nick_color_name", user_id.as_str())
                 .expect("Couldn't get the nick color name")
         };
 
-        match self.room.get_member_no_sync(user_id).await {
+        let user_id_clone = user_id.clone();
+        let room = self.room.clone();
+
+        match self
+            .runtime
+            .spawn(async move { room.get_member_no_sync(&user_id_clone).await })
+            .await
+            .unwrap()
+        {
             Ok(m) => m.map(|m| WeechatRoomMember {
                 color: Rc::new(color),
                 ambiguous_nick: Rc::new(
@@ -221,10 +240,6 @@ impl Members {
                 None
             }
         }
-    }
-
-    fn room(&self) -> &Joined {
-        &self.room
     }
 
     pub async fn handle_membership_event(
@@ -283,8 +298,8 @@ impl Members {
         self.buffer.update_buffer_name();
 
         if !state_event {
-            let sender = self.get(&sender_id).await;
-            let target = self.get(&target_id).await;
+            let sender = self.get(sender_id.clone()).await;
+            let target = self.get(target_id.clone()).await;
 
             // Display the event message
             let message = match (&sender, &target) {

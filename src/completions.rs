@@ -1,7 +1,7 @@
-use std::{borrow::Cow, convert::TryFrom};
+use std::{borrow::Cow, convert::TryFrom, rc::Rc};
 
-use futures::executor::block_on;
 use matrix_sdk::ruma::UserId;
+use tokio::runtime::Runtime;
 use weechat::{
     buffer::Buffer,
     hooks::{
@@ -20,11 +20,14 @@ pub struct Completions {
 }
 
 impl Completions {
-    pub fn hook_all(servers: Servers) -> Result<Self, ()> {
+    pub fn hook_all(
+        servers: Servers,
+        runtime: Rc<Runtime>,
+    ) -> Result<Self, ()> {
         Ok(Self {
             servers: ServersCompletion::create(servers.clone())?,
-            users: UsersCompletion::create(servers.clone())?,
-            devices: DeviceCompletion::create(servers)?,
+            users: UsersCompletion::create(servers.clone(), runtime.clone())?,
+            devices: DeviceCompletion::create(servers, runtime)?,
         })
     }
 }
@@ -66,11 +69,15 @@ impl CompletionCallback for ServersCompletion {
 
 struct UsersCompletion {
     servers: Servers,
+    runtime: Rc<Runtime>,
 }
 
 impl UsersCompletion {
-    fn create(servers: Servers) -> Result<CompletionHook, ()> {
-        let comp = UsersCompletion { servers };
+    fn create(
+        servers: Servers,
+        runtime: Rc<Runtime>,
+    ) -> Result<CompletionHook, ()> {
+        let comp = UsersCompletion { servers, runtime };
 
         CompletionHook::new(
             "matrix-users",
@@ -90,8 +97,9 @@ impl CompletionCallback for UsersCompletion {
     ) -> Result<(), ()> {
         if let Some(server) = self.servers.find_server(buffer) {
             if let Some(connection) = server.connection() {
-                let tracked_users =
-                    block_on(connection.client().encryption().tracked_users());
+                let tracked_users = self
+                    .runtime
+                    .block_on(connection.client().encryption().tracked_users());
 
                 for user in tracked_users.into_iter() {
                     completion.add_with_options(
@@ -109,11 +117,15 @@ impl CompletionCallback for UsersCompletion {
 
 struct DeviceCompletion {
     servers: Servers,
+    runtime: Rc<Runtime>,
 }
 
 impl DeviceCompletion {
-    fn create(servers: Servers) -> Result<CompletionHook, ()> {
-        let comp = DeviceCompletion { servers };
+    fn create(
+        servers: Servers,
+        runtime: Rc<Runtime>,
+    ) -> Result<CompletionHook, ()> {
+        let comp = DeviceCompletion { servers, runtime };
 
         CompletionHook::new(
             "matrix-devices",
@@ -139,10 +151,15 @@ impl CompletionCallback for DeviceCompletion {
                 if let Some(user_id) =
                     args.first().and_then(|u| Box::<UserId>::try_from(*u).ok())
                 {
-                    let devices = block_on(
-                        connection.client().encryption().get_user_devices(&user_id),
-                    )
-                    .map_err(|_| ())?;
+                    let devices = self
+                        .runtime
+                        .block_on(
+                            connection
+                                .client()
+                                .encryption()
+                                .get_user_devices(&user_id),
+                        )
+                        .map_err(|_| ())?;
 
                     for device_id in devices.keys() {
                         completion.add_with_options(

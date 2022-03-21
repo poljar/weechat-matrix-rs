@@ -1,7 +1,10 @@
+use std::rc::Rc;
+
 use clap::{
     App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
     SubCommand,
 };
+use tokio::runtime::Runtime;
 use url::Url;
 
 use weechat::{
@@ -22,12 +25,14 @@ use crate::{
 pub struct MatrixCommand {
     servers: Servers,
     config: ConfigHandle,
+    runtime: Rc<Runtime>,
 }
 
 impl MatrixCommand {
     pub fn create(
         servers: &Servers,
         config: &ConfigHandle,
+        runtime: Rc<Runtime>,
     ) -> Result<Command, ()> {
         let matrix_settings = CommandSettings::new("matrix")
             .description("Matrix chat protocol command.")
@@ -72,6 +77,7 @@ Use /matrix [command] help to find out more.\n",
             MatrixCommand {
                 servers: servers.clone(),
                 config: config.clone(),
+                runtime,
             },
         )
     }
@@ -96,6 +102,7 @@ Use /matrix [command] help to find out more.\n",
             &self.config,
             &mut section,
             self.servers.clone(),
+            self.runtime.clone(),
         );
 
         self.servers.insert(server);

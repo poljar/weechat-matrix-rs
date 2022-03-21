@@ -133,7 +133,8 @@ impl Verification {
 struct InnerVerificationBuffer {
     verification: Rc<RefCell<Verification>>,
     connection: Rc<RefCell<Option<Connection>>>,
-    verification_buffers: Weak<RefCell<HashMap<Box<UserId>, VerificationBuffer>>>,
+    verification_buffers:
+        Weak<RefCell<HashMap<Box<UserId>, VerificationBuffer>>>,
 }
 
 impl InnerVerificationBuffer {
@@ -338,7 +339,9 @@ impl VerificationBuffer {
         sender: &UserId,
         verification: impl Into<Verification>,
         connection: Rc<RefCell<Option<Connection>>>,
-        verification_buffers: &Rc<RefCell<HashMap<Box<UserId>, VerificationBuffer>>>,
+        verification_buffers: &Rc<
+            RefCell<HashMap<Box<UserId>, VerificationBuffer>>,
+        >,
     ) -> Result<Self, ()> {
         let verification = verification.into();
 

@@ -1,6 +1,5 @@
 use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
-use futures::executor::block_on;
 use matrix_sdk::{
     room::Joined,
     ruma::{
@@ -9,7 +8,7 @@ use matrix_sdk::{
     },
     StoreError,
 };
-use uuid::Uuid;
+use tokio::runtime::Runtime;
 use weechat::{
     buffer::{Buffer, BufferHandle, BufferLine, LineData},
     Prefix, Weechat,
@@ -20,13 +19,15 @@ use crate::{render::RenderedEvent, utils::ToTag};
 #[derive(Clone)]
 pub struct RoomBuffer {
     room: Joined,
+    runtime: Rc<Runtime>,
     pub(super) inner: Rc<RefCell<Option<BufferHandle>>>,
 }
 
 impl RoomBuffer {
-    pub fn new(room: Joined) -> Self {
+    pub fn new(room: Joined, runtime: Rc<Runtime>) -> Self {
         Self {
             room,
+            runtime,
             inner: Rc::new(RefCell::new(None)),
         }
     }
@@ -241,7 +242,7 @@ impl RoomBuffer {
 
     pub fn calculate_buffer_name(&self) -> Result<String, StoreError> {
         let room = self.room.clone();
-        let room_name = block_on(room.display_name())?;
+        let room_name = self.runtime.block_on(room.display_name())?;
 
         let room_name = if room_name == "#" {
             "##".to_owned()

@@ -73,8 +73,11 @@ impl VerifyCommand {
         if let Some(c) = server.connection() {
             match (device_id, fingerprint) {
                 (None, None) => {
-                    if let Some(identity) =
-                        c.client().encryption().get_user_identity(&user_id).await?
+                    if let Some(identity) = c
+                        .client()
+                        .encryption()
+                        .get_user_identity(&user_id)
+                        .await?
                     {
                         let request = || async move {
                             identity.request_verification().await
@@ -88,8 +91,11 @@ impl VerifyCommand {
                     }
                 }
                 (None, Some(fingerprint)) => {
-                    if let Some(identity) =
-                        c.client().encryption().get_user_identity(&user_id).await?
+                    if let Some(identity) = c
+                        .client()
+                        .encryption()
+                        .get_user_identity(&user_id)
+                        .await?
                     {
                         if Some(fingerprint.as_str())
                             == identity.master_key().get_first_key()
@@ -107,8 +113,11 @@ impl VerifyCommand {
                     }
                 }
                 (Some(device_id), None) => {
-                    if let Some(device) =
-                        c.client().encryption().get_device(&user_id, &device_id).await?
+                    if let Some(device) = c
+                        .client()
+                        .encryption()
+                        .get_device(&user_id, &device_id)
+                        .await?
                     {
                         let request = || async move {
                             device.request_verification().await
@@ -122,8 +131,11 @@ impl VerifyCommand {
                     }
                 }
                 (Some(device_id), Some(fingerprint)) => {
-                    if let Some(device) =
-                        c.client().encryption().get_device(&user_id, &device_id).await?
+                    if let Some(device) = c
+                        .client()
+                        .encryption()
+                        .get_device(&user_id, &device_id)
+                        .await?
                     {
                         if device.get_key(DeviceKeyAlgorithm::Ed25519)
                             == Some(&fingerprint)

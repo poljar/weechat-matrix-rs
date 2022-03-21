@@ -1,7 +1,8 @@
-use std::convert::TryFrom;
+use std::{convert::TryFrom, rc::Rc};
 
 use clap::{App, ArgMatches};
 use matrix_sdk::ruma::UserId;
+use tokio::runtime::Runtime;
 use weechat::{
     hooks::{Command, CommandRun},
     Args, Weechat,
@@ -39,9 +40,10 @@ impl Commands {
     pub fn hook_all(
         servers: &Servers,
         config: &ConfigHandle,
+        runtime: Rc<Runtime>,
     ) -> Result<Commands, ()> {
         Ok(Commands {
-            _matrix: MatrixCommand::create(servers, config)?,
+            _matrix: MatrixCommand::create(servers, config, runtime)?,
             _devices: DevicesCommand::create(servers)?,
             _keys: KeysCommand::create(servers)?,
             _page_up: PageUpCommand::create(servers)?,

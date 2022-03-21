@@ -21,6 +21,7 @@ use std::{
 };
 
 use strum_macros::EnumVariantNames;
+use tokio::runtime::Runtime;
 use weechat::{
     config,
     config::{
@@ -154,16 +155,18 @@ config!(
 pub struct ConfigHandle {
     pub inner: Rc<RefCell<Config>>,
     servers: Servers,
+    global_runtime: Rc<Runtime>,
 }
 
 impl ConfigHandle {
     /// Create a new config and wrap it in our config handle.
-    pub fn new(servers: &Servers) -> ConfigHandle {
+    pub fn new(servers: &Servers, runtime: Rc<Runtime>) -> ConfigHandle {
         let config = Config::new().expect("Can't create new config");
 
         let config = ConfigHandle {
             inner: Rc::new(RefCell::new(config)),
             servers: servers.clone(),
+            global_runtime: runtime,
         };
 
         // The server section is special since it has a custom section read and
@@ -267,6 +270,7 @@ impl SectionReadCallback for ConfigHandle {
                 &self,
                 section,
                 self.servers.clone(),
+                self.global_runtime.clone(),
             );
             self.servers.insert(server);
         }

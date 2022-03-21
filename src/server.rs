@@ -54,13 +54,13 @@
 //! receiver fetches events individually from a mpsc channel. This makes sure
 //! that processing events will not block the Weechat mainloop for too long.
 
-use futures::executor::block_on;
 use std::{
     cell::{Ref, RefCell, RefMut},
     collections::HashMap,
     path::PathBuf,
     rc::{Rc, Weak},
 };
+use tokio::runtime::Runtime;
 use tracing::error;
 use url::Url;
 
@@ -167,6 +167,7 @@ pub struct InnerServer {
     client: Rc<RefCell<Option<Client>>>,
     login_state: Rc<RefCell<Option<LoginInfo>>>,
     connection: Rc<RefCell<Option<Connection>>>,
+    global_runtime: Rc<Runtime>,
     server_buffer: Rc<RefCell<Option<BufferHandle>>>,
     verification_buffers: Rc<RefCell<HashMap<Box<UserId>, VerificationBuffer>>>,
 }
@@ -177,6 +178,7 @@ impl MatrixServer {
         config: &ConfigHandle,
         server_section: &mut ConfigSection,
         servers: Servers,
+        global_runtime: Rc<Runtime>,
     ) -> Self {
         let server_name: Rc<str> = name.to_string().into();
 
@@ -192,6 +194,7 @@ impl MatrixServer {
             connection: Rc::new(RefCell::new(None)),
             server_buffer: Rc::new(RefCell::new(None)),
             verification_buffers: Rc::new(RefCell::new(HashMap::new())),
+            global_runtime,
         };
 
         let server = server.into();
@@ -492,6 +495,7 @@ impl InnerServer {
             });
             let buffer = RoomHandle::new(
                 &self.server_name,
+                self.global_runtime.clone(),
                 &self.connection,
                 self.config.inner.clone(),
                 room,
@@ -528,6 +532,7 @@ impl InnerServer {
         match RoomHandle::restore(
             &self.server_name,
             room,
+            self.global_runtime.clone(),
             &self.connection,
             self.config.inner.clone(),
             homeserver,
@@ -982,7 +987,7 @@ impl InnerServer {
             builder = builder.disable_ssl_verification();
         }
 
-        let client = block_on(builder.build()).unwrap();
+        let client = self.global_runtime.block_on(builder.build()).unwrap();
 
         *self.current_settings.borrow_mut() = settings.clone();
         *self.client.borrow_mut() = Some(client.clone());

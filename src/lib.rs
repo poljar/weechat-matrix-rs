@@ -16,6 +16,7 @@ use std::{
     rc::Rc,
 };
 
+use tokio::runtime::Runtime;
 use tracing_subscriber::layer::SubscriberExt;
 
 use verification_buffer::VerificationBuffer;
@@ -198,7 +199,11 @@ impl Matrix {
         }
     }
 
-    fn create_default_server(servers: Servers, config: &ConfigHandle) {
+    fn create_default_server(
+        servers: Servers,
+        config: &ConfigHandle,
+        runtime: Rc<Runtime>,
+    ) {
         // TODO change this to matrix.org.
         let server_name = "localhost";
 
@@ -212,6 +217,7 @@ impl Matrix {
             config,
             &mut section,
             servers.clone(),
+            runtime,
         );
         servers.insert(server);
     }
@@ -220,11 +226,17 @@ impl Matrix {
 impl Plugin for Matrix {
     fn init(_: &Weechat, _args: Args) -> Result<Self, ()> {
         let servers = Servers::new();
-        let config = ConfigHandle::new(&servers);
-        let commands = Commands::hook_all(&servers, &config)?;
+
+        let runtime = Rc::new(Runtime::new().map_err(|_| {
+            Weechat::print("Can't create global tokio runtime")
+        })?);
+
+        let config = ConfigHandle::new(&servers, runtime.clone());
+        let commands = Commands::hook_all(&servers, &config, runtime.clone())?;
 
         let bar_items = BarItems::hook_all(servers.clone())?;
-        let completions = Completions::hook_all(servers.clone())?;
+        let completions =
+            Completions::hook_all(servers.clone(), runtime.clone())?;
 
         let subscriber = {
             let filter =
@@ -246,8 +258,16 @@ impl Plugin for Matrix {
             }
         }
 
+        let runtime = Rc::new(Runtime::new().map_err(|_| {
+            Weechat::print("Can't create global tokio runtime")
+        })?);
+
         if servers.is_empty() {
-            Matrix::create_default_server(servers.clone(), &config)
+            Matrix::create_default_server(
+                servers.clone(),
+                &config,
+                runtime.clone(),
+            )
         }
 
         let typing = SignalHook::new("input_text_changed", servers.clone())

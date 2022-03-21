@@ -16,22 +16,15 @@ use matrix_sdk::{
     self,
     config::SyncSettings,
     deserialized_responses::AmbiguityChange,
-    room::Joined,
+    room::{Joined, Messages, MessagesOptions},
     ruma::{
         api::client::{
             device::{
                 delete_devices::v3::Response as DeleteDevicesResponse,
                 get_devices::v3::Response as DevicesResponse,
             },
-            filter::{
-                FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
-            },
-            message::{
-                get_message_events::v3::{
-                    Request as MessagesRequest, Response as MessagesResponse,
-                },
-                send_message_event::v3::Response as RoomSendResponse,
-            },
+            filter::{FilterDefinition, LazyLoadOptions},
+            message::send_message_event::v3::Response as RoomSendResponse,
             session::login::v3::Response as LoginResponse,
             sync::sync_events::v3::Filter,
             uiaa::{AuthData, Password, UserIdentifier},
@@ -96,6 +89,7 @@ pub enum ClientMessage {
 /// loop drop the object.
 #[derive(Debug, Clone)]
 pub struct Connection {
+    #[allow(dead_code)]
     receiver_task: Rc<Task<()>>,
     client: Client,
     pub runtime: Rc<Runtime>,
@@ -190,21 +184,16 @@ impl Connection {
         &self,
         room: Joined,
         prev_batch: PrevBatch,
-    ) -> HttpResult<MessagesResponse> {
-        todo!()
-        // self.spawn(async move {
-        //     let request = match &prev_batch {
-        //         PrevBatch::Backwards(t) => {
-        //             MessagesRequest::backward(&room.room_id(), &t)
-        //         }
-        //         PrevBatch::Forward(t) => {
-        //             MessagesRequest::forward(&room.room_id(), &t)
-        //         }
-        //     };
+    ) -> MatrixResult<Messages> {
+        self.spawn(async move {
+            let options = match &prev_batch {
+                PrevBatch::Backwards(t) => MessagesOptions::backward(t),
+                PrevBatch::Forward(t) => MessagesOptions::forward(t),
+            };
 
-        //     room.messages(request).await
-        // })
-        // .await
+            room.messages(options).await
+        })
+        .await
     }
 
     /// Get the list of our own devices.
@@ -312,19 +301,13 @@ impl Connection {
         }
     }
 
-    #[allow(clippy::field_reassign_with_default)]
     fn sync_filter() -> FilterDefinition<'static> {
         let mut filter = FilterDefinition::default();
-        let mut room_filter = RoomFilter::default();
-        let mut event_filter = RoomEventFilter::default();
 
-        event_filter.lazy_load_options = LazyLoadOptions::Enabled {
+        filter.room.state.limit = Some(10u16.into());
+        filter.room.state.lazy_load_options = LazyLoadOptions::Enabled {
             include_redundant_members: false,
         };
-        event_filter.limit = Some(10u16.into());
-
-        room_filter.state = event_filter;
-        filter.room = room_filter;
 
         filter
     }
