@@ -23,12 +23,12 @@ use matrix_sdk::{
                     ServerNoticeMessageEventContent, TextMessageEventContent,
                     VideoMessageEventContent,
                 },
-                EncryptedFile,
+                EncryptedFile, MediaSource,
             },
-            RedactedSyncMessageEvent, SyncStateEvent,
+            RedactedSyncMessageLikeEvent, SyncStateEvent,
         },
-        identifiers::{EventId, UserId},
-        uint, MilliSecondsSinceUnixEpoch, TransactionId,
+        uint, EventId, MilliSecondsSinceUnixEpoch, MxcUri, TransactionId,
+        UserId,
     },
 };
 
@@ -330,10 +330,10 @@ fn mxc_to_http_download_path(
 
 /// Convert a matrix content URI to HTTP(s), respecting a user's homeserver
 fn mxc_to_http(
-    mxc_url: &str,
+    mxc_url: &MxcUri,
     homeserver: &Url,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let url = url::Url::parse(mxc_url)?;
+    let url = url::Url::parse(mxc_url.as_str())?;
 
     if url.scheme() != "mxc" {
         return Err("URL missing MXC scheme".into());
@@ -360,11 +360,10 @@ fn mxc_to_http(
 /// The returned URI should never be converted to http and opened directly, as that would expose
 /// the decryption parameters to any middleman or ISP.
 fn mxc_to_emxc(
-    mxc_url: &str,
     homeserver: &Url,
     encrypted: &EncryptedFile,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let url = url::Url::parse(mxc_url)?;
+    let url = url::Url::parse(encrypted.url.as_str())?;
 
     if url.scheme() != "mxc" {
         return Err("URL missing MXC scheme".into());
@@ -412,9 +411,7 @@ impl<C: HasUrlOrFile> Render for C {
     fn render(&self, homeserver: &Self::RenderContext) -> RenderedContent {
         // Convert MXC to HTTP(s) or EMXC, but fallback to MXC if unable to.
         let mxc_url = match self.encrypted_file() {
-            Some(encrypted_file) => {
-                mxc_to_emxc(self.resolve_url(), homeserver, &encrypted_file)
-            }
+            Some(encrypted_file) => mxc_to_emxc(homeserver, &encrypted_file),
             None => mxc_to_http(self.resolve_url(), homeserver),
         }
         .unwrap_or_else(|_| self.resolve_url().to_string());
@@ -461,7 +458,7 @@ impl Render for RoomEncryptedEventContent {
     }
 }
 
-impl Render for RedactedSyncMessageEvent<RedactedRoomMessageEventContent> {
+impl Render for RedactedSyncMessageLikeEvent<RedactedRoomMessageEventContent> {
     type RenderContext = WeechatRoomMember;
     const TAGS: &'static [&'static str] = &["matrix_redacted"];
 
@@ -679,16 +676,17 @@ macro_rules! has_formatted_body {
 /// This trait is implemented for message types that can contain either an URL
 /// or an encrypted file. One of these _must_ be present.
 pub trait HasUrlOrFile {
-    fn url(&self) -> Option<&str>;
-    fn file(&self) -> Option<&str>;
+    fn url(&self) -> Option<&MxcUri>;
     fn body(&self) -> &str;
-    #[inline]
-    fn resolve_url(&self) -> &str {
+    fn resolve_url(&self) -> &MxcUri {
         // the file is either encrypted or not encrypted so either `url` or
         // `file` must exist and unwrapping will never panic
-        self.url().or_else(|| self.file()).unwrap()
+        self.encrypted_file()
+            .map(|f| &*f.url)
+            .or_else(|| self.url())
+            .unwrap()
     }
-    fn encrypted_file(&self) -> &Option<Box<EncryptedFile>>;
+    fn encrypted_file(&self) -> Option<&EncryptedFile>;
 }
 
 // Same as above: a simple macro to implement the trait for structs with `url`
@@ -701,17 +699,20 @@ macro_rules! has_url_or_file {
             }
 
             #[inline]
-            fn url(&self) -> Option<&str> {
-                self.url.as_ref().map(|u| u.as_str())
+            fn url(&self) -> Option<&MxcUri> {
+                if let MediaSource::Plain(u) = &self.source {
+                    Some(u)
+                } else {
+                    None
+                }
             }
 
-            #[inline]
-            fn file(&self) -> Option<&str> {
-                self.file.as_ref().map(|f| f.url.as_str())
-            }
-
-            fn encrypted_file(&self) -> &Option<Box<EncryptedFile>> {
-                &self.file
+            fn encrypted_file(&self) -> Option<&EncryptedFile> {
+                if let MediaSource::Encrypted(e) = &self.source {
+                    Some(e)
+                } else {
+                    None
+                }
             }
         }
     };
@@ -826,7 +827,7 @@ pub fn render_membership(
                         Some(name) => format!(
                             "{prefix}{target} {color_action}changed their display name to{color_reset} {new}",
                             prefix = Weechat::prefix(prefix),
-                            target = event.prev_content.as_ref().map(|p| p.displayname.clone()).flatten().unwrap_or(target_name),
+                            target = event.unsigned.prev_content.as_ref().map(|p| p.displayname.clone()).flatten().unwrap_or(target_name),
                             new = name,
                             color_action = color_action,
                             color_reset = color_reset
@@ -885,7 +886,7 @@ pub fn render_membership(
 mod tests {
     use matrix_sdk::ruma::{
         events::room::{EncryptedFileInit, JsonWebKeyInit},
-        identifiers::MxcUri,
+        MxcUri,
     };
 
     use crate::render::{mxc_to_emxc, mxc_to_http};

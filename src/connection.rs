@@ -30,12 +30,11 @@ use matrix_sdk::{
             uiaa::{AuthData, Password, UserIdentifier},
         },
         events::{
-            room::member::RoomMemberEventContent, AnyMessageEventContent,
+            room::member::RoomMemberEventContent, AnyMessageLikeEventContent,
             AnySyncRoomEvent, AnySyncStateEvent, AnyToDeviceEvent,
             SyncStateEvent,
         },
-        identifiers::{DeviceId, RoomId},
-        TransactionId,
+        DeviceId, RoomId, TransactionId,
     },
     Client, HttpResult, LoopCtrl, Result as MatrixResult,
 };
@@ -153,7 +152,7 @@ impl Connection {
     pub async fn send_message(
         &self,
         room: Joined,
-        content: AnyMessageEventContent,
+        content: AnyMessageLikeEventContent,
         transaction_id: Option<Box<TransactionId>>,
     ) -> MatrixResult<RoomSendResponse> {
         self.spawn(async move {

@@ -60,12 +60,12 @@ use matrix_sdk::{
                 },
                 redaction::SyncRoomRedactionEvent,
             },
-            AnyMessageEventContent, AnyRedactedSyncMessageEvent, AnyRoomEvent,
-            AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
-            SyncMessageEvent, SyncStateEvent,
+            AnyMessageLikeEventContent, AnyRedactedSyncMessageLikeEvent,
+            AnyRoomEvent, AnySyncMessageLikeEvent, AnySyncRoomEvent,
+            AnySyncStateEvent, SyncMessageLikeEvent, SyncStateEvent,
         },
-        identifiers::{EventId, RoomAliasId, RoomId, UserId},
-        MilliSecondsSinceUnixEpoch, TransactionId,
+        EventId, MilliSecondsSinceUnixEpoch, RoomAliasId, RoomId,
+        TransactionId, UserId,
     },
     StoreError,
 };
@@ -501,9 +501,9 @@ impl MatrixRoom {
         event_id: &EventId,
         send_time: &MilliSecondsSinceUnixEpoch,
         sender: &WeechatRoomMember,
-        content: &AnyMessageEventContent,
+        content: &AnyMessageLikeEventContent,
     ) -> Option<RenderedEvent> {
-        use AnyMessageEventContent::*;
+        use AnyMessageLikeEventContent::*;
         use MessageType::*;
 
         let rendered = match content {
@@ -560,7 +560,7 @@ impl MatrixRoom {
 
     async fn render_sync_message(
         &self,
-        event: &AnySyncMessageEvent,
+        event: &AnySyncMessageLikeEvent,
     ) -> Option<RenderedEvent> {
         // TODO remove this expect.
         let sender =
@@ -646,7 +646,7 @@ impl MatrixRoom {
             match c
                 .send_message(
                     self.room.clone(),
-                    AnyMessageEventContent::RoomMessage(content),
+                    AnyMessageLikeEventContent::RoomMessage(content),
                     Some(uuid.clone()),
                 )
                 .await
@@ -780,7 +780,7 @@ impl MatrixRoom {
         event_id: &EventId,
     ) {
         if let Some((echo, content)) = self.outgoing_messages.remove(&uuid) {
-            let event = SyncMessageEvent {
+            let event = SyncMessageLikeEvent {
                 sender: (&*self.own_user_id).to_owned(),
                 origin_server_ts: MilliSecondsSinceUnixEpoch::now(),
                 event_id: event_id.to_owned(),
@@ -788,7 +788,7 @@ impl MatrixRoom {
                 unsigned: Default::default(),
             };
 
-            let event = AnySyncMessageEvent::RoomMessage(event);
+            let event = AnySyncMessageLikeEvent::RoomMessage(event);
 
             let rendered = self
                 .render_sync_message(&event)
@@ -803,7 +803,7 @@ impl MatrixRoom {
         }
     }
 
-    async fn handle_edits(&self, event: &AnySyncMessageEvent) {
+    async fn handle_edits(&self, event: &AnySyncMessageLikeEvent) {
         // TODO remove this expect.
         let sender =
             self.members.get(event.sender().into()).await.expect(
@@ -818,7 +818,7 @@ impl MatrixRoom {
                     event_id,
                     send_time,
                     &sender,
-                    &AnyMessageEventContent::RoomMessage(content.clone()),
+                    &AnyMessageLikeEventContent::RoomMessage(content.clone()),
                 )
                 .await
                 .map(|r| {
@@ -835,7 +835,7 @@ impl MatrixRoom {
         }
     }
 
-    async fn handle_room_message(&self, event: &AnySyncMessageEvent) {
+    async fn handle_room_message(&self, event: &AnySyncMessageLikeEvent) {
         // If the event has a transaction id it's an event that we sent out
         // ourselves, the content will be in the outgoing message queue and it
         // may have been printed out as a local echo.
@@ -848,7 +848,7 @@ impl MatrixRoom {
             }
         }
 
-        if let AnySyncMessageEvent::RoomRedaction(r) = event {
+        if let AnySyncMessageLikeEvent::RoomRedaction(r) = event {
             self.redact_event(r).await;
         } else if event.is_edit() {
             self.handle_edits(event).await;
@@ -859,9 +859,9 @@ impl MatrixRoom {
 
     async fn handle_redacted_events(
         &self,
-        event: &AnyRedactedSyncMessageEvent,
+        event: &AnyRedactedSyncMessageLikeEvent,
     ) {
-        use AnyRedactedSyncMessageEvent::*;
+        use AnyRedactedSyncMessageLikeEvent::*;
 
         if let RoomMessage(e) = event {
             // TODO remove those expects and unwraps.
@@ -908,10 +908,10 @@ impl MatrixRoom {
         self.set_prev_batch();
 
         match &event {
-            AnySyncRoomEvent::Message(message) => {
+            AnySyncRoomEvent::MessageLike(message) => {
                 self.handle_room_message(message).await
             }
-            AnySyncRoomEvent::RedactedMessage(e) => {
+            AnySyncRoomEvent::RedactedMessageLike(e) => {
                 self.handle_redacted_events(e).await
             }
             // We don't print out redacted state events for now.
@@ -924,7 +924,7 @@ impl MatrixRoom {
 
     pub async fn handle_room_event(&self, event: &AnyRoomEvent) {
         match &event {
-            AnyRoomEvent::Message(event) => {
+            AnyRoomEvent::MessageLike(event) => {
                 // Only print out historical events if they aren't edits of
                 // other events.
                 if !event.is_edit() {
@@ -948,7 +948,7 @@ impl MatrixRoom {
                 }
             }
             // TODO print out redacted messages.
-            AnyRoomEvent::RedactedMessage(_) => (),
+            AnyRoomEvent::RedactedMessageLike(_) => (),
             AnyRoomEvent::RedactedState(_) => (),
             AnyRoomEvent::State(_) => (),
         }

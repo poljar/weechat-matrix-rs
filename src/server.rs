@@ -74,10 +74,10 @@ use matrix_sdk::{
         },
         events::{
             room::{member::RoomMemberEventContent, message::MessageType},
-            AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
+            AnySyncMessageLikeEvent, AnySyncRoomEvent, AnySyncStateEvent,
             AnyToDeviceEvent, SyncStateEvent,
         },
-        identifiers::{RoomId, UserId},
+        RoomId, UserId,
     },
     store::{OpenStoreError, StateStore},
     Client,
@@ -797,9 +797,9 @@ impl InnerServer {
 
     pub async fn receive_room_verification_event(
         &self,
-        event: &AnySyncMessageEvent,
+        event: &AnySyncMessageLikeEvent,
     ) {
-        let handle_event = |event: AnySyncMessageEvent| async move {
+        let handle_event = |event: AnySyncMessageLikeEvent| async move {
             if let Some(b) =
                 self.verification_buffers.borrow().get(event.sender())
             {
@@ -808,7 +808,7 @@ impl InnerServer {
         };
 
         match event {
-            AnySyncMessageEvent::RoomMessage(e) => {
+            AnySyncMessageLikeEvent::RoomMessage(e) => {
                 if let MessageType::VerificationRequest(_) = &e.content.msgtype
                 {
                     self.handle_verification_request(
@@ -819,7 +819,7 @@ impl InnerServer {
                     handle_event(event.clone()).await;
                 }
             }
-            AnySyncMessageEvent::KeyVerificationStart(e) => {
+            AnySyncMessageLikeEvent::KeyVerificationStart(e) => {
                 self.handle_verification_start(
                     &e.sender,
                     e.content.relates_to.event_id.as_str(),
@@ -827,12 +827,12 @@ impl InnerServer {
                 .await;
                 handle_event(event.clone()).await;
             }
-            AnySyncMessageEvent::KeyVerificationReady(_)
-            | AnySyncMessageEvent::KeyVerificationCancel(_)
-            | AnySyncMessageEvent::KeyVerificationAccept(_)
-            | AnySyncMessageEvent::KeyVerificationKey(_)
-            | AnySyncMessageEvent::KeyVerificationMac(_)
-            | AnySyncMessageEvent::KeyVerificationDone(_) => {
+            AnySyncMessageLikeEvent::KeyVerificationReady(_)
+            | AnySyncMessageLikeEvent::KeyVerificationCancel(_)
+            | AnySyncMessageLikeEvent::KeyVerificationAccept(_)
+            | AnySyncMessageLikeEvent::KeyVerificationKey(_)
+            | AnySyncMessageLikeEvent::KeyVerificationMac(_)
+            | AnySyncMessageLikeEvent::KeyVerificationDone(_) => {
                 handle_event(event.clone()).await;
             }
             _ => {}
@@ -914,7 +914,7 @@ impl InnerServer {
         room_id: &RoomId,
         event: AnySyncRoomEvent,
     ) {
-        if let AnySyncRoomEvent::Message(e) = &event {
+        if let AnySyncRoomEvent::MessageLike(e) = &event {
             self.receive_room_verification_event(e).await
         }
 

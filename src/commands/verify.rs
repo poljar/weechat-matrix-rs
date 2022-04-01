@@ -97,9 +97,12 @@ impl VerifyCommand {
                         .get_user_identity(&user_id)
                         .await?
                     {
-                        if Some(fingerprint.as_str())
-                            == identity.master_key().get_first_key()
-                        {
+                        let master_key = identity
+                            .master_key()
+                            .get_first_key()
+                            .map(|k| k.to_base64());
+
+                        if Some(fingerprint.as_str()) == master_key.as_deref() {
                             let request =
                                 || async move { identity.verify().await };
 
@@ -137,7 +140,10 @@ impl VerifyCommand {
                         .get_device(&user_id, &device_id)
                         .await?
                     {
-                        if device.get_key(DeviceKeyAlgorithm::Ed25519)
+                        if device
+                            .ed25519_key()
+                            .map(|k| k.to_base64())
+                            .as_deref()
                             == Some(&fingerprint)
                         {
                             let verify =

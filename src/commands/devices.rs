@@ -6,7 +6,7 @@ use clap::{
     SubCommand,
 };
 use matrix_sdk::{
-    ruma::{DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch, UserId},
+    ruma::{DeviceId, MilliSecondsSinceUnixEpoch, UserId},
     Error,
 };
 
@@ -230,12 +230,7 @@ impl MatrixServer {
 
             let info = Self::format_device(
                 &device_info.device_id,
-                device
-                    .and_then(|d| {
-                        d.get_key(DeviceKeyAlgorithm::Ed25519)
-                            .map(|f| f.to_string())
-                    })
-                    .as_deref(),
+                device.and_then(|d| d.ed25519_key().map(|f| f.to_base64())),
                 device_info.display_name.as_deref(),
                 own_device,
                 device_trust,
@@ -274,9 +269,7 @@ impl MatrixServer {
 
                 Self::format_device(
                     device.device_id(),
-                    device
-                        .get_key(DeviceKeyAlgorithm::Ed25519)
-                        .map(|f| f.as_str()),
+                    device.ed25519_key().map(|f| f.to_base64()),
                     device.display_name().as_deref(),
                     false,
                     device_trust,
@@ -316,7 +309,7 @@ impl MatrixServer {
 
     fn format_device(
         device_id: &DeviceId,
-        fingerprint: Option<&str>,
+        fingerprint: Option<String>,
         display_name: Option<&str>,
         is_own_device: bool,
         device_trust: DeviceTrust,

@@ -24,9 +24,9 @@ use matrix_sdk::{
     ruma::{
         events::{
             key::verification::VerificationMethod, room::message::MessageType,
-            AnySyncMessageEvent, AnyToDeviceEvent,
+            AnySyncMessageLikeEvent, AnyToDeviceEvent,
         },
-        identifiers::UserId,
+        UserId,
     },
     Error,
 };
@@ -524,27 +524,27 @@ impl VerificationBuffer {
         }
     }
 
-    pub async fn handle_room_event(&self, event: &AnySyncMessageEvent) {
+    pub async fn handle_room_event(&self, event: &AnySyncMessageLikeEvent) {
         if let Some(info) = self.inner.verification.borrow().cancel_info() {
             self.inner.print_cancel(self.buffer(), Some(info));
             return;
         }
 
         match event {
-            AnySyncMessageEvent::RoomMessage(m) => {
+            AnySyncMessageLikeEvent::RoomMessage(m) => {
                 if let MessageType::VerificationRequest(_) = &m.content.msgtype
                 {
                     self.handle_request_event()
                 }
             }
-            AnySyncMessageEvent::KeyVerificationStart(_) => {
+            AnySyncMessageLikeEvent::KeyVerificationStart(_) => {
                 self.handle_start_event()
             }
-            AnySyncMessageEvent::KeyVerificationKey(_) => {
+            AnySyncMessageLikeEvent::KeyVerificationKey(_) => {
                 self.handle_key_event();
             }
-            AnySyncMessageEvent::KeyVerificationMac(_)
-            | AnySyncMessageEvent::KeyVerificationDone(_) => {
+            AnySyncMessageLikeEvent::KeyVerificationMac(_)
+            | AnySyncMessageLikeEvent::KeyVerificationDone(_) => {
                 self.handle_done();
                 if self.inner.verification.borrow().is_done() {
                     self.inner.print_done(self.buffer.clone());

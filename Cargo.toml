@@ -37,6 +37,6 @@ git = "https://github.com/poljar/rust-weechat"
 features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
-# version = "0.4.0"
-path = "/home/poljar/werk/matrix/matrix-rust-sdk/crates/matrix-sdk"
-features = ["markdown", "encryption", "sled_cryptostore"]
+git = "https://github.com/matrix-org/matrix-rust-sdk/"
+rev = "eab68131e77d851df75a6b34bc7d87f728109f6d"
+features = ["markdown", "qrcode"]

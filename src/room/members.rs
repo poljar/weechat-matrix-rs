@@ -13,8 +13,7 @@ use matrix_sdk::{
             room::member::{MembershipState, RoomMemberEventContent},
             SyncStateEvent,
         },
-        identifiers::UserId,
-        uint,
+        uint, UserId,
     },
     RoomMember,
 };

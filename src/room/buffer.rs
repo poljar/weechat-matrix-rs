@@ -2,10 +2,7 @@ use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use matrix_sdk::{
     room::Joined,
-    ruma::{
-        identifiers::{EventId, RoomAliasId, UserId},
-        TransactionId,
-    },
+    ruma::{EventId, RoomAliasId, TransactionId, UserId},
     StoreError,
 };
 use tokio::runtime::Runtime;

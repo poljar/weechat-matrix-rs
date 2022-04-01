@@ -1,9 +1,9 @@
 use matrix_sdk::ruma::{
     events::{
         room::message::{MessageType, Relation, RoomMessageEventContent},
-        AnyMessageEvent, AnySyncMessageEvent, AnySyncRoomEvent,
+        AnyMessageLikeEvent, AnySyncMessageLikeEvent, AnySyncRoomEvent,
     },
-    identifiers::{EventId, UserId},
+    EventId, UserId,
 };
 
 pub trait ToTag {
@@ -34,25 +34,25 @@ pub trait VerificationEvent {
 impl VerificationEvent for AnySyncRoomEvent {
     fn is_verification(&self) -> bool {
         match self {
-            AnySyncRoomEvent::Message(m) => m.is_verification(),
+            AnySyncRoomEvent::MessageLike(m) => m.is_verification(),
             AnySyncRoomEvent::State(_)
-            | AnySyncRoomEvent::RedactedMessage(_)
+            | AnySyncRoomEvent::RedactedMessageLike(_)
             | AnySyncRoomEvent::RedactedState(_) => false,
         }
     }
 }
 
-impl VerificationEvent for AnySyncMessageEvent {
+impl VerificationEvent for AnySyncMessageLikeEvent {
     fn is_verification(&self) -> bool {
         match self {
-            AnySyncMessageEvent::KeyVerificationReady(_)
-            | AnySyncMessageEvent::KeyVerificationStart(_)
-            | AnySyncMessageEvent::KeyVerificationCancel(_)
-            | AnySyncMessageEvent::KeyVerificationAccept(_)
-            | AnySyncMessageEvent::KeyVerificationKey(_)
-            | AnySyncMessageEvent::KeyVerificationMac(_)
-            | AnySyncMessageEvent::KeyVerificationDone(_) => true,
-            AnySyncMessageEvent::RoomMessage(m) => {
+            AnySyncMessageLikeEvent::KeyVerificationReady(_)
+            | AnySyncMessageLikeEvent::KeyVerificationStart(_)
+            | AnySyncMessageLikeEvent::KeyVerificationCancel(_)
+            | AnySyncMessageLikeEvent::KeyVerificationAccept(_)
+            | AnySyncMessageLikeEvent::KeyVerificationKey(_)
+            | AnySyncMessageLikeEvent::KeyVerificationMac(_)
+            | AnySyncMessageLikeEvent::KeyVerificationDone(_) => true,
+            AnySyncMessageLikeEvent::RoomMessage(m) => {
                 if let MessageType::VerificationRequest(_) = m.content.msgtype {
                     true
                 } else {
@@ -78,9 +78,9 @@ impl Edit for RoomMessageEventContent {
     }
 }
 
-impl Edit for AnySyncMessageEvent {
+impl Edit for AnySyncMessageLikeEvent {
     fn is_edit(&self) -> bool {
-        if let AnySyncMessageEvent::RoomMessage(c) = self {
+        if let AnySyncMessageLikeEvent::RoomMessage(c) = self {
             c.content.is_edit()
         } else {
             false
@@ -88,7 +88,7 @@ impl Edit for AnySyncMessageEvent {
     }
 
     fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)> {
-        if let AnySyncMessageEvent::RoomMessage(c) = self {
+        if let AnySyncMessageLikeEvent::RoomMessage(c) = self {
             c.content.get_edit()
         } else {
             None
@@ -96,9 +96,9 @@ impl Edit for AnySyncMessageEvent {
     }
 }
 
-impl Edit for AnyMessageEvent {
+impl Edit for AnyMessageLikeEvent {
     fn is_edit(&self) -> bool {
-        if let AnyMessageEvent::RoomMessage(c) = self {
+        if let AnyMessageLikeEvent::RoomMessage(c) = self {
             c.content.is_edit()
         } else {
             false
@@ -106,7 +106,7 @@ impl Edit for AnyMessageEvent {
     }
 
     fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)> {
-        if let AnyMessageEvent::RoomMessage(c) = self {
+        if let AnyMessageLikeEvent::RoomMessage(c) = self {
             c.content.get_edit()
         } else {
             None
