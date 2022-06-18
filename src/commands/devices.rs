@@ -6,7 +6,10 @@ use clap::{
     SubCommand,
 };
 use matrix_sdk::{
-    ruma::{DeviceId, MilliSecondsSinceUnixEpoch, UserId},
+    ruma::{
+        DeviceId, MilliSecondsSinceUnixEpoch, OwnedDeviceId, OwnedUserId,
+        UserId,
+    },
     Error,
 };
 
@@ -67,7 +70,7 @@ impl DevicesCommand {
         )
     }
 
-    fn delete(servers: &Servers, buffer: &Buffer, devices: Vec<Box<DeviceId>>) {
+    fn delete(servers: &Servers, buffer: &Buffer, devices: Vec<OwnedDeviceId>) {
         let server = servers.find_server(buffer);
 
         if let Some(s) = server {
@@ -80,7 +83,7 @@ impl DevicesCommand {
         }
     }
 
-    fn list(servers: &Servers, buffer: &Buffer, user_id: Option<Box<UserId>>) {
+    fn list(servers: &Servers, buffer: &Buffer, user_id: Option<OwnedUserId>) {
         let server = servers.find_server(buffer);
 
         if let Some(s) = server {
@@ -99,10 +102,8 @@ impl DevicesCommand {
                 let user_id = args.and_then(|a| {
                     a.args.get("user-id").and_then(|a| {
                         a.vals.first().map(|u| {
-                            Box::<UserId>::try_from(
-                                u.to_string_lossy().as_ref(),
-                            )
-                            .expect("Argument wasn't a valid user id")
+                            OwnedUserId::try_from(u.to_string_lossy().as_ref())
+                                .expect("Argument wasn't a valid user id")
                         })
                     })
                 });
@@ -113,7 +114,7 @@ impl DevicesCommand {
                 let devices = args
                     .and_then(|a| a.args.get("device-id"))
                     .expect("Args didn't contain any device ids");
-                let devices: Vec<Box<DeviceId>> = devices
+                let devices: Vec<OwnedDeviceId> = devices
                     .vals
                     .iter()
                     .map(|d| d.clone().to_string_lossy().as_ref().into())
@@ -185,11 +186,10 @@ impl MatrixServer {
         ));
 
         response.devices.sort_by_key(|d| Reverse(d.last_seen_ts));
-        let own_device_id = connection.client().device_id().await;
+        let own_device_id = connection.client().device_id();
         let own_user_id = connection
             .client()
             .user_id()
-            .await
             .expect("Getting our own devices while not being logged in");
 
         let mut lines: Vec<String> = Vec::new();
@@ -214,8 +214,7 @@ impl MatrixServer {
                 .get_device(&own_user_id, &device_info.device_id)
                 .await?;
 
-            let own_device =
-                own_device_id.as_ref() == Some(&device_info.device_id);
+            let own_device = own_device_id == Some(&device_info.device_id);
 
             let device_trust = device
                 .as_ref()
@@ -406,7 +405,7 @@ impl MatrixServer {
         )
     }
 
-    pub async fn devices(&self, user_id: Option<Box<UserId>>) {
+    pub async fn devices(&self, user_id: Option<OwnedUserId>) {
         let connection = if let Some(c) = self.connection() {
             c
         } else {
@@ -415,7 +414,7 @@ impl MatrixServer {
         };
 
         let ret = if let Some(user_id) = user_id {
-            if Some(&user_id) == connection.client().user_id().await.as_ref() {
+            if Some(user_id.as_ref()) == connection.client().user_id() {
                 self.list_own_devices(connection).await
             } else {
                 self.list_other_devices(connection, &user_id).await
@@ -429,7 +428,7 @@ impl MatrixServer {
         }
     }
 
-    pub async fn delete_devices(&self, devices: Vec<Box<DeviceId>>) {
+    pub async fn delete_devices(&self, devices: Vec<OwnedDeviceId>) {
         let formatted = devices
             .iter()
             .map(|d| d.to_string())

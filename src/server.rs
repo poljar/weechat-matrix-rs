@@ -75,11 +75,11 @@ use matrix_sdk::{
         events::{
             room::{member::RoomMemberEventContent, message::MessageType},
             AnySyncMessageLikeEvent, AnySyncRoomEvent, AnySyncStateEvent,
-            AnyToDeviceEvent, SyncStateEvent,
+            AnyToDeviceEvent, SyncMessageLikeEvent, SyncStateEvent,
         },
-        RoomId, UserId,
+        OwnedRoomId, OwnedUserId, RoomId, UserId,
     },
-    store::{OpenStoreError, StateStore},
+    store::{make_store_config, OpenStoreError, StateStore},
     Client,
 };
 
@@ -134,7 +134,7 @@ impl ServerSettings {
 }
 
 pub struct LoginInfo {
-    user_id: Box<UserId>,
+    user_id: OwnedUserId,
 }
 
 #[derive(Clone)]
@@ -160,7 +160,7 @@ impl std::fmt::Debug for MatrixServer {
 pub struct InnerServer {
     servers: Servers,
     server_name: Rc<str>,
-    rooms: Rc<RefCell<HashMap<Box<RoomId>, RoomHandle>>>,
+    rooms: Rc<RefCell<HashMap<OwnedRoomId, RoomHandle>>>,
     settings: Rc<RefCell<ServerSettings>>,
     current_settings: Rc<RefCell<ServerSettings>>,
     config: ConfigHandle,
@@ -169,7 +169,7 @@ pub struct InnerServer {
     connection: Rc<RefCell<Option<Connection>>>,
     global_runtime: Rc<Runtime>,
     server_buffer: Rc<RefCell<Option<BufferHandle>>>,
-    verification_buffers: Rc<RefCell<HashMap<Box<UserId>, VerificationBuffer>>>,
+    verification_buffers: Rc<RefCell<HashMap<OwnedUserId, VerificationBuffer>>>,
 }
 
 impl MatrixServer {
@@ -808,7 +808,9 @@ impl InnerServer {
         };
 
         match event {
-            AnySyncMessageLikeEvent::RoomMessage(e) => {
+            AnySyncMessageLikeEvent::RoomMessage(
+                SyncMessageLikeEvent::Original(e),
+            ) => {
                 if let MessageType::VerificationRequest(_) = &e.content.msgtype
                 {
                     self.handle_verification_request(
@@ -819,7 +821,9 @@ impl InnerServer {
                     handle_event(event.clone()).await;
                 }
             }
-            AnySyncMessageLikeEvent::KeyVerificationStart(e) => {
+            AnySyncMessageLikeEvent::KeyVerificationStart(
+                SyncMessageLikeEvent::Original(e),
+            ) => {
                 self.handle_verification_start(
                     &e.sender,
                     e.content.relates_to.event_id.as_str(),
@@ -881,7 +885,7 @@ impl InnerServer {
 
     pub async fn receive_member(
         &self,
-        room_id: Box<RoomId>,
+        room_id: OwnedRoomId,
         member: SyncStateEvent<RoomMemberEventContent>,
         is_state: bool,
         ambiguity_change: Option<AmbiguityChange>,
@@ -966,18 +970,15 @@ impl InnerServer {
             ))
         })?;
 
-        let store = StateStore::open_with_passphrase(
+        let store_config = make_store_config(
             self.get_server_path(),
-            "DEFAULT_PASSPHRASE",
+            Some("DEFAULT_PASSPHRASE"),
         )
         .unwrap();
-        let crypto_store =
-            store.open_crypto_store(Some("DEFAULT_PASSPHRASE")).unwrap();
 
         let mut builder = Client::builder()
             .homeserver_url(homeserver)
-            .state_store(Box::new(store))
-            .crypto_store(Box::new(crypto_store));
+            .store_config(store_config);
 
         if let Some(proxy) = settings.proxy.as_ref() {
             builder = builder.proxy(proxy.as_str());

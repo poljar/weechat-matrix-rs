@@ -1,10 +1,127 @@
 use matrix_sdk::ruma::{
     events::{
-        room::message::{MessageType, Relation, RoomMessageEventContent},
-        AnyMessageLikeEvent, AnySyncMessageLikeEvent, AnySyncRoomEvent,
+        room::{
+            message::{MessageType, Relation, RoomMessageEventContent},
+            redaction::SyncRoomRedactionEvent,
+        },
+        AnyMessageLikeEvent, AnyMessageLikeEventContent,
+        AnySyncMessageLikeEvent, AnySyncRoomEvent, MessageLikeEvent,
+        SyncMessageLikeEvent,
     },
     EventId, UserId,
 };
+
+pub trait Content {
+    fn content(&self) -> Option<AnyMessageLikeEventContent>;
+}
+
+impl Content for AnySyncMessageLikeEvent {
+    fn content(&self) -> Option<AnyMessageLikeEventContent> {
+        match self {
+            AnySyncMessageLikeEvent::CallAnswer(e) => match e {
+                SyncMessageLikeEvent::Original(e) => {
+                    Some(e.content.to_owned().into())
+                }
+                SyncMessageLikeEvent::Redacted(_) => None,
+            },
+            AnySyncMessageLikeEvent::CallInvite(_) => None,
+            AnySyncMessageLikeEvent::CallHangup(_) => None,
+            AnySyncMessageLikeEvent::CallCandidates(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationReady(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationStart(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationCancel(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationAccept(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationKey(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationMac(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationDone(_) => None,
+            AnySyncMessageLikeEvent::Reaction(
+                SyncMessageLikeEvent::Original(e),
+            ) => Some(e.content.to_owned().into()),
+            AnySyncMessageLikeEvent::RoomEncrypted(
+                SyncMessageLikeEvent::Original(e),
+            ) => Some(e.content.to_owned().into()),
+            AnySyncMessageLikeEvent::RoomMessage(
+                SyncMessageLikeEvent::Original(e),
+            ) => Some(e.content.to_owned().into()),
+            AnySyncMessageLikeEvent::RoomMessageFeedback(
+                SyncMessageLikeEvent::Original(e),
+            ) => Some(e.content.to_owned().into()),
+            AnySyncMessageLikeEvent::RoomRedaction(
+                SyncRoomRedactionEvent::Original(e),
+            ) => Some(e.content.to_owned().into()),
+            AnySyncMessageLikeEvent::Sticker(_) => None,
+            _ => None,
+        }
+    }
+}
+
+impl Content for AnyMessageLikeEvent {
+    fn content(&self) -> Option<AnyMessageLikeEventContent> {
+        match self {
+            AnyMessageLikeEvent::CallAnswer(e) => match e {
+                MessageLikeEvent::Original(e) => {
+                    Some(e.content.to_owned().into())
+                }
+                MessageLikeEvent::Redacted(_) => None,
+            },
+            AnyMessageLikeEvent::CallInvite(_) => None,
+            AnyMessageLikeEvent::CallHangup(_) => None,
+            AnyMessageLikeEvent::CallCandidates(_) => None,
+            AnyMessageLikeEvent::KeyVerificationReady(_) => None,
+            AnyMessageLikeEvent::KeyVerificationStart(_) => None,
+            AnyMessageLikeEvent::KeyVerificationCancel(_) => None,
+            AnyMessageLikeEvent::KeyVerificationAccept(_) => None,
+            AnyMessageLikeEvent::KeyVerificationKey(_) => None,
+            AnyMessageLikeEvent::KeyVerificationMac(_) => None,
+            AnyMessageLikeEvent::KeyVerificationDone(_) => None,
+            AnyMessageLikeEvent::Reaction(MessageLikeEvent::Original(e)) => {
+                Some(e.content.to_owned().into())
+            }
+            AnyMessageLikeEvent::RoomEncrypted(MessageLikeEvent::Original(
+                e,
+            )) => Some(e.content.to_owned().into()),
+            AnyMessageLikeEvent::RoomMessage(MessageLikeEvent::Original(e)) => {
+                Some(e.content.to_owned().into())
+            }
+            AnyMessageLikeEvent::RoomMessageFeedback(
+                MessageLikeEvent::Original(e),
+            ) => Some(e.content.to_owned().into()),
+            AnyMessageLikeEvent::Sticker(_) => None,
+            _ => None,
+        }
+    }
+}
+
+pub trait TransactionId {
+    fn transaction_id(&self) -> Option<&matrix_sdk::ruma::TransactionId>;
+}
+
+impl TransactionId for AnySyncMessageLikeEvent {
+    fn transaction_id(&self) -> Option<&matrix_sdk::ruma::TransactionId> {
+        match self {
+            AnySyncMessageLikeEvent::CallAnswer(_) => None,
+            AnySyncMessageLikeEvent::CallInvite(_) => None,
+            AnySyncMessageLikeEvent::CallHangup(_) => None,
+            AnySyncMessageLikeEvent::CallCandidates(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationReady(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationStart(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationCancel(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationAccept(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationKey(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationMac(_) => None,
+            AnySyncMessageLikeEvent::KeyVerificationDone(_) => None,
+            AnySyncMessageLikeEvent::Reaction(_) => None,
+            AnySyncMessageLikeEvent::RoomEncrypted(_) => None,
+            AnySyncMessageLikeEvent::RoomMessage(
+                SyncMessageLikeEvent::Original(e),
+            ) => e.unsigned.transaction_id.as_deref(),
+            AnySyncMessageLikeEvent::RoomMessageFeedback(_) => None,
+            AnySyncMessageLikeEvent::RoomRedaction(_) => None,
+            AnySyncMessageLikeEvent::Sticker(_) => None,
+            _ => None,
+        }
+    }
+}
 
 pub trait ToTag {
     fn to_tag(&self) -> String;
@@ -35,9 +152,9 @@ impl VerificationEvent for AnySyncRoomEvent {
     fn is_verification(&self) -> bool {
         match self {
             AnySyncRoomEvent::MessageLike(m) => m.is_verification(),
-            AnySyncRoomEvent::State(_)
-            | AnySyncRoomEvent::RedactedMessageLike(_)
-            | AnySyncRoomEvent::RedactedState(_) => false,
+            AnySyncRoomEvent::State(_) => false,
+            // | AnySyncRoomEvent::RedactedMessageLike(_)
+            // | AnySyncRoomEvent::RedactedState(_) => false,
         }
     }
 }
@@ -52,7 +169,9 @@ impl VerificationEvent for AnySyncMessageLikeEvent {
             | AnySyncMessageLikeEvent::KeyVerificationKey(_)
             | AnySyncMessageLikeEvent::KeyVerificationMac(_)
             | AnySyncMessageLikeEvent::KeyVerificationDone(_) => true,
-            AnySyncMessageLikeEvent::RoomMessage(m) => {
+            AnySyncMessageLikeEvent::RoomMessage(
+                SyncMessageLikeEvent::Original(m),
+            ) => {
                 if let MessageType::VerificationRequest(_) = m.content.msgtype {
                     true
                 } else {
@@ -80,7 +199,10 @@ impl Edit for RoomMessageEventContent {
 
 impl Edit for AnySyncMessageLikeEvent {
     fn is_edit(&self) -> bool {
-        if let AnySyncMessageLikeEvent::RoomMessage(c) = self {
+        if let AnySyncMessageLikeEvent::RoomMessage(
+            SyncMessageLikeEvent::Original(c),
+        ) = self
+        {
             c.content.is_edit()
         } else {
             false
@@ -88,7 +210,10 @@ impl Edit for AnySyncMessageLikeEvent {
     }
 
     fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)> {
-        if let AnySyncMessageLikeEvent::RoomMessage(c) = self {
+        if let AnySyncMessageLikeEvent::RoomMessage(
+            SyncMessageLikeEvent::Original(c),
+        ) = self
+        {
             c.content.get_edit()
         } else {
             None
@@ -98,7 +223,9 @@ impl Edit for AnySyncMessageLikeEvent {
 
 impl Edit for AnyMessageLikeEvent {
     fn is_edit(&self) -> bool {
-        if let AnyMessageLikeEvent::RoomMessage(c) = self {
+        if let AnyMessageLikeEvent::RoomMessage(MessageLikeEvent::Original(c)) =
+            self
+        {
             c.content.is_edit()
         } else {
             false
@@ -106,7 +233,9 @@ impl Edit for AnyMessageLikeEvent {
     }
 
     fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)> {
-        if let AnyMessageLikeEvent::RoomMessage(c) = self {
+        if let AnyMessageLikeEvent::RoomMessage(MessageLikeEvent::Original(c)) =
+            self
+        {
             c.content.get_edit()
         } else {
             None

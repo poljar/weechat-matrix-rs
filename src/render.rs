@@ -25,7 +25,8 @@ use matrix_sdk::{
                 },
                 EncryptedFile, MediaSource,
             },
-            RedactedSyncMessageLikeEvent, SyncStateEvent,
+            OriginalSyncStateEvent, RedactedSyncMessageLikeEvent,
+            SyncStateEvent,
         },
         uint, EventId, MilliSecondsSinceUnixEpoch, MxcUri, TransactionId,
         UserId,
@@ -124,7 +125,7 @@ pub trait Render {
     /// Render the event.
     fn render_with_prefix(
         &self,
-        timestamp: &MilliSecondsSinceUnixEpoch,
+        timestamp: MilliSecondsSinceUnixEpoch,
         event_id: &EventId,
         sender: &WeechatRoomMember,
         context: &Self::RenderContext,
@@ -737,7 +738,12 @@ pub fn render_membership(
 ) -> String {
     const _TAGS: &[&str] = &["matrix_membership"];
     use MembershipChange::*;
-    let change_op = event.membership_change();
+
+    // TODO handle the redacted variant better
+    let change_op = match event {
+        SyncStateEvent::Original(e) => e.membership_change(),
+        SyncStateEvent::Redacted(_e) => todo!(),
+    };
 
     let operation = match change_op {
         None => "did nothing",
@@ -805,15 +811,17 @@ pub fn render_membership(
     // TODO we should return the tags as well.
     match change_op {
         ProfileChanged {
-            displayname_changed,
-            avatar_url_changed,
+            displayname_change,
+            avatar_url_change,
         } => {
-            let new_display_name = &event.content.displayname;
+            let new_display_name = event
+                .as_original()
+                .and_then(|e| e.content.displayname.as_ref());
 
             // TODO: Should we display the new avatar URL?
             // let new_avatar = self.content.avatar_url.as_ref();
 
-            match (displayname_changed, avatar_url_changed) {
+            match (displayname_change.is_some(), avatar_url_change.is_some()) {
                 (false, true) =>
                     format!(
                         "{prefix}{target} {color_action}changed their avatar{color_reset}",
@@ -827,7 +835,7 @@ pub fn render_membership(
                         Some(name) => format!(
                             "{prefix}{target} {color_action}changed their display name to{color_reset} {new}",
                             prefix = Weechat::prefix(prefix),
-                            target = event.unsigned.prev_content.as_ref().map(|p| p.displayname.clone()).flatten().unwrap_or(target_name),
+                            target = event.as_original().and_then(|e| e.unsigned.prev_content.as_ref().and_then(|p| p.displayname.clone())).unwrap_or(target_name),
                             new = name,
                             color_action = color_action,
                             color_reset = color_reset

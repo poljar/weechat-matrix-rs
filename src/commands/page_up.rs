@@ -33,8 +33,10 @@ impl CommandRunCallback for PageUpCommand {
         if let Some(room) = self.servers.find_room(buffer) {
             if let Some(window) = buffer.window() {
                 if window.is_first_line_displayed() || buffer.num_lines() == 0 {
-                    Weechat::spawn(async move { room.get_messages().await })
-                        .detach();
+                    Weechat::spawn(async move {
+                        room.get_more_historical_messages().await
+                    })
+                    .detach();
                 }
             }
         }

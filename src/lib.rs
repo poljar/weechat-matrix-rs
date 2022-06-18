@@ -238,18 +238,33 @@ impl Plugin for Matrix {
         let completions =
             Completions::hook_all(servers.clone(), runtime.clone())?;
 
+        let runtime = Rc::new(Runtime::new().map_err(|_| {
+            Weechat::print("Can't create global tokio runtime")
+        })?);
+
         let subscriber = {
+            let console_subscriber = console_subscriber::spawn();
+            let journal_layer = tracing_journald::layer().unwrap();
+
             let filter =
                 tracing_subscriber::filter::EnvFilter::from_default_env();
+            // .add_directive("tokio=trace".parse().unwrap())
+            // .add_directive("runtime=trace".parse().unwrap());
 
-            tracing_subscriber::registry().with(filter).with(
-                tracing_subscriber::fmt::layer().with_writer(debug::Debug),
-            )
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(journal_layer)
+                .with(console_subscriber)
+                .with(
+                    tracing_subscriber::fmt::layer().with_writer(debug::Debug),
+                )
         };
 
         let _ = tracing::subscriber::set_global_default(subscriber).map_err(
             |_err| Weechat::print("Unable to set global default subscriber"),
         );
+
+        // console_subscriber::init();
 
         {
             let config_borrow = config.borrow();
@@ -257,10 +272,6 @@ impl Plugin for Matrix {
                 return Err(());
             }
         }
-
-        let runtime = Rc::new(Runtime::new().map_err(|_| {
-            Weechat::print("Can't create global tokio runtime")
-        })?);
 
         if servers.is_empty() {
             Matrix::create_default_server(

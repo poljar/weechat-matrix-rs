@@ -24,9 +24,9 @@ use matrix_sdk::{
     ruma::{
         events::{
             key::verification::VerificationMethod, room::message::MessageType,
-            AnySyncMessageLikeEvent, AnyToDeviceEvent,
+            AnySyncMessageLikeEvent, AnyToDeviceEvent, SyncMessageLikeEvent,
         },
-        UserId,
+        OwnedUserId, UserId,
     },
     Error,
 };
@@ -134,7 +134,7 @@ struct InnerVerificationBuffer {
     verification: Rc<RefCell<Verification>>,
     connection: Rc<RefCell<Option<Connection>>>,
     verification_buffers:
-        Weak<RefCell<HashMap<Box<UserId>, VerificationBuffer>>>,
+        Weak<RefCell<HashMap<OwnedUserId, VerificationBuffer>>>,
 }
 
 impl InnerVerificationBuffer {
@@ -340,7 +340,7 @@ impl VerificationBuffer {
         verification: impl Into<Verification>,
         connection: Rc<RefCell<Option<Connection>>>,
         verification_buffers: &Rc<
-            RefCell<HashMap<Box<UserId>, VerificationBuffer>>,
+            RefCell<HashMap<OwnedUserId, VerificationBuffer>>,
         >,
     ) -> Result<Self, ()> {
         let verification = verification.into();
@@ -531,7 +531,9 @@ impl VerificationBuffer {
         }
 
         match event {
-            AnySyncMessageLikeEvent::RoomMessage(m) => {
+            AnySyncMessageLikeEvent::RoomMessage(
+                SyncMessageLikeEvent::Original(m),
+            ) => {
                 if let MessageType::VerificationRequest(_) = &m.content.msgtype
                 {
                     self.handle_request_event()

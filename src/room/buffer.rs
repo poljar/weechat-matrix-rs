@@ -2,7 +2,7 @@ use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use matrix_sdk::{
     room::Joined,
-    ruma::{EventId, RoomAliasId, TransactionId, UserId},
+    ruma::{EventId, OwnedRoomAliasId, RoomAliasId, TransactionId, UserId},
     StoreError,
 };
 use tokio::runtime::Runtime;
@@ -233,7 +233,7 @@ impl RoomBuffer {
         }
     }
 
-    fn alias(&self) -> Option<Box<RoomAliasId>> {
+    fn alias(&self) -> Option<OwnedRoomAliasId> {
         self.room.canonical_alias()
     }
 
@@ -241,15 +241,15 @@ impl RoomBuffer {
         let room = self.room.clone();
         let room_name = self.runtime.block_on(room.display_name())?;
 
-        let room_name = if room_name == "#" {
-            "##".to_owned()
-        } else if room_name.starts_with('#') || room.is_direct() {
-            room_name
-        } else {
-            format!("#{}", room_name)
-        };
+        // let room_name = if room_name == "#" {
+        //     "##".to_owned()
+        // } else if room_name.starts_with('#') || room.is_direct() {
+        //     room_name
+        // } else {
+        //     format!("#{}", room_name)
+        // };
 
-        Ok(room_name)
+        Ok(room_name.to_string())
     }
 
     pub fn update_buffer_name(&self) {

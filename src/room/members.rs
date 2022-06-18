@@ -11,9 +11,9 @@ use matrix_sdk::{
     ruma::{
         events::{
             room::member::{MembershipState, RoomMemberEventContent},
-            SyncStateEvent,
+            OriginalSyncStateEvent, SyncStateEvent,
         },
-        uint, UserId,
+        uint, OwnedUserId, UserId,
     },
     RoomMember,
 };
@@ -30,8 +30,8 @@ use super::buffer::RoomBuffer;
 #[derive(Clone)]
 pub struct Members {
     room: Joined,
-    ambiguity_map: Rc<DashMap<Box<UserId>, bool>>,
-    nicks: Rc<DashMap<Box<UserId>, String>>,
+    ambiguity_map: Rc<DashMap<OwnedUserId, bool>>,
+    nicks: Rc<DashMap<OwnedUserId, String>>,
     buffer: RoomBuffer,
     runtime: Rc<Runtime>,
 }
@@ -86,7 +86,7 @@ impl Members {
         self.nicks.insert(member.user_id().to_owned(), nick);
     }
 
-    pub async fn restore_member(&self, user_id: Box<UserId>) {
+    pub async fn restore_member(&self, user_id: OwnedUserId) {
         let room = self.room.clone();
         let user_id_clone = user_id.clone();
 
@@ -118,7 +118,7 @@ impl Members {
         }
     }
 
-    pub async fn update_member(&self, user_id: Box<UserId>) {
+    pub async fn update_member(&self, user_id: OwnedUserId) {
         let buffer = self.buffer.buffer_handle();
 
         let buffer = if let Ok(b) = buffer.upgrade() {
@@ -203,7 +203,7 @@ impl Members {
     }
 
     /// Retrieve a reference to a Weechat room member by user ID.
-    pub async fn get(&self, user_id: Box<UserId>) -> Option<WeechatRoomMember> {
+    pub async fn get(&self, user_id: OwnedUserId) -> Option<WeechatRoomMember> {
         let color = if self.room.own_user_id() == &user_id {
             "weechat.color.chat_nick_self".into()
         } else {
@@ -255,26 +255,19 @@ impl Members {
         };
 
         info!(
-            "Handling membership event for room {} {} {:?}",
+            "Handling membership event for room {} {}",
             buffer.short_name(),
-            event.state_key,
-            event.content.membership
+            event.state_key(),
+            // event.content.membership
         );
 
-        let sender_id = event.sender.clone();
+        let sender_id = event.sender().clone();
+        let target_id = event.state_key().clone();
 
-        let target_id =
-            if let Ok(t) = Box::<UserId>::try_from(event.state_key.clone()) {
-                t
-            } else {
-                error!(
-                    "Invalid state key in room {} from sender {}: {}",
-                    buffer.short_name(),
-                    event.sender,
-                    event.state_key,
-                );
-                return;
-            };
+        let membership = match event {
+            SyncStateEvent::Original(o) => &o.content.membership,
+            SyncStateEvent::Redacted(r) => &r.content.membership,
+        };
 
         use MembershipState::*;
 
@@ -284,7 +277,7 @@ impl Members {
         // create a new one.
         //
         // For leaves and bans we just need to remove the member.
-        match event.content.membership {
+        match membership {
             Invite | Join => {
                 self.add_or_modify(&target_id, ambiguity_change).await
             }
@@ -297,7 +290,7 @@ impl Members {
         self.buffer.update_buffer_name();
 
         if !state_event {
-            let sender = self.get(sender_id.clone()).await;
+            let sender = self.get(sender_id.to_owned()).await;
             let target = self.get(target_id.clone()).await;
 
             // Display the event message
@@ -324,7 +317,7 @@ impl Members {
             };
 
             let timestamp: i64 =
-                (event.origin_server_ts.0 / uint!(1000)).into();
+                (event.origin_server_ts().0 / uint!(1000)).into();
             buffer.print_date_tags(timestamp as i64, &[], &message);
         }
     }

@@ -29,7 +29,7 @@ use buffer::RoomBuffer;
 use members::Members;
 pub use members::WeechatRoomMember;
 use tokio::runtime::Runtime;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 use std::{
     borrow::Cow,
@@ -60,12 +60,12 @@ use matrix_sdk::{
                 },
                 redaction::SyncRoomRedactionEvent,
             },
-            AnyMessageLikeEventContent, AnyRedactedSyncMessageLikeEvent,
-            AnyRoomEvent, AnySyncMessageLikeEvent, AnySyncRoomEvent,
-            AnySyncStateEvent, SyncMessageLikeEvent, SyncStateEvent,
+            AnyMessageLikeEventContent, AnyRoomEvent, AnySyncMessageLikeEvent,
+            AnySyncRoomEvent, AnySyncStateEvent, OriginalSyncMessageLikeEvent,
+            OriginalSyncStateEvent, SyncMessageLikeEvent, SyncStateEvent,
         },
-        EventId, MilliSecondsSinceUnixEpoch, RoomAliasId, RoomId,
-        TransactionId, UserId,
+        EventId, MilliSecondsSinceUnixEpoch, OwnedRoomAliasId,
+        OwnedTransactionId, RoomAliasId, RoomId, TransactionId, UserId,
     },
     StoreError,
 };
@@ -82,7 +82,7 @@ use crate::{
     config::{Config, RedactionStyle},
     connection::Connection,
     render::{Render, RenderedEvent},
-    utils::{Edit, VerificationEvent},
+    utils::{Content, Edit, TransactionId as _, VerificationEvent},
     PLUGIN_NAME,
 };
 
@@ -170,7 +170,7 @@ pub struct MatrixRoom {
 #[derive(Debug, Clone, Default)]
 pub struct MessageQueue {
     queue: Rc<
-        RefCell<HashMap<Box<TransactionId>, (bool, RoomMessageEventContent)>>,
+        RefCell<HashMap<OwnedTransactionId, (bool, RoomMessageEventContent)>>,
     >,
 }
 
@@ -181,13 +181,13 @@ impl MessageQueue {
         }
     }
 
-    fn add(&self, uuid: Box<TransactionId>, content: RoomMessageEventContent) {
+    fn add(&self, uuid: OwnedTransactionId, content: RoomMessageEventContent) {
         self.queue.borrow_mut().insert(uuid, (false, content));
     }
 
     fn add_with_echo(
         &self,
-        uuid: Box<TransactionId>,
+        uuid: OwnedTransactionId,
         content: RoomMessageEventContent,
     ) {
         self.queue.borrow_mut().insert(uuid, (true, content));
@@ -223,7 +223,7 @@ impl RoomHandle {
             .map(|m| m.name().to_owned())
             .unwrap_or_else(|| own_user_id.localpart().to_owned());
 
-        let own_user_id: Rc<UserId> = own_user_id.to_owned().into();
+        let own_user_id: Rc<UserId> = own_user_id.into();
 
         let room = MatrixRoom {
             homeserver: Rc::new(homeserver),
@@ -390,7 +390,7 @@ impl MatrixRoom {
         self.room.is_public()
     }
 
-    pub fn alias(&self) -> Option<Box<RoomAliasId>> {
+    pub fn alias(&self) -> Option<OwnedRoomAliasId> {
         self.room.canonical_alias()
     }
 
@@ -405,6 +405,12 @@ impl MatrixRoom {
     async fn redact_event(&self, event: &SyncRoomRedactionEvent) {
         let buffer_handle = self.buffer_handle();
 
+        let event = if let SyncRoomRedactionEvent::Original(e) = event {
+            e
+        } else {
+            return;
+        };
+
         let buffer = if let Ok(b) = buffer_handle.upgrade() {
             b
         } else {
@@ -412,10 +418,10 @@ impl MatrixRoom {
         };
 
         // TODO remove this unwrap.
-        let redacter = self.members.get(event.sender.clone()).await.unwrap();
+        let redacter = self.members.get(event.sender.to_owned()).await.unwrap();
 
         let event_id_tag =
-            Cow::from(format!("{}_id_{}", PLUGIN_NAME, event.redacts));
+            Cow::from(format!("{}_id_{}", PLUGIN_NAME, event.event_id));
         let tag = Cow::from("matrix_redacted");
 
         let reason = if let Some(r) = &event.content.reason {
@@ -499,7 +505,7 @@ impl MatrixRoom {
     async fn render_message_content(
         &self,
         event_id: &EventId,
-        send_time: &MilliSecondsSinceUnixEpoch,
+        send_time: MilliSecondsSinceUnixEpoch,
         sender: &WeechatRoomMember,
         content: &AnyMessageLikeEventContent,
     ) -> Option<RenderedEvent> {
@@ -569,11 +575,18 @@ impl MatrixRoom {
             );
 
         let send_time = event.origin_server_ts();
+
+        let content = if let Some(content) = event.content() {
+            content
+        } else {
+            return None;
+        };
+
         self.render_message_content(
             event.event_id(),
             send_time,
             &sender,
-            &event.content(),
+            &content,
         )
         .await
         .map(|r| {
@@ -590,7 +603,7 @@ impl MatrixRoom {
     // a local echo line if local echo is enabled.
     async fn queue_outgoing_message(
         &self,
-        uuid: Box<TransactionId>,
+        uuid: OwnedTransactionId,
         content: &RoomMessageEventContent,
     ) {
         if self.config.borrow().look().local_echo() {
@@ -636,7 +649,7 @@ impl MatrixRoom {
     /// buffer.send_message(content).await
     /// ```
     pub async fn send_message(&self, content: RoomMessageEventContent) {
-        let uuid = TransactionId::new();
+        let uuid = TransactionId::new().to_owned();
 
         let connection = self.connection.borrow().clone();
 
@@ -723,7 +736,7 @@ impl MatrixRoom {
         *self.prev_batch.borrow_mut() = None;
     }
 
-    pub async fn get_messages(&self) {
+    pub async fn get_more_historical_messages(&self) {
         let messages_lock = self.messages_in_flight.clone();
 
         let connection = self.connection.borrow().as_ref().cloned();
@@ -746,6 +759,12 @@ impl MatrixRoom {
 
         if let Some(connection) = connection {
             let room = self.room.clone();
+
+            info!(
+                "Fetching more historical messages via /messages in room {}, prev_batch={:#?}",
+                room.room_id(),
+                prev_batch
+            );
 
             if let Ok(r) = connection.room_messages(room, prev_batch).await {
                 for event in
@@ -776,11 +795,11 @@ impl MatrixRoom {
 
     async fn handle_outgoing_message(
         &self,
-        uuid: Box<TransactionId>,
+        uuid: OwnedTransactionId,
         event_id: &EventId,
     ) {
         if let Some((echo, content)) = self.outgoing_messages.remove(&uuid) {
-            let event = SyncMessageLikeEvent {
+            let event = OriginalSyncMessageLikeEvent {
                 sender: (&*self.own_user_id).to_owned(),
                 origin_server_ts: MilliSecondsSinceUnixEpoch::now(),
                 event_id: event_id.to_owned(),
@@ -788,7 +807,9 @@ impl MatrixRoom {
                 unsigned: Default::default(),
             };
 
-            let event = AnySyncMessageLikeEvent::RoomMessage(event);
+            let event = AnySyncMessageLikeEvent::RoomMessage(
+                SyncMessageLikeEvent::Original(event),
+            );
 
             let rendered = self
                 .render_sync_message(&event)
@@ -839,7 +860,7 @@ impl MatrixRoom {
         // If the event has a transaction id it's an event that we sent out
         // ourselves, the content will be in the outgoing message queue and it
         // may have been printed out as a local echo.
-        if let Some(id) = &event.unsigned().transaction_id {
+        if let Some(id) = event.transaction_id() {
             // We don't support local echo for verification events.
             if !event.is_verification() {
                 self.handle_outgoing_message(id.to_owned(), event.event_id())
@@ -857,32 +878,32 @@ impl MatrixRoom {
         }
     }
 
-    async fn handle_redacted_events(
-        &self,
-        event: &AnyRedactedSyncMessageLikeEvent,
-    ) {
-        use AnyRedactedSyncMessageLikeEvent::*;
+    // async fn handle_redacted_events(
+    //     &self,
+    //     event: &AnyRedactedSyncMessageLikeEvent,
+    // ) {
+    //     use AnyRedactedSyncMessageLikeEvent::*;
 
-        if let RoomMessage(e) = event {
-            // TODO remove those expects and unwraps.
-            let redacter =
-                &e.unsigned.redacted_because.as_ref().unwrap().sender;
-            let redacter = self.members.get(redacter.clone()).await.expect(
-                "Rendering a message but the sender isn't in the nicklist",
-            );
-            let sender = self.members.get(e.sender.clone()).await.expect(
-                "Rendering a message but the sender isn't in the nicklist",
-            );
-            let rendered = e.render_with_prefix(
-                &e.origin_server_ts,
-                event.event_id(),
-                &sender,
-                &redacter,
-            );
+    //     if let RoomMessage(e) = event {
+    //         // TODO remove those expects and unwraps.
+    //         let redacter =
+    //             &e.unsigned.redacted_because.as_ref().unwrap().sender;
+    //         let redacter = self.members.get(redacter.clone()).await.expect(
+    //             "Rendering a message but the sender isn't in the nicklist",
+    //         );
+    //         let sender = self.members.get(e.sender.clone()).await.expect(
+    //             "Rendering a message but the sender isn't in the nicklist",
+    //         );
+    //         let rendered = e.render_with_prefix(
+    //             &e.origin_server_ts,
+    //             event.event_id(),
+    //             &sender,
+    //             &redacter,
+    //         );
 
-            self.buffer.print_rendered_event(rendered);
-        }
-    }
+    //         self.buffer.print_rendered_event(rendered);
+    //     }
+    // }
 
     pub async fn handle_membership_event(
         &self,
@@ -904,6 +925,7 @@ impl MatrixRoom {
         }
     }
 
+    /// Handles fresh messages fetched via `/sync`.
     pub async fn handle_sync_room_event(&self, event: AnySyncRoomEvent) {
         self.set_prev_batch();
 
@@ -911,22 +933,30 @@ impl MatrixRoom {
             AnySyncRoomEvent::MessageLike(message) => {
                 self.handle_room_message(message).await
             }
-            AnySyncRoomEvent::RedactedMessageLike(e) => {
-                self.handle_redacted_events(e).await
-            }
+            // AnySyncRoomEvent::RedactedMessageLike(e) => {
+            //     self.handle_redacted_events(e).await
+            // }
             // We don't print out redacted state events for now.
-            AnySyncRoomEvent::RedactedState(_) => (),
+            // AnySyncRoomEvent::RedactedState(_) => (),
             AnySyncRoomEvent::State(event) => {
                 self.handle_sync_state_event(event, false).await
             }
         }
     }
 
+    /// Handles historical messages fetched via the `/messages` API.
     pub async fn handle_room_event(&self, event: &AnyRoomEvent) {
+        trace!(
+            "Processing event {} via /messages: {:#?}",
+            event.event_id(),
+            event
+        );
+
         match &event {
             AnyRoomEvent::MessageLike(event) => {
-                // Only print out historical events if they aren't edits of
+                // Only display historical events if they aren't edits of
                 // other events.
+
                 if !event.is_edit() {
                     let sender = self.members.get(event.sender().to_owned()).await.expect(
                         "Rendering a message but the sender isn't in the nicklist",
@@ -934,22 +964,24 @@ impl MatrixRoom {
 
                     let send_time = event.origin_server_ts();
 
-                    if let Some(rendered) = self
-                        .render_message_content(
-                            event.event_id(),
-                            send_time,
-                            &sender,
-                            &event.content(),
-                        )
-                        .await
-                    {
-                        self.buffer.print_rendered_event(rendered);
+                    if let Some(content) = event.content() {
+                        if let Some(rendered) = self
+                            .render_message_content(
+                                event.event_id(),
+                                send_time,
+                                &sender,
+                                &content,
+                            )
+                            .await
+                        {
+                            self.buffer.print_rendered_event(rendered);
+                        }
                     }
                 }
             }
             // TODO print out redacted messages.
-            AnyRoomEvent::RedactedMessageLike(_) => (),
-            AnyRoomEvent::RedactedState(_) => (),
+            // AnyRoomEvent::RedactedMessageLike(_) => (),
+            // AnyRoomEvent::RedactedState(_) => (),
             AnyRoomEvent::State(_) => (),
         }
     }

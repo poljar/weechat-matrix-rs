@@ -32,9 +32,10 @@ use matrix_sdk::{
         events::{
             room::member::RoomMemberEventContent, AnyMessageLikeEventContent,
             AnySyncRoomEvent, AnySyncStateEvent, AnyToDeviceEvent,
-            SyncStateEvent,
+            OriginalSyncStateEvent, SyncStateEvent,
         },
-        DeviceId, RoomId, TransactionId,
+        DeviceId, OwnedDeviceId, OwnedRoomId, OwnedTransactionId, RoomId,
+        TransactionId,
     },
     Client, HttpResult, LoopCtrl, Result as MatrixResult,
 };
@@ -65,12 +66,12 @@ impl InteractiveAuthInfo {
 
 pub enum ClientMessage {
     LoginMessage(LoginResponse),
-    SyncState(Box<RoomId>, AnySyncStateEvent),
-    SyncEvent(Box<RoomId>, AnySyncRoomEvent),
+    SyncState(OwnedRoomId, AnySyncStateEvent),
+    SyncEvent(OwnedRoomId, AnySyncRoomEvent),
     ToDeviceEvent(AnyToDeviceEvent),
     MemberEvent(
-        Box<RoomId>,
-        SyncStateEvent<RoomMemberEventContent>,
+        OwnedRoomId,
+        OriginalSyncStateEvent<RoomMemberEventContent>,
         bool,
         Option<AmbiguityChange>,
     ),
@@ -153,7 +154,7 @@ impl Connection {
         &self,
         room: Joined,
         content: AnyMessageLikeEventContent,
-        transaction_id: Option<Box<TransactionId>>,
+        transaction_id: Option<OwnedTransactionId>,
     ) -> MatrixResult<RoomSendResponse> {
         self.spawn(async move {
             room.send(content, transaction_id.as_deref()).await
@@ -163,7 +164,7 @@ impl Connection {
 
     pub async fn delete_devices(
         &self,
-        devices: Vec<Box<DeviceId>>,
+        devices: Vec<OwnedDeviceId>,
         auth_info: Option<InteractiveAuthInfo>,
     ) -> HttpResult<DeleteDevicesResponse> {
         let client = self.client.clone();
@@ -255,6 +256,7 @@ impl Connection {
     }
 
     /// Response receiver loop.
+    ///
     /// This runs on the main Weechat thread and listens for responses coming
     /// from the client running in the tokio executor.
     pub async fn response_receiver(
@@ -287,15 +289,16 @@ impl Connection {
                         is_state,
                         change,
                     ) => {
+                        let event = SyncStateEvent::Original(e);
                         server
-                            .receive_member(room_id, e, is_state, change)
+                            .receive_member(room_id, event, is_state, change)
                             .await
                     }
                     ClientMessage::ToDeviceEvent(e) => {
                         server.receive_to_device_event(e).await
                     }
                 },
-                Err(e) => server.print_error(&format!("Ruma error {}", e)),
+                Err(e) => server.print_error(&format!("Ruma error: {}", e)),
             };
         }
     }
@@ -312,8 +315,9 @@ impl Connection {
     }
 
     /// Main client sync loop.
-    /// This runs on the per server tokio executor.
-    /// It communicates with the main Weechat thread using a async channel.
+    ///
+    /// This runs on the per server tokio executor. It communicates with the
+    /// main Weechat thread using an async channel.
     pub async fn sync_loop(
         client: Client,
         channel: Sender<Result<ClientMessage, String>>,
@@ -322,7 +326,7 @@ impl Connection {
         server_name: String,
         server_path: PathBuf,
     ) {
-        if !client.logged_in().await {
+        if !client.logged_in() {
             let device_id =
                 Connection::load_device_id(&username, server_path.clone());
 
@@ -445,20 +449,22 @@ impl Connection {
                                 .ambiguity_changes
                                 .changes
                                 .get(&room_id)
-                                .and_then(|c| c.get(&m.event_id))
+                                .and_then(|c| c.get(m.event_id()))
                                 .cloned();
 
-                            if sync_channel
-                                .send(Ok(ClientMessage::MemberEvent(
-                                    room_id.clone(),
-                                    m,
-                                    true,
-                                    change,
-                                )))
-                                .await
-                                .is_err()
-                            {
-                                return LoopCtrl::Break;
+                            if let SyncStateEvent::Original(m) = m {
+                                if sync_channel
+                                    .send(Ok(ClientMessage::MemberEvent(
+                                        room_id.clone(),
+                                        m,
+                                        true,
+                                        change,
+                                    )))
+                                    .await
+                                    .is_err()
+                                {
+                                    return LoopCtrl::Break;
+                                }
                             }
                         } else if sync_channel
                             .send(Ok(ClientMessage::SyncState(
@@ -486,20 +492,22 @@ impl Connection {
                                 .ambiguity_changes
                                 .changes
                                 .get(&room_id)
-                                .and_then(|c| c.get(&m.event_id))
+                                .and_then(|c| c.get(m.event_id()))
                                 .cloned();
 
-                            if sync_channel
-                                .send(Ok(ClientMessage::MemberEvent(
-                                    room_id.clone(),
-                                    m,
-                                    false,
-                                    change,
-                                )))
-                                .await
-                                .is_err()
-                            {
-                                return LoopCtrl::Break;
+                            if let SyncStateEvent::Original(m) = m {
+                                if sync_channel
+                                    .send(Ok(ClientMessage::MemberEvent(
+                                        room_id.clone(),
+                                        m,
+                                        false,
+                                        change,
+                                    )))
+                                    .await
+                                    .is_err()
+                                {
+                                    return LoopCtrl::Break;
+                                }
                             }
                         } else if sync_channel
                             .send(Ok(ClientMessage::SyncEvent(
@@ -528,7 +536,7 @@ impl Connection {
                                             .changes
                                             .get(&room_id)
                                             .and_then(|c| {
-                                                c.get(&member.event_id)
+                                                c.get(member.event_id())
                                             })
                                             .cloned();
 
@@ -536,7 +544,12 @@ impl Connection {
                                             .send(Ok(
                                                 ClientMessage::MemberEvent(
                                                     room_id.clone(),
-                                                    member.into(),
+                                                    // TODO remove the unwrap
+                                                    member
+                                                        .as_original()
+                                                        .unwrap()
+                                                        .clone()
+                                                        .into(),
                                                     true,
                                                     change,
                                                 ),
