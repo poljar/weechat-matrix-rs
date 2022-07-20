@@ -43,9 +43,6 @@ impl Content for AnySyncMessageLikeEvent {
             AnySyncMessageLikeEvent::RoomMessage(
                 SyncMessageLikeEvent::Original(e),
             ) => Some(e.content.to_owned().into()),
-            AnySyncMessageLikeEvent::RoomMessageFeedback(
-                SyncMessageLikeEvent::Original(e),
-            ) => Some(e.content.to_owned().into()),
             AnySyncMessageLikeEvent::RoomRedaction(
                 SyncRoomRedactionEvent::Original(e),
             ) => Some(e.content.to_owned().into()),
@@ -83,9 +80,6 @@ impl Content for AnyMessageLikeEvent {
             AnyMessageLikeEvent::RoomMessage(MessageLikeEvent::Original(e)) => {
                 Some(e.content.to_owned().into())
             }
-            AnyMessageLikeEvent::RoomMessageFeedback(
-                MessageLikeEvent::Original(e),
-            ) => Some(e.content.to_owned().into()),
             AnyMessageLikeEvent::Sticker(_) => None,
             _ => None,
         }
@@ -115,7 +109,6 @@ impl TransactionId for AnySyncMessageLikeEvent {
             AnySyncMessageLikeEvent::RoomMessage(
                 SyncMessageLikeEvent::Original(e),
             ) => e.unsigned.transaction_id.as_deref(),
-            AnySyncMessageLikeEvent::RoomMessageFeedback(_) => None,
             AnySyncMessageLikeEvent::RoomRedaction(_) => None,
             AnySyncMessageLikeEvent::Sticker(_) => None,
             _ => None,
