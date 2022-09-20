@@ -219,7 +219,7 @@ Use /matrix [command] help to find out more.\n",
             ("disconnect", Some(subargs)) => self.disconnect_command(subargs),
             ("server", Some(subargs)) => self.server_command(subargs),
             ("devices", Some(subargs)) => {
-                DevicesCommand::run(buffer, &self.servers, subargs)
+                // DevicesCommand::run(buffer, &self.servers, subargs)
             }
             ("keys", Some(subargs)) => {
                 KeysCommand::run(buffer, &self.servers, subargs)
@@ -279,12 +279,12 @@ impl CommandCallback for MatrixCommand {
             ])
             .setting(ArgParseSettings::SubcommandRequiredElseHelp)
             .subcommand(server_command)
-            .subcommand(
-                SubCommand::with_name("devices")
-                    .about(DevicesCommand::DESCRIPTION)
-                    .settings(DevicesCommand::SETTINGS)
-                    .subcommands(DevicesCommand::subcommands()),
-            )
+            // .subcommand(
+            //     SubCommand::with_name("devices")
+            //         .about(DevicesCommand::DESCRIPTION)
+            //         .settings(DevicesCommand::SETTINGS)
+            //         .subcommands(DevicesCommand::subcommands()),
+            // )
             .subcommand(
                 SubCommand::with_name("keys")
                     .about(KeysCommand::DESCRIPTION)

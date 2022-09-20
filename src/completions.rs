@@ -88,7 +88,7 @@ impl CompletionCallback for UsersCompletion {
         if let Some(server) = self.servers.find_server(buffer) {
             if let Some(connection) = server.connection() {
                 let tracked_users =
-                    block_on(connection.client().tracked_users());
+                    block_on(connection.client().encryption().tracked_users());
 
                 for user in tracked_users.into_iter() {
                     completion.add_with_options(

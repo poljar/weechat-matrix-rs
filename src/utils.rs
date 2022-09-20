@@ -1,7 +1,7 @@
 use matrix_sdk::ruma::{
     events::{
-        room::message::{MessageEventContent, Relation},
-        AnyMessageEvent, AnySyncMessageEvent,
+        room::message::{Relation, RoomMessageEventContent},
+        AnyMessageLikeEvent, AnySyncTimelineEvent,
     },
     EventId, UserId,
 };
@@ -24,15 +24,15 @@ impl ToTag for UserId {
 
 pub trait Edit {
     fn is_edit(&self) -> bool;
-    fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)>;
+    fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)>;
 }
 
-impl Edit for MessageEventContent {
+impl Edit for RoomMessageEventContent {
     fn is_edit(&self) -> bool {
         matches!(self.relates_to.as_ref(), Some(Relation::Replacement(_)))
     }
 
-    fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)> {
+    fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)> {
         if let Some(Relation::Replacement(r)) = self.relates_to.as_ref() {
             Some((&r.event_id, &r.new_content))
         } else {
@@ -41,38 +41,38 @@ impl Edit for MessageEventContent {
     }
 }
 
-impl Edit for AnySyncMessageEvent {
-    fn is_edit(&self) -> bool {
-        if let AnySyncMessageEvent::RoomMessage(c) = self {
-            c.content.is_edit()
-        } else {
-            false
-        }
-    }
+// impl Edit for AnySyncTimelineEvent {
+//     fn is_edit(&self) -> bool {
+//         if let AnyMessageLikeEvent::RoomMessage(c) = self {
+//             c.content.is_edit()
+//         } else {
+//             false
+//         }
+//     }
+//
+//     fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)> {
+//         if let AnySyncMessageEvent::RoomMessage(c) = self {
+//             c.content.get_edit()
+//         } else {
+//             None
+//         }
+//     }
+// }
 
-    fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)> {
-        if let AnySyncMessageEvent::RoomMessage(c) = self {
-            c.content.get_edit()
-        } else {
-            None
-        }
-    }
-}
-
-impl Edit for AnyMessageEvent {
-    fn is_edit(&self) -> bool {
-        if let AnyMessageEvent::RoomMessage(c) = self {
-            c.content.is_edit()
-        } else {
-            false
-        }
-    }
-
-    fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)> {
-        if let AnyMessageEvent::RoomMessage(c) = self {
-            c.content.get_edit()
-        } else {
-            None
-        }
-    }
-}
+// impl Edit for AnyMessageEvent {
+//     fn is_edit(&self) -> bool {
+//         if let AnyMessageEvent::RoomMessage(c) = self {
+//             c.content.is_edit()
+//         } else {
+//             false
+//         }
+//     }
+//
+//     fn get_edit(&self) -> Option<(&EventId, &MessageEventContent)> {
+//         if let AnyMessageEvent::RoomMessage(c) = self {
+//             c.content.get_edit()
+//         } else {
+//             None
+//         }
+//     }
+// }

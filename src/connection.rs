@@ -15,34 +15,35 @@ use uuid::Uuid;
 
 use matrix_sdk::{
     self,
+    config::SyncSettings,
     deserialized_responses::AmbiguityChange,
     room::Joined,
     ruma::{
-        api::client::r0::{
+        api::client::{
             device::{
-                delete_devices::Response as DeleteDevicesResponse,
-                get_devices::Response as DevicesResponse,
+                delete_devices::v3::Response as DeleteDevicesResponse,
+                get_devices::v3::Response as DevicesResponse,
             },
             filter::{
                 FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
             },
             message::{
-                get_message_events::{
+                get_message_events::v3::{
                     Request as MessagesRequest, Response as MessagesResponse,
                 },
-                send_message_event::Response as RoomSendResponse,
+                send_message_event::v3::Response as RoomSendResponse,
             },
-            session::login::Response as LoginResponse,
-            sync::sync_events::Filter,
+            session::login::v3::Response as LoginResponse,
+            sync::sync_events::v3::Filter,
             uiaa::{AuthData, Password, UserIdentifier},
         },
         events::{
-            room::member::MemberEventContent, AnyMessageEventContent,
-            AnySyncRoomEvent, AnySyncStateEvent, SyncStateEvent,
+            room::member::RoomMemberEventContent, AnyMessageLikeEventContent,
+            AnySyncStateEvent, AnySyncTimelineEvent, SyncStateEvent,
         },
-        DeviceIdBox, RoomId,
+        OwnedDeviceId, OwnedRoomId, OwnedTransactionId, RoomId, TransactionId,
     },
-    Client, LoopCtrl, Result as MatrixResult, SyncSettings,
+    Client, LoopCtrl, Result as MatrixResult,
 };
 
 use weechat::{Task, Weechat};
@@ -63,7 +64,7 @@ pub struct InteractiveAuthInfo {
 impl InteractiveAuthInfo {
     pub fn as_auth_data(&self) -> AuthData<'_> {
         AuthData::Password(Password::new(
-            UserIdentifier::MatrixId(&self.user),
+            UserIdentifier::UserIdOrLocalpart(&self.user),
             &self.password,
         ))
     }
@@ -71,18 +72,18 @@ impl InteractiveAuthInfo {
 
 pub enum ClientMessage {
     LoginMessage(LoginResponse),
-    SyncState(RoomId, AnySyncStateEvent),
-    SyncEvent(RoomId, AnySyncRoomEvent),
+    SyncState(OwnedRoomId, AnySyncStateEvent),
+    SyncEvent(OwnedRoomId, AnySyncTimelineEvent),
     MemberEvent(
-        RoomId,
-        SyncStateEvent<MemberEventContent>,
+        OwnedRoomId,
+        SyncStateEvent<RoomMemberEventContent>,
         bool,
         Option<AmbiguityChange>,
     ),
     RestoredRoom(Joined),
 }
 
-/// Struc representing an active connection to the homeserver.
+/// Struct representing an active connection to the homeserver.
 ///
 /// Since the rust-sdk `Client` object uses reqwest for the HTTP client making
 /// requests requires the request to be made on a tokio runtime. The connection
@@ -156,22 +157,18 @@ impl Connection {
     pub async fn send_message(
         &self,
         room: Joined,
-        content: AnyMessageEventContent,
-        transaction_id: Option<Uuid>,
+        content: AnyMessageLikeEventContent,
+        transaction_id: Option<OwnedTransactionId>,
     ) -> MatrixResult<RoomSendResponse> {
         self.spawn(async move {
-            room.send(
-                content,
-                Some(transaction_id.unwrap_or_else(Uuid::new_v4)),
-            )
-            .await
+            room.send(content, transaction_id.as_deref()).await
         })
         .await
     }
 
     pub async fn delete_devices(
         &self,
-        devices: Vec<DeviceIdBox>,
+        devices: Vec<OwnedDeviceId>,
         auth_info: Option<InteractiveAuthInfo>,
     ) -> MatrixResult<DeleteDevicesResponse> {
         let client = self.client.clone();
@@ -193,20 +190,21 @@ impl Connection {
         room: Joined,
         prev_batch: PrevBatch,
     ) -> MatrixResult<MessagesResponse> {
-        Ok(self
-            .spawn(async move {
-                let request = match &prev_batch {
-                    PrevBatch::Backwards(t) => {
-                        MessagesRequest::backward(&room.room_id(), &t)
-                    }
-                    PrevBatch::Forward(t) => {
-                        MessagesRequest::forward(&room.room_id(), &t)
-                    }
-                };
-
-                room.messages(request).await
-            })
-            .await?)
+        todo!()
+        // Ok(self
+        //     .spawn(async move {
+        //         // let request = match &prev_batch {
+        //         //     PrevBatch::Backwards(t) => {
+        //         //         MessagesRequest::backward(&room.room_id(), &t)
+        //         //     }
+        //         //     PrevBatch::Forward(t) => {
+        //         //         MessagesRequest::forward(&room.room_id(), &t)
+        //         //     }
+        //         // };
+        //         //
+        //         // room.messages(request).await
+        //     })
+        //     .await?)
     }
 
     /// Get the list of our own devices.
@@ -300,9 +298,10 @@ impl Connection {
                         is_state,
                         change,
                     ) => {
-                        server
-                            .receive_member(room_id, e, is_state, change)
-                            .await
+                        todo!()
+                        // server
+                        //     .receive_member(room_id, e, is_state, change)
+                        //     .await
                     }
                 },
                 Err(e) => server.print_error(&format!("Ruma error {}", e)),
@@ -338,7 +337,7 @@ impl Connection {
         server_name: String,
         server_path: PathBuf,
     ) {
-        if !client.logged_in().await {
+        if !client.logged_in() {
             let device_id =
                 Connection::load_device_id(&username, server_path.clone());
 
@@ -446,7 +445,7 @@ impl Connection {
                                 .ambiguity_changes
                                 .changes
                                 .get(&room_id)
-                                .and_then(|c| c.get(&m.event_id))
+                                .and_then(|c| c.get(m.event_id()))
                                 .cloned();
 
                             if sync_channel
@@ -479,7 +478,7 @@ impl Connection {
                         .iter()
                         .filter_map(|e| e.event.deserialize().ok())
                     {
-                        if let AnySyncRoomEvent::State(
+                        if let AnySyncTimelineEvent::State(
                             AnySyncStateEvent::RoomMember(m),
                         ) = event
                         {
@@ -487,7 +486,7 @@ impl Connection {
                                 .ambiguity_changes
                                 .changes
                                 .get(&room_id)
-                                .and_then(|c| c.get(&m.event_id))
+                                .and_then(|c| c.get(m.event_id()))
                                 .cloned();
 
                             if sync_channel
@@ -529,7 +528,7 @@ impl Connection {
                                             .changes
                                             .get(&room_id)
                                             .and_then(|c| {
-                                                c.get(&member.event_id)
+                                                c.get(member.event_id())
                                             })
                                             .cloned();
 

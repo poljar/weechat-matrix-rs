@@ -6,15 +6,15 @@ use tracing::{error, info};
 
 use matrix_sdk::{
     deserialized_responses::AmbiguityChange,
-    room::Joined,
+    room::{Joined, RoomMember},
     ruma::{
         events::{
-            room::member::{MemberEventContent, MembershipState},
-            SyncStateEvent,
+            room::member::{MembershipState, RoomMemberEventContent},
+            OriginalSyncStateEvent, SyncStateEvent,
         },
-        uint, UserId,
+        uint, OwnedUserId, UserId,
     },
-    RoomMember, StoreError,
+    StoreError,
 };
 
 use weechat::{
@@ -27,8 +27,8 @@ use crate::render::render_membership;
 #[derive(Clone)]
 pub struct Members {
     room: Joined,
-    ambiguity_map: Rc<DashMap<UserId, bool>>,
-    nicks: Rc<DashMap<UserId, String>>,
+    ambiguity_map: Rc<DashMap<OwnedUserId, bool>>,
+    nicks: Rc<DashMap<OwnedUserId, String>>,
     pub(super) buffer: Rc<RefCell<Option<BufferHandle>>>,
 }
 
@@ -72,7 +72,7 @@ impl Members {
 
         if group.add_nick(nick_settings).is_err() {
             error!(
-                "Error adding nick {} ({}) to room {}, already addded.",
+                "Error adding nick {} ({}) to room {}, already added.",
                 nick,
                 member.user_id(),
                 buffer.short_name()
@@ -94,7 +94,7 @@ impl Members {
         match self.room().get_member_no_sync(user_id).await {
             Ok(Some(member)) => {
                 self.ambiguity_map
-                    .insert(user_id.clone(), member.name_ambiguous());
+                    .insert(user_id.to_owned(), member.name_ambiguous());
                 self.update_member(user_id).await;
             }
             Ok(None) => {
@@ -146,7 +146,7 @@ impl Members {
     ) {
         if let Some(change) = ambiguity_change {
             self.ambiguity_map
-                .insert(user_id.clone(), change.member_ambiguous);
+                .insert(user_id.to_owned(), change.member_ambiguous);
 
             if let Some(disambiguated) = &change.disambiguated_member {
                 self.ambiguity_map.insert(disambiguated.clone(), false);
@@ -237,15 +237,16 @@ impl Members {
         let room = self.room();
         let room_name = block_on(room.display_name())?;
 
-        let room_name = if room_name == "#" {
-            "##".to_owned()
-        } else if room_name.starts_with('#') || room.is_direct() {
-            room_name
-        } else {
-            format!("#{}", room_name)
-        };
+        // TODO enable this again
+        // let room_name = if room_name == "#" {
+        //     "##".to_owned()
+        // } else if room_name.starts_with('#') || room.is_direct() {
+        //     room_name
+        // } else {
+        //     format!("#{}", room_name)
+        // };
 
-        Ok(room_name)
+        Ok(room_name.to_string())
     }
 
     pub fn update_buffer_name(&self) {
@@ -271,7 +272,7 @@ impl Members {
 
     pub async fn handle_membership_event(
         &self,
-        event: &SyncStateEvent<MemberEventContent>,
+        event: &OriginalSyncStateEvent<RoomMemberEventContent>,
         state_event: bool,
         ambiguity_change: Option<&AmbiguityChange>,
     ) {
@@ -291,8 +292,7 @@ impl Members {
 
         let sender_id = event.sender.clone();
 
-        let target_id = if let Ok(t) = UserId::try_from(event.state_key.clone())
-        {
+        let target_id = if let Ok(t) = UserId::parse(event.state_key.clone()) {
             t
         } else {
             error!(

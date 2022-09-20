@@ -27,6 +27,7 @@ mod members;
 use members::Members;
 pub use members::WeechatRoomMember;
 use tracing::{debug, trace};
+use uuid::Uuid;
 
 use std::{
     borrow::Cow,
@@ -52,19 +53,20 @@ use matrix_sdk::{
     ruma::{
         events::{
             room::{
-                member::MemberEventContent,
+                member::RoomMemberEventContent,
                 message::{
-                    MessageEventContent, MessageType, TextMessageEventContent,
+                    MessageType, RoomMessageEventContent, SyncRoomMessageEvent,
+                    TextMessageEventContent,
                 },
-                redaction::SyncRedactionEvent,
+                redaction::RoomRedactionEvent,
             },
-            AnyMessageEventContent, AnyRedactedSyncMessageEvent, AnyRoomEvent,
-            AnySyncMessageEvent, AnySyncRoomEvent, AnySyncStateEvent,
-            SyncMessageEvent, SyncStateEvent,
+            AnyMessageLikeEventContent, AnyStateEvent, AnySyncMessageLikeEvent,
+            AnySyncStateEvent, AnySyncTimelineEvent, AnyTimelineEvent,
+            OriginalStateEvent, OriginalSyncStateEvent, SyncMessageLikeEvent,
         },
-        EventId, MilliSecondsSinceUnixEpoch, RoomAliasId, RoomId, UserId,
+        EventId, MilliSecondsSinceUnixEpoch, OwnedRoomAliasId, OwnedRoomId,
+        OwnedTransactionId, RoomAliasId, RoomId, TransactionId, UserId,
     },
-    uuid::Uuid,
     StoreError,
 };
 
@@ -165,7 +167,9 @@ pub struct MatrixRoom {
 
 #[derive(Debug, Clone, Default)]
 pub struct MessageQueue {
-    queue: Rc<RefCell<HashMap<Uuid, (bool, MessageEventContent)>>>,
+    queue: Rc<
+        RefCell<HashMap<OwnedTransactionId, (bool, RoomMessageEventContent)>>,
+    >,
 }
 
 impl MessageQueue {
@@ -175,16 +179,23 @@ impl MessageQueue {
         }
     }
 
-    fn add(&self, uuid: Uuid, content: MessageEventContent) {
+    fn add(&self, uuid: OwnedTransactionId, content: RoomMessageEventContent) {
         self.queue.borrow_mut().insert(uuid, (false, content));
     }
 
-    fn add_with_echo(&self, uuid: Uuid, content: MessageEventContent) {
+    fn add_with_echo(
+        &self,
+        uuid: OwnedTransactionId,
+        content: RoomMessageEventContent,
+    ) {
         self.queue.borrow_mut().insert(uuid, (true, content));
     }
 
-    fn remove(&self, uuid: Uuid) -> Option<(bool, MessageEventContent)> {
-        self.queue.borrow_mut().remove(&uuid)
+    fn remove(
+        &self,
+        uuid: &TransactionId,
+    ) -> Option<(bool, RoomMessageEventContent)> {
+        self.queue.borrow_mut().remove(uuid)
     }
 }
 
@@ -195,7 +206,7 @@ impl RoomHandle {
         config: Rc<RefCell<Config>>,
         room: Joined,
         homeserver: Url,
-        room_id: RoomId,
+        room_id: &RoomId,
         own_user_id: &UserId,
     ) -> Self {
         let members = Members::new(room.clone());
@@ -208,13 +219,13 @@ impl RoomHandle {
 
         let room = MatrixRoom {
             homeserver: Rc::new(homeserver),
-            room_id: Rc::new(room_id.clone()),
+            room_id: room_id.into(),
             connection: connection.clone(),
             config,
             prev_batch: Rc::new(RefCell::new(
                 room.last_prev_batch().map(PrevBatch::Backwards),
             )),
-            own_user_id: Rc::new(own_user_id.to_owned()),
+            own_user_id: own_user_id.into(),
             members: members.clone(),
             buffer: members.buffer,
             outgoing_messages: MessageQueue::new(),
@@ -342,11 +353,11 @@ impl RoomHandle {
 impl BufferInputCallbackAsync for MatrixRoom {
     async fn callback(&mut self, _: BufferHandle, input: String) {
         let content = if self.config.borrow().input().markdown_input() {
-            MessageEventContent::new(MessageType::Text(
+            RoomMessageEventContent::new(MessageType::Text(
                 TextMessageEventContent::markdown(input),
             ))
         } else {
-            MessageEventContent::new(MessageType::Text(
+            RoomMessageEventContent::new(MessageType::Text(
                 TextMessageEventContent::plain(input),
             ))
         };
@@ -372,7 +383,7 @@ impl MatrixRoom {
         self.room.is_direct()
     }
 
-    pub fn alias(&self) -> Option<RoomAliasId> {
+    pub fn alias(&self) -> Option<OwnedRoomAliasId> {
         self.room.canonical_alias()
     }
 
@@ -405,108 +416,108 @@ impl MatrixRoom {
         }
     }
 
-    async fn redact_event(&self, event: &SyncRedactionEvent) {
-        let buffer_handle = self.buffer_handle();
-
-        let buffer = if let Ok(b) = buffer_handle.upgrade() {
-            b
-        } else {
-            return;
-        };
-
-        // TODO remove this unwrap.
-        let redacter = self.members.get(&event.sender).await.unwrap();
-
-        let event_id_tag =
-            Cow::from(format!("{}_id_{}", PLUGIN_NAME, event.redacts));
-        let tag = Cow::from("matrix_redacted");
-
-        let reason = if let Some(r) = &event.content.reason {
-            format!(", reason: {}", r)
-        } else {
-            "".to_owned()
-        };
-        let redaction_message = format!(
-            "{}<{}Message redacted by: {}{}{}>{}",
-            Weechat::color("chat_delimiters"),
-            Weechat::color("logger.color.backlog_line"),
-            redacter.nick(),
-            reason,
-            Weechat::color("chat_delimiters"),
-            Weechat::color("reset"),
-        );
-
-        let redaction_style = self.config.borrow().look().redaction_style();
-
-        let predicate = |l: &BufferLine| {
-            let tags = l.tags();
-            tags.contains(&event_id_tag)
-                && !tags.contains(&Cow::from("matrix_redacted"))
-        };
-
-        let strike_through = |string: Cow<str>| {
-            Weechat::remove_color(&string)
-                .graphemes(true)
-                .map(|g| format!("{}\u{0336}", g))
-                .collect::<Vec<String>>()
-                .join("")
-        };
-
-        let redact_first_line = |message: Cow<str>| match redaction_style {
-            RedactionStyle::Delete => redaction_message.clone(),
-            RedactionStyle::Notice => {
-                format!("{} {}", message, redaction_message)
-            }
-            RedactionStyle::StrikeThrough => {
-                format!("{} {}", strike_through(message), redaction_message)
-            }
-        };
-
-        let redact_string = |message: Cow<str>| match redaction_style {
-            RedactionStyle::Delete => redaction_message.clone(),
-            RedactionStyle::Notice => {
-                format!("{} {}", message, redaction_message)
-            }
-            RedactionStyle::StrikeThrough => strike_through(message),
-        };
-
-        fn modify_line<F>(line: BufferLine, tag: Cow<str>, redaction_func: F)
-        where
-            F: Fn(Cow<str>) -> String,
-        {
-            let message = line.message();
-            let new_message = redaction_func(message);
-
-            let mut tags = line.tags();
-            tags.push(tag);
-            let tags: Vec<&str> = tags.iter().map(|t| t.as_ref()).collect();
-
-            line.set_message(&new_message);
-            line.set_tags(&tags);
-        }
-
-        let mut lines = buffer.lines();
-        let first_line = lines.rfind(predicate);
-
-        if let Some(line) = first_line {
-            modify_line(line, tag.clone(), redact_first_line);
-        } else {
-            return;
-        }
-
-        while let Some(line) = lines.next_back().filter(predicate) {
-            modify_line(line, tag.clone(), redact_string);
-        }
-    }
+    // async fn redact_event(&self, event: &SyncRedactionEvent) {
+    //     let buffer_handle = self.buffer_handle();
+    //
+    //     let buffer = if let Ok(b) = buffer_handle.upgrade() {
+    //         b
+    //     } else {
+    //         return;
+    //     };
+    //
+    //     // TODO remove this unwrap.
+    //     let redacter = self.members.get(&event.sender).await.unwrap();
+    //
+    //     let event_id_tag =
+    //         Cow::from(format!("{}_id_{}", PLUGIN_NAME, event.redacts));
+    //     let tag = Cow::from("matrix_redacted");
+    //
+    //     let reason = if let Some(r) = &event.content.reason {
+    //         format!(", reason: {}", r)
+    //     } else {
+    //         "".to_owned()
+    //     };
+    //     let redaction_message = format!(
+    //         "{}<{}Message redacted by: {}{}{}>{}",
+    //         Weechat::color("chat_delimiters"),
+    //         Weechat::color("logger.color.backlog_line"),
+    //         redacter.nick(),
+    //         reason,
+    //         Weechat::color("chat_delimiters"),
+    //         Weechat::color("reset"),
+    //     );
+    //
+    //     let redaction_style = self.config.borrow().look().redaction_style();
+    //
+    //     let predicate = |l: &BufferLine| {
+    //         let tags = l.tags();
+    //         tags.contains(&event_id_tag)
+    //             && !tags.contains(&Cow::from("matrix_redacted"))
+    //     };
+    //
+    //     let strike_through = |string: Cow<str>| {
+    //         Weechat::remove_color(&string)
+    //             .graphemes(true)
+    //             .map(|g| format!("{}\u{0336}", g))
+    //             .collect::<Vec<String>>()
+    //             .join("")
+    //     };
+    //
+    //     let redact_first_line = |message: Cow<str>| match redaction_style {
+    //         RedactionStyle::Delete => redaction_message.clone(),
+    //         RedactionStyle::Notice => {
+    //             format!("{} {}", message, redaction_message)
+    //         }
+    //         RedactionStyle::StrikeThrough => {
+    //             format!("{} {}", strike_through(message), redaction_message)
+    //         }
+    //     };
+    //
+    //     let redact_string = |message: Cow<str>| match redaction_style {
+    //         RedactionStyle::Delete => redaction_message.clone(),
+    //         RedactionStyle::Notice => {
+    //             format!("{} {}", message, redaction_message)
+    //         }
+    //         RedactionStyle::StrikeThrough => strike_through(message),
+    //     };
+    //
+    //     fn modify_line<F>(line: BufferLine, tag: Cow<str>, redaction_func: F)
+    //     where
+    //         F: Fn(Cow<str>) -> String,
+    //     {
+    //         let message = line.message();
+    //         let new_message = redaction_func(message);
+    //
+    //         let mut tags = line.tags();
+    //         tags.push(tag);
+    //         let tags: Vec<&str> = tags.iter().map(|t| t.as_ref()).collect();
+    //
+    //         line.set_message(&new_message);
+    //         line.set_tags(&tags);
+    //     }
+    //
+    //     let mut lines = buffer.lines();
+    //     let first_line = lines.rfind(predicate);
+    //
+    //     if let Some(line) = first_line {
+    //         modify_line(line, tag.clone(), redact_first_line);
+    //     } else {
+    //         return;
+    //     }
+    //
+    //     while let Some(line) = lines.next_back().filter(predicate) {
+    //         modify_line(line, tag.clone(), redact_string);
+    //     }
+    // }
 
     async fn render_message_content(
         &self,
         event_id: &EventId,
-        send_time: &MilliSecondsSinceUnixEpoch,
+        send_time: MilliSecondsSinceUnixEpoch,
         sender: &WeechatRoomMember,
-        content: &AnyMessageEventContent,
+        content: &AnyMessageLikeEventContent,
     ) -> Option<RenderedEvent> {
-        use AnyMessageEventContent::*;
+        use AnyMessageLikeEventContent::*;
         use MessageType::*;
 
         let rendered = match content {
@@ -563,58 +574,59 @@ impl MatrixRoom {
 
     async fn render_sync_message(
         &self,
-        event: &AnySyncMessageEvent,
+        event: &AnySyncTimelineEvent,
     ) -> Option<RenderedEvent> {
-        // TODO remove this expect.
-        let sender =
-            self.members.get(event.sender()).await.expect(
-                "Rendering a message but the sender isn't in the nicklist",
-            );
-
-        let send_time = event.origin_server_ts();
-        self.render_message_content(
-            event.event_id(),
-            send_time,
-            &sender,
-            &event.content(),
-        )
-        .await
-        .map(|r| {
-            // TODO the tags are different if the room is a DM.
-            if sender.user_id() == &*self.own_user_id {
-                r.add_self_tags()
-            } else {
-                r.add_msg_tags()
-            }
-        })
+        // // TODO remove this expect.
+        // let sender =
+        //     self.members.get(event.sender()).await.expect(
+        //         "Rendering a message but the sender isn't in the nicklist",
+        //     );
+        //
+        // let send_time = event.origin_server_ts();
+        // self.render_message_content(
+        //     event.event_id(),
+        //     send_time,
+        //     &sender,
+        //     &event.content(),
+        // )
+        // .await
+        // .map(|r| {
+        //     // TODO the tags are different if the room is a DM.
+        //     if sender.user_id() == &*self.own_user_id {
+        //         r.add_self_tags()
+        //     } else {
+        //         r.add_msg_tags()
+        //     }
+        // })
+        todo!()
     }
 
-    // Add the content of the message to our outgoing messag queue and print out
+    // Add the content of the message to our outgoing message queue and print out
     // a local echo line if local echo is enabled.
     async fn queue_outgoing_message(
         &self,
         uuid: Uuid,
-        content: &MessageEventContent,
+        content: &AnyMessageLikeEventContent,
     ) {
-        if self.config.borrow().look().local_echo() {
-            if let MessageType::Text(c) = &content.msgtype {
-                let sender =
-                    self.members.get(&self.own_user_id).await.unwrap_or_else(
-                        || panic!("No own member {}", self.own_user_id),
-                    );
-
-                let local_echo = c
-                    .render_with_prefix_for_echo(&sender, uuid, &())
-                    .add_self_tags();
-                self.print_rendered_event(local_echo);
-
-                self.outgoing_messages.add_with_echo(uuid, content.clone());
-            } else {
-                self.outgoing_messages.add(uuid, content.clone());
-            }
-        } else {
-            self.outgoing_messages.add(uuid, content.clone());
-        }
+        // if self.config.borrow().look().local_echo() {
+        //     if let MessageType::Text(c) = &content.msgtype {
+        //         let sender =
+        //             self.members.get(&self.own_user_id).await.unwrap_or_else(
+        //                 || panic!("No own member {}", self.own_user_id),
+        //             );
+        //
+        //         let local_echo = c
+        //             .render_with_prefix_for_echo(&sender, uuid, &())
+        //             .add_self_tags();
+        //         self.print_rendered_event(local_echo);
+        //
+        //         self.outgoing_messages.add_with_echo(uuid, content.clone());
+        //     } else {
+        //         self.outgoing_messages.add(uuid, content.clone());
+        //     }
+        // } else {
+        //     self.outgoing_messages.add(uuid, content.clone());
+        // }
     }
 
     /// Send the given content to the server.
@@ -635,18 +647,18 @@ impl MatrixRoom {
     ///
     /// buffer.send_message(content).await
     /// ```
-    pub async fn send_message(&self, content: MessageEventContent) {
-        let uuid = Uuid::new_v4();
+    pub async fn send_message(&self, content: RoomMessageEventContent) {
+        let uuid = TransactionId::new();
 
         let connection = self.connection.borrow().clone();
 
         if let Some(c) = connection {
-            self.queue_outgoing_message(uuid, &content).await;
+            // self.queue_outgoing_message(uuid, &content).await;
             match c
                 .send_message(
                     self.room().clone(),
-                    AnyMessageEventContent::RoomMessage(content),
-                    Some(uuid),
+                    AnyMessageLikeEventContent::RoomMessage(content),
+                    Some(uuid.to_owned()),
                 )
                 .await
             {
@@ -656,7 +668,7 @@ impl MatrixRoom {
                 Err(_e) => {
                     // TODO print out an error, remember to modify the local
                     // echo line if there is one.
-                    self.outgoing_messages.remove(uuid);
+                    self.outgoing_messages.remove(&uuid);
                 }
             }
         } else if let Ok(buffer) = self.buffer_handle().upgrade() {
@@ -749,7 +761,8 @@ impl MatrixRoom {
             if let Ok(r) = connection.room_messages(room, prev_batch).await {
                 for event in r.chunk.iter().filter_map(|e| e.deserialize().ok())
                 {
-                    self.handle_room_event(&event).await;
+                    // TODO i have no idea which types we not have to expect
+                    // self.handle_room_event(&event).await;
                 }
 
                 let mut prev_batch = self.prev_batch.borrow_mut();
@@ -841,31 +854,35 @@ impl MatrixRoom {
         }
     }
 
-    async fn handle_outgoing_message(&self, uuid: Uuid, event_id: &EventId) {
-        if let Some((echo, content)) = self.outgoing_messages.remove(uuid) {
-            let event = SyncMessageEvent {
-                sender: (&*self.own_user_id).clone(),
-                origin_server_ts: MilliSecondsSinceUnixEpoch::now(),
-                event_id: event_id.clone(),
-                content,
-                unsigned: Default::default(),
-            };
-
-            let event = AnySyncMessageEvent::RoomMessage(event);
-
-            let rendered = self
-                .render_sync_message(&event)
-                .await
-                .expect("Sent out an event that we don't know how to render");
-
-            if let Ok(buffer) = self.buffer_handle().upgrade() {
-                if echo {
-                    self.replace_local_echo(uuid, &buffer, rendered);
-                } else {
-                    self.print_rendered_event(rendered);
-                }
-            }
-        }
+    async fn handle_outgoing_message(
+        &self,
+        uuid: OwnedTransactionId,
+        event_id: &EventId,
+    ) {
+        // if let Some((echo, content)) = self.outgoing_messages.remove(uuid) {
+        //     let event = SyncRoomMessageEvent {
+        //         sender: (&*self.own_user_id).clone(),
+        //         origin_server_ts: MilliSecondsSinceUnixEpoch::now(),
+        //         event_id: event_id.clone(),
+        //         content,
+        //         unsigned: Default::default(),
+        //     };
+        //
+        //     let event = AnySyncMessageLikeEvent::RoomMessage(event);
+        //
+        //     let rendered = self
+        //         .render_sync_message(&event)
+        //         .await
+        //         .expect("Sent out an event that we don't know how to render");
+        //
+        //     if let Ok(buffer) = self.buffer_handle().upgrade() {
+        //         if echo {
+        //             self.replace_local_echo(uuid, &buffer, rendered);
+        //         } else {
+        //             self.print_rendered_event(rendered);
+        //         }
+        //     }
+        // }
     }
 
     fn set_topic(&self) {
@@ -955,88 +972,88 @@ impl MatrixRoom {
         }
     }
 
-    async fn handle_edits(&self, event: &AnySyncMessageEvent) {
-        // TODO remove this expect.
-        let sender =
-            self.members.get(event.sender()).await.expect(
-                "Rendering a message but the sender isn't in the nicklist",
-            );
-
-        if let Some((event_id, content)) = event.get_edit() {
-            let send_time = event.origin_server_ts();
-
-            if let Some(rendered) = self
-                .render_message_content(
-                    event_id,
-                    send_time,
-                    &sender,
-                    &AnyMessageEventContent::RoomMessage(content.clone()),
-                )
-                .await
-                .map(|r| {
-                    // TODO the tags are different if the room is a DM.
-                    if sender.user_id() == &*self.own_user_id {
-                        r.add_self_tags()
-                    } else {
-                        r.add_msg_tags()
-                    }
-                })
-            {
-                self.replace_edit(event_id, event.sender(), rendered);
-            }
-        }
+    async fn handle_edits(&self, event: &AnyTimelineEvent) {
+        // // TODO remove this expect.
+        // let sender =
+        //     self.members.get(event.sender()).await.expect(
+        //         "Rendering a message but the sender isn't in the nicklist",
+        //     );
+        //
+        // if let Some((event_id, content)) = event.get_edit() {
+        //     let send_time = event.origin_server_ts();
+        //
+        //     if let Some(rendered) = self
+        //         .render_message_content(
+        //             event_id,
+        //             send_time,
+        //             &sender,
+        //             &AnyMessageLikeEventContent::RoomMessage(content.clone()),
+        //         )
+        //         .await
+        //         .map(|r| {
+        //             // TODO the tags are different if the room is a DM.
+        //             if sender.user_id() == &*self.own_user_id {
+        //                 r.add_self_tags()
+        //             } else {
+        //                 r.add_msg_tags()
+        //             }
+        //         })
+        //     {
+        //         self.replace_edit(event_id, event.sender(), rendered);
+        //     }
+        // }
     }
 
-    async fn handle_room_message(&self, event: &AnySyncMessageEvent) {
-        // If the event has a transaction id it's an event that we sent out
-        // ourselves, the content will be in the outgoing message queue and it
-        // may have been printed out as a local echo.
-        if let Some(id) = &event.unsigned().transaction_id {
-            if let Ok(id) = Uuid::parse_str(id) {
-                self.handle_outgoing_message(id, event.event_id()).await;
-                return;
-            }
-        }
+    async fn handle_room_message(&self, event: &AnySyncMessageLikeEvent) {
+        // // If the event has a transaction id it's an event that we sent out
+        // // ourselves, the content will be in the outgoing message queue and it
+        // // may have been printed out as a local echo.
+        // if let Some(id) = &event.unsigned().transaction_id {
+        //     if let Ok(id) = Uuid::parse_str(id) {
+        //         self.handle_outgoing_message(id, event.event_id()).await;
+        //         return;
+        //     }
+        // }
 
-        if let AnySyncMessageEvent::RoomRedaction(r) = event {
-            self.redact_event(r).await;
-        } else if event.is_edit() {
-            self.handle_edits(event).await;
-        } else if let Some(rendered) = self.render_sync_message(event).await {
-            self.print_rendered_event(rendered);
-        }
+        // if let AnySyncMessageLikeEvent::RoomRedaction(r) = event {
+        //     self.redact_event(r).await;
+        // } else if event.is_edit() {
+        //     self.handle_edits(event).await;
+        // } else if let Some(rendered) = self.render_sync_message(event).await {
+        //     self.print_rendered_event(rendered);
+        // }
     }
 
-    async fn handle_redacted_events(
-        &self,
-        event: &AnyRedactedSyncMessageEvent,
-    ) {
-        use AnyRedactedSyncMessageEvent::*;
-
-        if let RoomMessage(e) = event {
-            // TODO remove those expects and unwraps.
-            let redacter =
-                &e.unsigned.redacted_because.as_ref().unwrap().sender;
-            let redacter = self.members.get(redacter).await.expect(
-                "Rendering a message but the sender isn't in the nicklist",
-            );
-            let sender = self.members.get(&e.sender).await.expect(
-                "Rendering a message but the sender isn't in the nicklist",
-            );
-            let rendered = e.render_with_prefix(
-                &e.origin_server_ts,
-                event.event_id(),
-                &sender,
-                &redacter,
-            );
-
-            self.print_rendered_event(rendered);
-        }
-    }
+    // async fn handle_redacted_events(
+    //     &self,
+    //     event: &AnyRedactedSyncMessageEvent,
+    // ) {
+    //     use AnyRedactedSyncMessageEvent::*;
+    //
+    //     if let RoomMessage(e) = event {
+    //         // TODO remove those expects and unwraps.
+    //         let redacter =
+    //             &e.unsigned.redacted_because.as_ref().unwrap().sender;
+    //         let redacter = self.members.get(redacter).await.expect(
+    //             "Rendering a message but the sender isn't in the nicklist",
+    //         );
+    //         let sender = self.members.get(&e.sender).await.expect(
+    //             "Rendering a message but the sender isn't in the nicklist",
+    //         );
+    //         let rendered = e.render_with_prefix(
+    //             &e.origin_server_ts,
+    //             event.event_id(),
+    //             &sender,
+    //             &redacter,
+    //         );
+    //
+    //         self.print_rendered_event(rendered);
+    //     }
+    // }
 
     pub async fn handle_membership_event(
         &self,
-        event: &SyncStateEvent<MemberEventContent>,
+        event: &OriginalSyncStateEvent<RoomMemberEventContent>,
         state_event: bool,
         ambiguity_change: Option<&AmbiguityChange>,
     ) {
@@ -1054,56 +1071,56 @@ impl MatrixRoom {
         }
     }
 
-    pub async fn handle_sync_room_event(&self, event: AnySyncRoomEvent) {
+    pub async fn handle_sync_room_event(&self, event: AnySyncTimelineEvent) {
         self.set_prev_batch();
 
         match &event {
-            AnySyncRoomEvent::Message(message) => {
+            AnySyncTimelineEvent::MessageLike(message) => {
                 self.handle_room_message(message).await
             }
-            AnySyncRoomEvent::RedactedMessage(e) => {
-                self.handle_redacted_events(e).await
-            }
+            // AnySyncTimelineEvent::RedactedMessage(e) => {
+            //     self.handle_redacted_events(e).await
+            // }
             // We don't print out redacted state events for now.
-            AnySyncRoomEvent::RedactedState(_) => (),
-            AnySyncRoomEvent::State(event) => {
+            // AnySyncTimelineEvent::RedactedState(_) => (),
+            AnySyncTimelineEvent::State(event) => {
                 self.handle_sync_state_event(event, false).await
             }
         }
     }
 
-    pub async fn handle_room_event(&self, event: &AnyRoomEvent) {
-        match &event {
-            AnyRoomEvent::Message(event) => {
-                // Only print out historical events if they aren't edits of
-                // other events.
-                if !event.is_edit() {
-                    let sender = self.members.get(event.sender()).await.expect(
-                        "Rendering a message but the sender isn't in the nicklist",
-                    );
-
-                    let send_time = event.origin_server_ts();
-
-                    if let Some(rendered) = self
-                        .render_message_content(
-                            event.event_id(),
-                            send_time,
-                            &sender,
-                            &event.content(),
-                        )
-                        .await
-                    {
-                        self.print_rendered_event(rendered);
-                    }
-                }
-            }
-            // TODO print out redacted messages.
-            AnyRoomEvent::RedactedMessage(_) => (),
-            AnyRoomEvent::RedactedState(_) => (),
-            AnyRoomEvent::State(_) => (),
-        }
-    }
-
+    // pub async fn handle_room_event(&self, event: &AnyRoomEvent) {
+    //     match &event {
+    //         AnyRoomEvent::Message(event) => {
+    //             // Only print out historical events if they aren't edits of
+    //             // other events.
+    //             if !event.is_edit() {
+    //                 let sender = self.members.get(event.sender()).await.expect(
+    //                     "Rendering a message but the sender isn't in the nicklist",
+    //                 );
+    //
+    //                 let send_time = event.origin_server_ts();
+    //
+    //                 if let Some(rendered) = self
+    //                     .render_message_content(
+    //                         event.event_id(),
+    //                         send_time,
+    //                         &sender,
+    //                         &event.content(),
+    //                     )
+    //                     .await
+    //                 {
+    //                     self.print_rendered_event(rendered);
+    //                 }
+    //             }
+    //         }
+    //         // TODO print out redacted messages.
+    //         AnyRoomEvent::RedactedMessage(_) => (),
+    //         AnyRoomEvent::RedactedState(_) => (),
+    //         AnyRoomEvent::State(_) => (),
+    //     }
+    // }
+    //
     pub fn room(&self) -> &Joined {
         &self.room
     }
