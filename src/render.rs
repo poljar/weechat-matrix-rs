@@ -1,26 +1,23 @@
 use url::Url;
 
-use matrix_sdk::{
-    ruma::{
-        events::{
-            room::{
-                encrypted::EncryptedEventContent,
-                member::{MemberEventContent, MembershipChange},
-                message::{
-                    AudioMessageEventContent, EmoteMessageEventContent,
-                    FileMessageEventContent, ImageMessageEventContent,
-                    LocationMessageEventContent, NoticeMessageEventContent,
-                    RedactedMessageEventContent,
-                    ServerNoticeMessageEventContent, TextMessageEventContent,
-                    VideoMessageEventContent,
-                },
-                EncryptedFile,
+use matrix_sdk::ruma::{
+    events::{
+        room::{
+            encrypted::RoomEncryptedEventContent,
+            member::{MembershipChange, RoomMemberEventContent},
+            message::{
+                AudioMessageEventContent, EmoteMessageEventContent,
+                FileMessageEventContent, ImageMessageEventContent,
+                LocationMessageEventContent, NoticeMessageEventContent,
+                RedactedRoomMessageEventContent,
+                ServerNoticeMessageEventContent, TextMessageEventContent,
+                VideoMessageEventContent,
             },
-            RedactedSyncMessageEvent, SyncStateEvent,
+            EncryptedFile, MediaSource,
         },
-        uint, EventId, MilliSecondsSinceUnixEpoch, UserId,
+        OriginalSyncStateEvent, RedactedSyncMessageLikeEvent,
     },
-    uuid::Uuid,
+    uint, EventId, MilliSecondsSinceUnixEpoch, MxcUri, TransactionId, UserId,
 };
 
 use weechat::{Prefix, Weechat};
@@ -115,7 +112,7 @@ pub trait Render {
     /// Render the event.
     fn render_with_prefix(
         &self,
-        timestamp: &MilliSecondsSinceUnixEpoch,
+        timestamp: MilliSecondsSinceUnixEpoch,
         event_id: &EventId,
         sender: &WeechatRoomMember,
         context: &Self::RenderContext,
@@ -145,7 +142,7 @@ pub trait Render {
     fn render_with_prefix_for_echo(
         &self,
         sender: &WeechatRoomMember,
-        uuid: Uuid,
+        uuid: &TransactionId,
         context: &Self::RenderContext,
     ) -> RenderedEvent {
         let content = self.render_for_echo(uuid, context);
@@ -160,7 +157,7 @@ pub trait Render {
 
     fn render_for_echo(
         &self,
-        uuid: Uuid,
+        uuid: &TransactionId,
         context: &Self::RenderContext,
     ) -> RenderedContent {
         let mut content = self.render(context);
@@ -196,7 +193,7 @@ impl Render for TextMessageEventContent {
                 tags: self.tags(),
             })
             .collect();
-        // TODO parse and render using the formattted body.
+        // TODO: parse and render using the formatted body.
         RenderedContent { lines }
     }
 }
@@ -210,8 +207,8 @@ impl Render for EmoteMessageEventContent {
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
-        // TODO parse and render using the formattted body.
-        // TODO handle multiple lines in the body.
+        // TODO: parse and render using the formatted body.
+        // TODO: handle multiple lines in the body.
         let message = format!("{} {}", sender.nick(), self.body);
 
         let line = RenderedLine {
@@ -260,7 +257,7 @@ impl Render for NoticeMessageEventContent {
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
-        // TODO parse and render using the formattted body.
+        // TODO: parse and render using the formatted body.
         let message = format!(
             "{color_notice}Notice\
             {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
@@ -321,10 +318,10 @@ fn mxc_to_http_download_path(
 
 /// Convert a matrix content URI to HTTP(s), respecting a user's homeserver
 fn mxc_to_http(
-    mxc_url: &str,
+    mxc_url: &MxcUri,
     homeserver: &Url,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let url = url::Url::parse(mxc_url)?;
+    let url = url::Url::parse(mxc_url.as_str())?;
 
     if url.scheme() != "mxc" {
         return Err("URL missing MXC scheme".into());
@@ -351,11 +348,11 @@ fn mxc_to_http(
 /// The returned URI should never be converted to http and opened directly, as that would expose
 /// the decryption parameters to any middleman or ISP.
 fn mxc_to_emxc(
-    mxc_url: &str,
+    mxc_url: &MxcUri,
     homeserver: &Url,
     encrypted: &EncryptedFile,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let url = url::Url::parse(mxc_url)?;
+    let url = url::Url::parse(mxc_url.as_str())?;
 
     if url.scheme() != "mxc" {
         return Err("URL missing MXC scheme".into());
@@ -382,15 +379,16 @@ fn mxc_to_emxc(
     // Add query parameters
     emxc_url
         .query_pairs_mut()
-        .append_pair("key", &encrypted.key.k)
+        .append_pair("key", &encrypted.key.k.encode())
         .append_pair(
             "hash",
-            encrypted
+            &encrypted
                 .hashes
                 .get("sha256")
-                .ok_or("Missing sha256 hash")?,
+                .ok_or("Missing sha256 hash")?
+                .encode(),
         )
-        .append_pair("iv", &encrypted.iv);
+        .append_pair("iv", &encrypted.iv.encode());
 
     Ok(emxc_url.to_string())
 }
@@ -427,7 +425,7 @@ impl<C: HasUrlOrFile> Render for C {
     }
 }
 
-impl Render for EncryptedEventContent {
+impl Render for RoomEncryptedEventContent {
     const TAGS: &'static [&'static str] = &["matrix_encrypted"];
     type RenderContext = ();
 
@@ -442,7 +440,7 @@ impl Render for EncryptedEventContent {
 
         let line = RenderedLine {
             message,
-            // TODO add tags that allow us decrypt the event at a later point in
+            // TODO: add tags that allow us decrypt the event at a later point in
             // time, sender key, algorithm, session id.
             tags: self.tags(),
         };
@@ -451,12 +449,12 @@ impl Render for EncryptedEventContent {
     }
 }
 
-impl Render for RedactedSyncMessageEvent<RedactedMessageEventContent> {
+impl Render for RedactedSyncMessageLikeEvent<RedactedRoomMessageEventContent> {
     type RenderContext = WeechatRoomMember;
     const TAGS: &'static [&'static str] = &["matrix_redacted"];
 
     fn render(&self, redacter: &Self::RenderContext) -> RenderedContent {
-        // TODO add the redaction reason.
+        // TODO: add the redaction reason.
         let message = format!(
             "{}<{}Message redacted by: {}{}>{}",
             Weechat::color("chat_delimiters"),
@@ -509,16 +507,21 @@ macro_rules! has_formatted_body {
 /// This trait is implemented for message types that can contain either an URL
 /// or an encrypted file. One of these _must_ be present.
 pub trait HasUrlOrFile {
-    fn url(&self) -> Option<&str>;
-    fn file(&self) -> Option<&str>;
+    fn url(&self) -> Option<&MxcUri>;
+
     fn body(&self) -> &str;
+
     #[inline]
-    fn resolve_url(&self) -> &str {
-        // the file is either encrypted or not encrypted so either `url` or
-        // `file` must exist and unwrapping will never panic
-        self.url().or_else(|| self.file()).unwrap()
+    fn resolve_url(&self) -> &MxcUri {
+        match self.source() {
+            MediaSource::Plain(s) => &s,
+            MediaSource::Encrypted(e) => &e.url,
+        }
     }
-    fn encrypted_file(&self) -> &Option<Box<EncryptedFile>>;
+
+    fn encrypted_file(&self) -> Option<&EncryptedFile>;
+
+    fn source(&self) -> &MediaSource;
 }
 
 // Same as above: a simple macro to implement the trait for structs with `url`
@@ -531,17 +534,22 @@ macro_rules! has_url_or_file {
             }
 
             #[inline]
-            fn url(&self) -> Option<&str> {
-                self.url.as_ref().map(|u| u.as_str())
+            fn url(&self) -> Option<&MxcUri> {
+                match &self.source {
+                    MediaSource::Plain(url) => Some(url),
+                    _ => None,
+                }
             }
 
-            #[inline]
-            fn file(&self) -> Option<&str> {
-                self.file.as_ref().map(|f| f.url.as_str())
+            fn source(&self) -> &MediaSource {
+                &self.source
             }
 
-            fn encrypted_file(&self) -> &Option<Box<EncryptedFile>> {
-                &self.file
+            fn encrypted_file(&self) -> Option<&EncryptedFile> {
+                match &self.source {
+                    MediaSource::Encrypted(e) => Some(&e),
+                    _ => None,
+                }
             }
         }
     };
@@ -560,7 +568,7 @@ has_url_or_file!(VideoMessageEventContent);
 /// Rendering implementation for membership events (joins, leaves, bans, profile
 /// changes, etc).
 pub fn render_membership(
-    event: &SyncStateEvent<MemberEventContent>,
+    event: &OriginalSyncStateEvent<RoomMemberEventContent>,
     sender: &WeechatRoomMember,
     target: &WeechatRoomMember,
 ) -> String {
@@ -631,18 +639,18 @@ pub fn render_membership(
         color_reset = Weechat::color("reset")
     );
 
-    // TODO we should return the tags as well.
+    // TODO: we should return the tags as well.
     match change_op {
         ProfileChanged {
-            displayname_changed,
-            avatar_url_changed,
+            displayname_change,
+            avatar_url_change,
         } => {
             let new_display_name = &event.content.displayname;
 
             // TODO: Should we display the new avatar URL?
             // let new_avatar = self.content.avatar_url.as_ref();
 
-            match (displayname_changed, avatar_url_changed) {
+            match (displayname_change.is_some(), avatar_url_change.is_some()) {
                 (false, true) =>
                     format!(
                         "{prefix}{target} {color_action}changed their avatar{color_reset}",
@@ -656,7 +664,7 @@ pub fn render_membership(
                         Some(name) => format!(
                             "{prefix}{target} {color_action}changed their display name to{color_reset} {new}",
                             prefix = Weechat::prefix(prefix),
-                            target = event.prev_content.as_ref().map(|p| p.displayname.clone()).flatten().unwrap_or(target_name),
+                            target = event.prev_content().as_ref().map(|p| p.displayname.clone()).flatten().unwrap_or(target_name),
                             new = name,
                             color_action = color_action,
                             color_reset = color_reset
@@ -713,9 +721,12 @@ pub fn render_membership(
 
 #[cfg(test)]
 mod tests {
+    use std::convert::TryFrom;
+
     use matrix_sdk::ruma::{
         events::room::{EncryptedFileInit, JsonWebKeyInit},
-        MxcUri,
+        serde::Base64,
+        OwnedMxcUri,
     };
 
     use super::*;
@@ -723,7 +734,7 @@ mod tests {
     #[test]
     fn test_mxc_to_http() {
         let homeserver = url::Url::parse("https://matrix.org").unwrap();
-        let mxc_url = "mxc://matrix.org/some-media-id";
+        let mxc_url = OwnedMxcUri::from("mxc://matrix.org/some-media-id");
         let expected =
             "https://matrix.org/_matrix/media/r0/download/matrix.org/some-media-id";
         assert_eq!(expected, mxc_to_http(&mxc_url, &homeserver).unwrap());
@@ -734,26 +745,27 @@ mod tests {
         use std::collections::BTreeMap;
 
         let homeserver = url::Url::parse("https://matrix.org").unwrap();
-        let mxc_url = "mxc://matrix.org/some-media-id";
-        let mut hashes: BTreeMap<String, String> = BTreeMap::new();
-        hashes.insert("sha256".to_string(), "some-sha256".to_string());
+        let mxc_url =
+            OwnedMxcUri::try_from("mxc://matrix.org/some-media-id").unwrap();
+        let mut hashes: BTreeMap<String, Base64> = BTreeMap::new();
+        hashes.insert("sha256".to_string(), Base64::parse("aGFzaA").unwrap());
         let encrypt_info = EncryptedFileInit {
             key: JsonWebKeyInit {
-                k: "some-secret-key".to_string(),
+                k: Base64::parse("dGVzdA").unwrap(),
                 kty: "oct".to_string(),
                 key_ops: vec![],
                 ext: true,
                 alg: "A256CTR".to_string(),
             }
             .into(),
-            iv: "some-test-iv".to_string(),
+            iv: Base64::parse("aXY").unwrap(),
             v: "v2".to_string(),
-            url: MxcUri::from("mxc://some-url"),
+            url: OwnedMxcUri::from("mxc://some-url"),
             hashes,
         }
         .into();
         let expected =
-            "emxc://matrix.org:443/_matrix/media/r0/download/matrix.org/some-media-id?key=some-secret-key&hash=some-sha256&iv=some-test-iv";
+            "emxc://matrix.org:443/_matrix/media/r0/download/matrix.org/some-media-id?key=dGVzdA&hash=aGFzaA&iv=aXY";
         assert_eq!(
             expected,
             mxc_to_emxc(&mxc_url, &homeserver, &encrypt_info).unwrap()

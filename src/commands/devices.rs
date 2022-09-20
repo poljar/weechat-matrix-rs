@@ -1,10 +1,8 @@
-use std::convert::TryFrom;
-
 use clap::{
     App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
     SubCommand,
 };
-use matrix_sdk::ruma::{DeviceIdBox, UserId};
+use matrix_sdk::ruma::{OwnedDeviceId, OwnedUserId, UserId};
 
 use weechat::{
     buffer::Buffer,
@@ -12,8 +10,9 @@ use weechat::{
     Args, Prefix, Weechat,
 };
 
-use super::parse_and_run;
 use crate::Servers;
+
+use super::parse_and_run;
 
 pub struct DevicesCommand {
     servers: Servers,
@@ -53,7 +52,7 @@ impl DevicesCommand {
         )
     }
 
-    fn delete(servers: &Servers, buffer: &Buffer, devices: Vec<DeviceIdBox>) {
+    fn delete(servers: &Servers, buffer: &Buffer, devices: Vec<OwnedDeviceId>) {
         let server = servers.find_server(buffer);
 
         if let Some(s) = server {
@@ -66,7 +65,7 @@ impl DevicesCommand {
         }
     }
 
-    fn list(servers: &Servers, buffer: &Buffer, user_id: Option<UserId>) {
+    fn list(servers: &Servers, buffer: &Buffer, user_id: Option<OwnedUserId>) {
         let server = servers.find_server(buffer);
 
         if let Some(s) = server {
@@ -85,7 +84,7 @@ impl DevicesCommand {
                 let user_id = args.and_then(|a| {
                     a.args.get("user-id").and_then(|a| {
                         a.vals.first().map(|u| {
-                            UserId::try_from(u.to_string_lossy().as_ref())
+                            UserId::parse(u.to_string_lossy().as_ref())
                                 .expect("Argument wasn't a valid user id")
                         })
                     })
@@ -97,7 +96,7 @@ impl DevicesCommand {
                 let devices = args
                     .and_then(|a| a.args.get("device-id"))
                     .expect("Args didn't contain any device ids");
-                let devices: Vec<DeviceIdBox> = devices
+                let devices: Vec<OwnedDeviceId> = devices
                     .vals
                     .iter()
                     .map(|d| d.clone().to_string_lossy().as_ref().into())
@@ -115,7 +114,7 @@ impl DevicesCommand {
         vec![
             SubCommand::with_name("list")
                 .arg(Arg::with_name("user-id").required(false).validator(|u| {
-                    UserId::try_from(u)
+                    UserId::parse(u)
                         .map_err(|_| {
                             "The given user isn't a valid user ID".to_owned()
                         })

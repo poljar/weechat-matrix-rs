@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 
-use futures::executor::block_on;
 use weechat::{
     buffer::Buffer,
     hooks::{
@@ -87,8 +86,10 @@ impl CompletionCallback for UsersCompletion {
     ) -> Result<(), ()> {
         if let Some(server) = self.servers.find_server(buffer) {
             if let Some(connection) = server.connection() {
-                let tracked_users =
-                    block_on(connection.client().tracked_users());
+                let tracked_users = self
+                    .servers
+                    .runtime()
+                    .block_on(connection.client().encryption().tracked_users());
 
                 for user in tracked_users.into_iter() {
                     completion.add_with_options(
