@@ -15,6 +15,7 @@ use std::{
     rc::Rc,
 };
 
+use tokio::runtime::{Handle, Runtime};
 use tracing_subscriber::layer::SubscriberExt;
 
 use weechat::{
@@ -31,7 +32,10 @@ use crate::{
 const PLUGIN_NAME: &str = "matrix";
 
 #[derive(Clone, Debug)]
-pub struct Servers(Rc<RefCell<HashMap<String, MatrixServer>>>);
+pub struct Servers {
+    inner: Rc<RefCell<HashMap<String, MatrixServer>>>,
+    runtime: Handle,
+}
 
 #[allow(clippy::large_enum_variant)]
 pub enum BufferOwner {
@@ -59,38 +63,45 @@ impl BufferOwner {
 }
 
 impl Servers {
-    fn new() -> Self {
-        Servers(Rc::new(RefCell::new(HashMap::new())))
+    fn new(handle: tokio::runtime::Handle) -> Self {
+        Servers {
+            inner: Rc::new(RefCell::new(HashMap::new())),
+            runtime: handle,
+        }
     }
 
     fn borrow(&self) -> Ref<'_, HashMap<String, MatrixServer>> {
-        self.0.borrow()
+        self.inner.borrow()
+    }
+
+    pub fn runtime(&self) -> &Handle {
+        &self.runtime
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.borrow().is_empty()
+        self.inner.borrow().is_empty()
     }
 
     pub fn contains(&self, server_name: &str) -> bool {
-        self.0.borrow().contains_key(server_name)
+        self.inner.borrow().contains_key(server_name)
     }
 
     pub fn clear(&self) {
-        self.0.borrow_mut().clear();
+        self.inner.borrow_mut().clear();
     }
 
     pub fn insert(&self, server: MatrixServer) {
-        self.0
+        self.inner
             .borrow_mut()
             .insert(server.name().to_string(), server);
     }
 
     pub fn get(&self, server_name: &str) -> Option<MatrixServer> {
-        self.0.borrow().get(server_name).cloned()
+        self.inner.borrow().get(server_name).cloned()
     }
 
     pub fn remove(&self, server_name: &str) -> Option<MatrixServer> {
-        self.0.borrow_mut().remove(server_name)
+        self.inner.borrow_mut().remove(server_name)
     }
 
     pub fn buffer_owner(&self, buffer: &Buffer) -> BufferOwner {
@@ -151,6 +162,8 @@ impl SignalCallback for Servers {
 }
 
 struct Matrix {
+    #[allow(dead_code)]
+    global_runtime: Runtime,
     servers: Servers,
     #[allow(dead_code)]
     commands: Commands,
@@ -204,21 +217,19 @@ impl Matrix {
 
 impl Plugin for Matrix {
     fn init(_: &Weechat, _args: Args) -> Result<Self, ()> {
-        let servers = Servers::new();
+        let global_runtime =
+            Runtime::new().expect("Couldn't create a new global runtime");
+
+        let servers = Servers::new(global_runtime.handle().to_owned());
         let config = ConfigHandle::new(&servers);
         let commands = Commands::hook_all(&servers, &config)?;
 
         let bar_items = BarItems::hook_all(servers.clone())?;
         let completions = Completions::hook_all(servers.clone())?;
 
-        let subscriber = {
-            let filter =
-                tracing_subscriber::filter::EnvFilter::from_default_env();
-
-            tracing_subscriber::registry().with(filter).with(
-                tracing_subscriber::fmt::layer().with_writer(debug::Debug),
-            )
-        };
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::filter::EnvFilter::from_default_env())
+            .with(tracing_subscriber::fmt::layer().with_writer(debug::Debug));
 
         let _ = tracing::subscriber::set_global_default(subscriber).map_err(
             |_err| Weechat::print("Unable to set global default subscriber"),
@@ -239,6 +250,7 @@ impl Plugin for Matrix {
             .expect("Can't create signal hook for the typing notice cb");
 
         let plugin = Matrix {
+            global_runtime,
             servers: servers.clone(),
             commands,
             config,

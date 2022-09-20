@@ -11,38 +11,33 @@ use tokio::{
 };
 
 use tracing::error;
-use uuid::Uuid;
 
 use matrix_sdk::{
     self,
+    config::SyncSettings,
     deserialized_responses::AmbiguityChange,
-    room::Joined,
+    room::{Joined, Messages, MessagesOptions},
     ruma::{
-        api::client::r0::{
+        api::client::{
             device::{
-                delete_devices::Response as DeleteDevicesResponse,
-                get_devices::Response as DevicesResponse,
+                delete_devices::v3::Response as DeleteDevicesResponse,
+                get_devices::v3::Response as DevicesResponse,
             },
             filter::{
                 FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
             },
-            message::{
-                get_message_events::{
-                    Request as MessagesRequest, Response as MessagesResponse,
-                },
-                send_message_event::Response as RoomSendResponse,
-            },
-            session::login::Response as LoginResponse,
-            sync::sync_events::Filter,
+            message::send_message_event::v3::Response as RoomSendResponse,
+            session::login::v3::Response as LoginResponse,
+            sync::sync_events::v3::Filter,
             uiaa::{AuthData, Password, UserIdentifier},
         },
         events::{
-            room::member::MemberEventContent, AnyMessageEventContent,
-            AnySyncRoomEvent, AnySyncStateEvent, SyncStateEvent,
+            room::member::RoomMemberEventContent, AnyMessageLikeEventContent,
+            AnySyncStateEvent, AnySyncTimelineEvent, SyncStateEvent,
         },
-        DeviceIdBox, RoomId,
+        OwnedDeviceId, OwnedRoomId, OwnedTransactionId,
     },
-    Client, LoopCtrl, Result as MatrixResult, SyncSettings,
+    Client, LoopCtrl, Result as MatrixResult,
 };
 
 use weechat::{Task, Weechat};
@@ -63,7 +58,7 @@ pub struct InteractiveAuthInfo {
 impl InteractiveAuthInfo {
     pub fn as_auth_data(&self) -> AuthData<'_> {
         AuthData::Password(Password::new(
-            UserIdentifier::MatrixId(&self.user),
+            UserIdentifier::UserIdOrLocalpart(&self.user),
             &self.password,
         ))
     }
@@ -71,18 +66,18 @@ impl InteractiveAuthInfo {
 
 pub enum ClientMessage {
     LoginMessage(LoginResponse),
-    SyncState(RoomId, AnySyncStateEvent),
-    SyncEvent(RoomId, AnySyncRoomEvent),
+    SyncState(OwnedRoomId, AnySyncStateEvent),
+    SyncEvent(OwnedRoomId, AnySyncTimelineEvent),
     MemberEvent(
-        RoomId,
-        SyncStateEvent<MemberEventContent>,
+        OwnedRoomId,
+        SyncStateEvent<RoomMemberEventContent>,
         bool,
         Option<AmbiguityChange>,
     ),
     RestoredRoom(Joined),
 }
 
-/// Struc representing an active connection to the homeserver.
+/// Struct representing an active connection to the homeserver.
 ///
 /// Since the rust-sdk `Client` object uses reqwest for the HTTP client making
 /// requests requires the request to be made on a tokio runtime. The connection
@@ -93,6 +88,7 @@ pub enum ClientMessage {
 /// loop drop the object.
 #[derive(Debug, Clone)]
 pub struct Connection {
+    #[allow(dead_code)]
     receiver_task: Rc<Task<()>>,
     client: Client,
     pub runtime: Rc<Runtime>,
@@ -156,22 +152,18 @@ impl Connection {
     pub async fn send_message(
         &self,
         room: Joined,
-        content: AnyMessageEventContent,
-        transaction_id: Option<Uuid>,
+        content: AnyMessageLikeEventContent,
+        transaction_id: Option<OwnedTransactionId>,
     ) -> MatrixResult<RoomSendResponse> {
         self.spawn(async move {
-            room.send(
-                content,
-                Some(transaction_id.unwrap_or_else(Uuid::new_v4)),
-            )
-            .await
+            room.send(content, transaction_id.as_deref()).await
         })
         .await
     }
 
     pub async fn delete_devices(
         &self,
-        devices: Vec<DeviceIdBox>,
+        devices: Vec<OwnedDeviceId>,
         auth_info: Option<InteractiveAuthInfo>,
     ) -> MatrixResult<DeleteDevicesResponse> {
         let client = self.client.clone();
@@ -192,15 +184,15 @@ impl Connection {
         &self,
         room: Joined,
         prev_batch: PrevBatch,
-    ) -> MatrixResult<MessagesResponse> {
+    ) -> MatrixResult<Messages> {
         Ok(self
             .spawn(async move {
                 let request = match &prev_batch {
                     PrevBatch::Backwards(t) => {
-                        MessagesRequest::backward(&room.room_id(), &t)
+                        MessagesOptions::backward().from(Some(t.as_ref()))
                     }
                     PrevBatch::Forward(t) => {
-                        MessagesRequest::forward(&room.room_id(), &t)
+                        MessagesOptions::forward().from(Some(t.as_ref()))
                     }
                 };
 
@@ -338,13 +330,13 @@ impl Connection {
         server_name: String,
         server_path: PathBuf,
     ) {
-        if !client.logged_in().await {
+        if !client.logged_in() {
             let device_id =
                 Connection::load_device_id(&username, server_path.clone());
 
             let device_id = match device_id {
                 Err(e) => {
-                    // TODO do we want to do something with channel.send()
+                    // TODO: do we want to do something with channel.send()
                     // errors?
                     let _ = channel
                         .send(Err(format!(
@@ -359,16 +351,15 @@ impl Connection {
 
             let first_login = device_id.is_none();
 
-            let ret = client
-                .login(
-                    &username,
-                    &password,
-                    device_id.as_deref(),
-                    Some("Weechat-Matrix-rs"),
-                )
-                .await;
+            let mut builder = client
+                .login_username(&username, &password)
+                .initial_device_display_name("WeeChat-Matrix-rs");
 
-            match ret {
+            if let Some(device_id) = device_id.as_ref() {
+                builder = builder.device_id(device_id);
+            };
+
+            match builder.send().await {
                 Ok(response) => {
                     if let Err(e) = Connection::save_device_id(
                         &username,
@@ -432,7 +423,7 @@ impl Connection {
 
         let client_ref = &client;
 
-        client
+        let _ret = client
             .sync_with_callback(sync_settings, |response| async move {
                 for (room_id, room) in response.rooms.join {
                     for event in room
@@ -446,7 +437,7 @@ impl Connection {
                                 .ambiguity_changes
                                 .changes
                                 .get(&room_id)
-                                .and_then(|c| c.get(&m.event_id))
+                                .and_then(|c| c.get(m.event_id()))
                                 .cloned();
 
                             if sync_channel
@@ -479,7 +470,7 @@ impl Connection {
                         .iter()
                         .filter_map(|e| e.event.deserialize().ok())
                     {
-                        if let AnySyncRoomEvent::State(
+                        if let AnySyncTimelineEvent::State(
                             AnySyncStateEvent::RoomMember(m),
                         ) = event
                         {
@@ -487,7 +478,7 @@ impl Connection {
                                 .ambiguity_changes
                                 .changes
                                 .get(&room_id)
-                                .and_then(|c| c.get(&m.event_id))
+                                .and_then(|c| c.get(m.event_id()))
                                 .cloned();
 
                             if sync_channel
@@ -529,7 +520,7 @@ impl Connection {
                                             .changes
                                             .get(&room_id)
                                             .and_then(|c| {
-                                                c.get(&member.event_id)
+                                                c.get(member.event_id())
                                             })
                                             .cloned();
 

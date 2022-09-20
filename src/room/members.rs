@@ -1,20 +1,20 @@
-use std::{cell::RefCell, convert::TryFrom, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use dashmap::DashMap;
-use futures::executor::block_on;
+use tokio::runtime::Handle;
 use tracing::{error, info};
 
 use matrix_sdk::{
     deserialized_responses::AmbiguityChange,
-    room::Joined,
+    room::{Joined, RoomMember},
     ruma::{
         events::{
-            room::member::{MemberEventContent, MembershipState},
+            room::member::{MembershipState, RoomMemberEventContent},
             SyncStateEvent,
         },
-        uint, UserId,
+        uint, OwnedUserId, UserId,
     },
-    RoomMember, StoreError,
+    StoreError,
 };
 
 use weechat::{
@@ -27,8 +27,9 @@ use crate::render::render_membership;
 #[derive(Clone)]
 pub struct Members {
     room: Joined,
-    ambiguity_map: Rc<DashMap<UserId, bool>>,
-    nicks: Rc<DashMap<UserId, String>>,
+    pub(super) runtime: Handle,
+    ambiguity_map: Rc<DashMap<OwnedUserId, bool>>,
+    nicks: Rc<DashMap<OwnedUserId, String>>,
     pub(super) buffer: Rc<RefCell<Option<BufferHandle>>>,
 }
 
@@ -40,9 +41,10 @@ pub struct WeechatRoomMember {
 }
 
 impl Members {
-    pub fn new(room: Joined) -> Self {
+    pub fn new(room: Joined, runtime: Handle) -> Self {
         Self {
             room,
+            runtime,
             nicks: DashMap::new().into(),
             ambiguity_map: DashMap::new().into(),
             buffer: RefCell::new(None).into(),
@@ -72,7 +74,7 @@ impl Members {
 
         if group.add_nick(nick_settings).is_err() {
             error!(
-                "Error adding nick {} ({}) to room {}, already addded.",
+                "Error adding nick {} ({}) to room {}, already added.",
                 nick,
                 member.user_id(),
                 buffer.short_name()
@@ -82,7 +84,7 @@ impl Members {
         self.nicks.insert(member.user_id().to_owned(), nick);
     }
 
-    pub async fn restore_member(&self, user_id: &UserId) {
+    pub async fn restore_member(&self, user_id: OwnedUserId) {
         let buffer = self.buffer();
 
         let buffer = if let Ok(b) = buffer.upgrade() {
@@ -91,11 +93,19 @@ impl Members {
             return;
         };
 
-        match self.room().get_member_no_sync(user_id).await {
+        let room = self.room.clone();
+        let user = user_id.to_owned();
+
+        match self
+            .runtime
+            .spawn(async move { room.get_member_no_sync(&user).await })
+            .await
+            .expect("Fetching the room member from the store panicked")
+        {
             Ok(Some(member)) => {
                 self.ambiguity_map
-                    .insert(user_id.clone(), member.name_ambiguous());
-                self.update_member(user_id).await;
+                    .insert(user_id.to_owned(), member.name_ambiguous());
+                self.update_member(&user_id).await;
             }
             Ok(None) => {
                 panic!(
@@ -146,7 +156,7 @@ impl Members {
     ) {
         if let Some(change) = ambiguity_change {
             self.ambiguity_map
-                .insert(user_id.clone(), change.member_ambiguous);
+                .insert(user_id.to_owned(), change.member_ambiguous);
 
             if let Some(disambiguated) = &change.disambiguated_member {
                 self.ambiguity_map.insert(disambiguated.clone(), false);
@@ -207,7 +217,15 @@ impl Members {
                 .expect("Couldn't get the nick color name")
         };
 
-        match self.room.get_member_no_sync(user_id).await {
+        let room = self.room.clone();
+        let user = user_id.to_owned();
+
+        match self
+            .runtime
+            .spawn(async move { room.get_member_no_sync(&user).await })
+            .await
+            .expect("Fetching the room member from the store panicked")
+        {
             Ok(m) => m.map(|m| WeechatRoomMember {
                 color: Rc::new(color),
                 ambiguous_nick: Rc::new(
@@ -235,7 +253,7 @@ impl Members {
 
     pub fn calculate_buffer_name(&self) -> Result<String, StoreError> {
         let room = self.room();
-        let room_name = block_on(room.display_name())?;
+        let room_name = self.runtime.block_on(room.display_name())?.to_string();
 
         let room_name = if room_name == "#" {
             "##".to_owned()
@@ -245,7 +263,7 @@ impl Members {
             format!("#{}", room_name)
         };
 
-        Ok(room_name)
+        Ok(room_name.to_string())
     }
 
     pub fn update_buffer_name(&self) {
@@ -271,7 +289,7 @@ impl Members {
 
     pub async fn handle_membership_event(
         &self,
-        event: &SyncStateEvent<MemberEventContent>,
+        event: &SyncStateEvent<RoomMemberEventContent>,
         state_event: bool,
         ambiguity_change: Option<&AmbiguityChange>,
     ) {
@@ -280,6 +298,13 @@ impl Members {
             b
         } else {
             return;
+        };
+
+        let event = match event {
+            SyncStateEvent::Original(e) => e,
+            SyncStateEvent::Redacted(_) => {
+                todo!("We don't handle redacted state yet")
+            }
         };
 
         info!(
@@ -291,8 +316,7 @@ impl Members {
 
         let sender_id = event.sender.clone();
 
-        let target_id = if let Ok(t) = UserId::try_from(event.state_key.clone())
-        {
+        let target_id = if let Ok(t) = UserId::parse(event.state_key.clone()) {
             t
         } else {
             error!(
@@ -408,7 +432,7 @@ impl WeechatRoomMember {
 
     pub fn nick_colored(&self) -> String {
         if *self.ambiguous_nick {
-            // TODO this should color the parenthesis differently.
+            // TODO: this should color the parenthesis differently.
             format!(
                 "{}{}{} ({})",
                 Weechat::color(&self.color()),

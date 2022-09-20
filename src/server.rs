@@ -68,17 +68,18 @@ use url::Url;
 use matrix_sdk::{
     self,
     deserialized_responses::AmbiguityChange,
+    encryption::RoomKeyImportResult,
     room::Joined,
     ruma::{
-        api::client::r0::session::login::Response as LoginResponse,
+        api::client::session::login::v3::Response as LoginResponse,
         events::{
-            room::member::MemberEventContent, AnySyncRoomEvent,
-            AnySyncStateEvent, SyncStateEvent,
+            room::member::RoomMemberEventContent, AnySyncStateEvent,
+            AnySyncTimelineEvent, SyncStateEvent,
         },
-        DeviceId, DeviceIdBox, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
-        RoomId, UserId,
+        DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
+        OwnedDeviceId, OwnedRoomId, OwnedUserId, RoomId, UserId,
     },
-    Client, ClientConfig, Error,
+    Client, Error,
 };
 
 use weechat::{
@@ -97,6 +98,7 @@ use crate::{
 #[derive(Debug)]
 pub enum ServerError {
     StartError(String),
+    ClientError(matrix_sdk::ClientBuildError),
     IoError(String),
 }
 
@@ -137,7 +139,7 @@ impl ServerSettings {
 }
 
 pub struct LoginInfo {
-    user_id: UserId,
+    user_id: OwnedUserId,
 }
 
 #[derive(Clone)]
@@ -163,7 +165,7 @@ impl std::fmt::Debug for MatrixServer {
 pub struct InnerServer {
     servers: Servers,
     server_name: Rc<str>,
-    rooms: Rc<RefCell<HashMap<RoomId, RoomHandle>>>,
+    rooms: Rc<RefCell<HashMap<OwnedRoomId, RoomHandle>>>,
     settings: Rc<RefCell<ServerSettings>>,
     current_settings: Rc<RefCell<ServerSettings>>,
     config: ConfigHandle,
@@ -475,14 +477,15 @@ impl InnerServer {
             });
             let buffer = RoomHandle::new(
                 &self.server_name,
+                self.servers.runtime().to_owned(),
                 &self.connection,
                 self.config.inner.clone(),
                 room,
                 homeserver,
-                room_id.clone(),
+                room_id,
                 &login_state.user_id,
             );
-            self.rooms.borrow_mut().insert(room_id.clone(), buffer);
+            self.rooms.borrow_mut().insert(room_id.to_owned(), buffer);
         }
 
         self.rooms.borrow().get(room_id).cloned().unwrap()
@@ -510,6 +513,7 @@ impl InnerServer {
 
         match RoomHandle::restore(
             &self.server_name,
+            self.servers.runtime().to_owned(),
             room,
             &self.connection,
             self.config.inner.clone(),
@@ -671,8 +675,8 @@ impl InnerServer {
 
     pub async fn receive_member(
         &self,
-        room_id: RoomId,
-        member: SyncStateEvent<MemberEventContent>,
+        room_id: OwnedRoomId,
+        member: SyncStateEvent<RoomMemberEventContent>,
         is_state: bool,
         ambiguity_change: Option<AmbiguityChange>,
     ) {
@@ -702,7 +706,7 @@ impl InnerServer {
     pub async fn receive_joined_timeline_event(
         &self,
         room_id: &RoomId,
-        event: AnySyncRoomEvent,
+        event: AnySyncTimelineEvent,
     ) {
         let room = self.get_or_create_room(room_id);
         room.handle_sync_room_event(event).await
@@ -752,27 +756,32 @@ impl InnerServer {
             ))
         })?;
 
-        let mut client_config = ClientConfig::new()
-            .store_path(self.get_server_path())
-            .passphrase("DEFAULT_PASSPHRASE".to_string());
+        let mut client_builder = Client::builder()
+            .homeserver_url(homeserver)
+            .sled_store(self.get_server_path(), Some("DEFAULT_PASSPHRASE"))
+            .expect("Couldn't open the store");
 
         if let Some(proxy) = settings.proxy.as_ref() {
-            client_config = client_config.proxy(proxy.as_str()).unwrap();
+            client_builder = client_builder.proxy(proxy);
         }
 
         if !settings.ssl_verify {
-            client_config = client_config.disable_ssl_verification();
+            client_builder = client_builder.disable_ssl_verification();
         }
 
-        let client =
-            Client::new_with_config(homeserver.clone(), client_config).unwrap();
+        let client: Client = self
+            .servers
+            .runtime()
+            .block_on(client_builder.build())
+            .map_err(ServerError::ClientError)?;
+
         *self.current_settings.borrow_mut() = settings.clone();
         *self.client.borrow_mut() = Some(client.clone());
 
         Ok(client)
     }
 
-    pub async fn delete_devices(&self, devices: Vec<DeviceIdBox>) {
+    pub async fn delete_devices(&self, devices: Vec<OwnedDeviceId>) {
         let formatted = devices
             .iter()
             .map(|d| d.to_string())
@@ -827,7 +836,10 @@ impl InnerServer {
         let client = self.get_client().unwrap();
 
         let export = async move {
-            client.export_keys(file, &passphrase, |_| true).await
+            client
+                .encryption()
+                .export_room_keys(file, &passphrase, |_| true)
+                .await
         };
 
         if let Some(c) = self.connection() {
@@ -837,7 +849,7 @@ impl InnerServer {
                     e
                 ));
             } else {
-                self.print_network("Sucessfully exported E2EE keys")
+                self.print_network("Successfully exported E2EE keys")
             }
         };
     }
@@ -850,17 +862,25 @@ impl InnerServer {
                 "Importing E2EE keys from {}, this may take a while..",
                 file.display()
             ));
-            let import =
-                async move { client.import_keys(file, &passphrase).await };
+            let import = async move {
+                client
+                    .encryption()
+                    .import_room_keys(file, &passphrase)
+                    .await
+            };
 
             match c.spawn(import).await {
-                Ok((imported, total)) => {
-                    if imported > 0 {
+                Ok(RoomKeyImportResult {
+                    imported_count,
+                    total_count,
+                    ..
+                }) => {
+                    if imported_count > 0 {
                         self.print_network(&format!(
-                            "Sucessfully imported {} E2EE keys",
-                            imported
+                            "Successfully imported {} E2EE keys",
+                            imported_count
                         ));
-                    } else if total > 0 {
+                    } else if total_count > 0 {
                         self.print_network(
                             "No keys were imported, the key export contains only \
                             keys that we already have",
@@ -900,11 +920,10 @@ impl InnerServer {
         ));
 
         response.devices.sort_by_key(|d| Reverse(d.last_seen_ts));
-        let own_device_id = connection.client().device_id().await;
+        let own_device_id = connection.client().device_id();
         let own_user_id = connection
             .client()
             .user_id()
-            .await
             .expect("Getting our own devices while not being logged in");
 
         let mut lines: Vec<String> = Vec::new();
@@ -912,11 +931,11 @@ impl InnerServer {
         for device_info in response.devices {
             let device = connection
                 .client()
+                .encryption()
                 .get_device(&own_user_id, &device_info.device_id)
                 .await?;
 
-            let own_device =
-                own_device_id.as_ref() == Some(&device_info.device_id);
+            let own_device = own_device_id == Some(&device_info.device_id);
 
             let device_trust = if own_device {
                 DeviceTrust::Verified
@@ -924,7 +943,7 @@ impl InnerServer {
                 device
                     .as_ref()
                     .map(|d| {
-                        if d.verified() {
+                        if d.is_verified() {
                             DeviceTrust::Verified
                         } else {
                             DeviceTrust::Unverified
@@ -935,12 +954,10 @@ impl InnerServer {
 
             let info = Self::format_device(
                 &device_info.device_id,
-                device
-                    .and_then(|d| {
-                        d.get_key(DeviceKeyAlgorithm::Ed25519)
-                            .map(|f| f.to_string())
-                    })
-                    .as_deref(),
+                device.and_then(|d| {
+                    d.get_key(DeviceKeyAlgorithm::Ed25519)
+                        .map(|f| f.to_base64())
+                }),
                 device_info.display_name.as_deref(),
                 own_device,
                 device_trust,
@@ -960,14 +977,18 @@ impl InnerServer {
     async fn list_other_devices(
         &self,
         connection: Connection,
-        user_id: UserId,
+        user_id: &UserId,
     ) -> Result<(), Error> {
-        let devices = connection.client().get_user_devices(&user_id).await?;
+        let devices = connection
+            .client()
+            .encryption()
+            .get_user_devices(&user_id)
+            .await?;
 
         let lines: Vec<_> = devices
             .devices()
             .map(|device| {
-                let device_trust = if device.verified() {
+                let device_trust = if device.is_verified() {
                     DeviceTrust::Verified
                 } else {
                     DeviceTrust::Unverified
@@ -977,7 +998,7 @@ impl InnerServer {
                     device.device_id(),
                     device
                         .get_key(DeviceKeyAlgorithm::Ed25519)
-                        .map(|f| f.as_str()),
+                        .map(|f| f.to_base64()),
                     device.display_name().as_deref(),
                     false,
                     device_trust,
@@ -1017,7 +1038,7 @@ impl InnerServer {
 
     fn format_device(
         device_id: &DeviceId,
-        fingerprint: Option<&str>,
+        fingerprint: Option<String>,
         display_name: Option<&str>,
         is_own_device: bool,
         device_trust: DeviceTrust,
@@ -1114,7 +1135,7 @@ impl InnerServer {
         )
     }
 
-    pub async fn devices(&self, user_id: Option<UserId>) {
+    pub async fn devices(&self, user_id: Option<OwnedUserId>) {
         let connection = if let Some(c) = self.connection() {
             c
         } else {
@@ -1122,11 +1143,11 @@ impl InnerServer {
             return;
         };
 
-        let ret = if let Some(user_id) = user_id {
-            if Some(&user_id) == connection.client().user_id().await.as_ref() {
+        let ret = if let Some(user_id) = user_id.as_ref() {
+            if Some(user_id.as_ref()) == connection.client().user_id() {
                 self.list_own_devices(connection).await
             } else {
-                self.list_other_devices(connection, user_id).await
+                self.list_other_devices(connection, &user_id).await
             }
         } else {
             self.list_own_devices(connection).await
