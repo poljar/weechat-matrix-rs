@@ -35,7 +35,7 @@ features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
 version = "0.6.0"
-features = ["markdown"]
+features = ["markdown", "socks"]
 
 [profile.dev.package]
 sha2 = { opt-level = 2 }
