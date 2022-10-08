@@ -281,7 +281,7 @@ impl Connection {
                         server.receive_joined_timeline_event(&r, e).await
                     }
                     ClientMessage::SyncState(r, e) => {
-                        server.receive_joined_state_event(&r, e).await
+                        // server.receive_joined_state_event(&r, e).await
                     }
                     ClientMessage::RestoredRoom(room) => {
                         server.restore_room(room).await

@@ -709,7 +709,7 @@ impl InnerServer {
         event: AnySyncTimelineEvent,
     ) {
         let room = self.get_or_create_room(room_id);
-        room.handle_sync_room_event(event).await
+        // room.handle_sync_room_event(event).await
     }
 
     pub fn receive_login(&self, response: LoginResponse) {

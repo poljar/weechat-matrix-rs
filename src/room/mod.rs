@@ -24,6 +24,8 @@
 
 mod members;
 
+use futures::StreamExt;
+use futures_signals::signal_vec::{SignalVecExt, VecDiff};
 use members::Members;
 pub use members::WeechatRoomMember;
 use tokio::runtime::Handle;
@@ -37,7 +39,7 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex, MutexGuard,
+        Arc, Mutex, MutexGuard,
     },
 };
 
@@ -47,7 +49,12 @@ use url::Url;
 use matrix_sdk::{
     async_trait,
     deserialized_responses::AmbiguityChange,
-    room::Joined,
+    room::{
+        timeline::{
+            Message, Timeline, TimelineItem, TimelineItemContent, TimelineKey,
+        },
+        Joined,
+    },
     ruma::{
         events::{
             room::{
@@ -150,6 +157,7 @@ pub struct MatrixRoom {
     own_user_id: Rc<UserId>,
     room: Joined,
     buffer: Rc<RefCell<Option<BufferHandle>>>,
+    timeline: Arc<Timeline>,
 
     config: Rc<RefCell<Config>>,
     connection: Rc<RefCell<Option<Connection>>>,
@@ -216,10 +224,13 @@ impl RoomHandle {
             .map(|m| m.name().to_owned())
             .unwrap_or_else(|| own_user_id.localpart().to_owned());
 
+        let timeline: Arc<Timeline> = room.timeline().into();
+
         let room = MatrixRoom {
             homeserver: Rc::new(homeserver),
             room_id: room_id.into(),
             connection: connection.clone(),
+            timeline: timeline.clone(),
             config,
             prev_batch: Rc::new(RefCell::new(
                 room.last_prev_batch().map(PrevBatch::Backwards),
@@ -300,6 +311,35 @@ impl RoomHandle {
         }
 
         *room.members.buffer.borrow_mut() = Some(buffer_handle.clone());
+
+        let timeline_stream = timeline.signal();
+        let mut timeline_stream = timeline_stream.to_stream();
+
+        Weechat::spawn({
+            let room = room.clone();
+
+            async move {
+                while let Some(diff) = timeline_stream.next().await {
+                    match diff {
+                        VecDiff::Push { value } => {
+                            room.handle_timeline_push(&value).await;
+                        }
+                        VecDiff::UpdateAt { index, value } => {
+                            room.handle_timeline_update(&value).await;
+                        }
+                        _ => {
+                            // TODO: Do I need to consider any other value here?
+                            Weechat::print(&format!(
+                                "Unhandled timeline diff {diff:?}"
+                            ));
+                        }
+                    }
+                }
+
+                Weechat::print("TIMELINE STREAM DIED");
+            }
+        })
+        .detach();
 
         Self { inner: room }
     }
@@ -522,6 +562,240 @@ impl MatrixRoom {
         }
     }
 
+    async fn handle_timeline_push(&self, item: &TimelineItem) {
+        match item {
+            TimelineItem::Event(e) => {
+                let sender = self.members.get(e.sender()).await.unwrap();
+                let send_time = e
+                    .origin_server_ts()
+                    .unwrap_or_else(|| MilliSecondsSinceUnixEpoch::now());
+                let content = e.content();
+
+                match e.key() {
+                    TimelineKey::TransactionId(transaction_id) => match content
+                    {
+                        TimelineItemContent::Message(m) => {
+                            if let Some(rendered) = self
+                                .render_local_echo_content(
+                                    &sender,
+                                    transaction_id,
+                                    m,
+                                )
+                                .await
+                            {
+                                self.print_rendered_event(rendered);
+                            }
+                        }
+                        TimelineItemContent::RedactedMessage => todo!(),
+                    },
+                    TimelineKey::EventId(event_id) => {
+                        if let Some(rendered) = self
+                            .render_timeline_content(
+                                &sender, event_id, send_time, content,
+                            )
+                            .await
+                        {
+                            self.print_rendered_event(rendered)
+                        }
+                    }
+                };
+            }
+            TimelineItem::Virtual(_) => (), // TODO: Can we do something with virtual timeline items?
+        }
+    }
+
+    async fn handle_timeline_update(&self, item: &TimelineItem) {
+        if let TimelineItem::Event(e) = item {
+            let sender = self.members.get(e.sender()).await.unwrap();
+            let send_time = e
+                .origin_server_ts()
+                .unwrap_or_else(|| MilliSecondsSinceUnixEpoch::now());
+            let content = e.content();
+
+            match e.key() {
+                TimelineKey::TransactionId(key) => {
+                    // TODO: This is a remote echo
+                }
+                TimelineKey::EventId(event_id) => match content {
+                    TimelineItemContent::Message(m) => {
+                        if m.is_edited() {
+                            if let Some(rendered) = self
+                                .render_timeline_content(
+                                    &sender, event_id, send_time, content,
+                                )
+                                .await
+                            {
+                                self.replace_edit(
+                                    event_id,
+                                    sender.user_id(),
+                                    rendered,
+                                )
+                            }
+                        }
+                    }
+                    TimelineItemContent::RedactedMessage => todo!(),
+                },
+            }
+
+            if let Some(Ok(AnySyncTimelineEvent::MessageLike(message))) =
+                e.raw().map(|e| e.deserialize())
+            {
+                if let Some(transaction_id) = message.transaction_id() {
+                    let event_id = message.event_id();
+
+                    if let Some(rendered) = self
+                        .render_timeline_content(
+                            &sender,
+                            event_id,
+                            send_time,
+                            e.content(),
+                        )
+                        .await
+                    {
+                        if let Ok(buffer) = self.buffer_handle().upgrade() {
+                            self.replace_local_echo(
+                                &transaction_id,
+                                &buffer,
+                                rendered,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn render_redacted_timeline_content(
+        &self,
+        sender: &WeechatRoomMember,
+        event_id: &EventId,
+        send_time: MilliSecondsSinceUnixEpoch,
+        content: &TimelineItemContent,
+    ) -> Option<RenderedEvent> {
+        todo!()
+    }
+
+    async fn render_local_echo_content(
+        &self,
+        sender: &WeechatRoomMember,
+        transaction_id: &TransactionId,
+        content: &Message,
+    ) -> Option<RenderedEvent> {
+        use MessageType::*;
+
+        match content.msgtype() {
+            Text(c) => {
+                Some(c.render_with_prefix_for_echo(sender, transaction_id, &()))
+            }
+            Emote(c) => Some(c.render_with_prefix_for_echo(
+                &sender,
+                transaction_id,
+                &sender,
+            )),
+            Notice(c) => Some(c.render_with_prefix_for_echo(
+                &sender,
+                transaction_id,
+                &sender,
+            )),
+            ServerNotice(c) => Some(c.render_with_prefix_for_echo(
+                &sender,
+                transaction_id,
+                &sender,
+            )),
+            Location(c) => Some(c.render_with_prefix_for_echo(
+                &sender,
+                transaction_id,
+                &sender,
+            )),
+            Audio(c) => Some(c.render_with_prefix_for_echo(
+                &sender,
+                transaction_id,
+                &self.homeserver,
+            )),
+            Video(c) => Some(c.render_with_prefix_for_echo(
+                &sender,
+                transaction_id,
+                &self.homeserver,
+            )),
+            File(c) => Some(c.render_with_prefix_for_echo(
+                &sender,
+                transaction_id,
+                &self.homeserver,
+            )),
+            Image(c) => Some(c.render_with_prefix_for_echo(
+                &sender,
+                transaction_id,
+                &self.homeserver,
+            )),
+            _ => None,
+        }
+    }
+
+    async fn render_timeline_content(
+        &self,
+        sender: &WeechatRoomMember,
+        event_id: &EventId,
+        send_time: MilliSecondsSinceUnixEpoch,
+        content: &TimelineItemContent,
+    ) -> Option<RenderedEvent> {
+        use MessageType::*;
+
+        match content {
+            TimelineItemContent::Message(c) => match c.msgtype() {
+                Text(c) => {
+                    Some(c.render_with_prefix(send_time, event_id, sender, &()))
+                }
+                Emote(c) => Some(
+                    c.render_with_prefix(send_time, event_id, &sender, &sender),
+                ),
+                Notice(c) => Some(
+                    c.render_with_prefix(send_time, event_id, &sender, &sender),
+                ),
+                ServerNotice(c) => Some(
+                    c.render_with_prefix(send_time, event_id, &sender, &sender),
+                ),
+                Location(c) => Some(
+                    c.render_with_prefix(send_time, event_id, &sender, &sender),
+                ),
+                Audio(c) => Some(c.render_with_prefix(
+                    send_time,
+                    event_id,
+                    &sender,
+                    &self.homeserver,
+                )),
+                Video(c) => Some(c.render_with_prefix(
+                    send_time,
+                    event_id,
+                    &sender,
+                    &self.homeserver,
+                )),
+                File(c) => Some(c.render_with_prefix(
+                    send_time,
+                    event_id,
+                    &sender,
+                    &self.homeserver,
+                )),
+                Image(c) => Some(c.render_with_prefix(
+                    send_time,
+                    event_id,
+                    &sender,
+                    &self.homeserver,
+                )),
+                _ => None,
+            },
+            TimelineItemContent::RedactedMessage => {
+                // let redacter = None;
+
+                // Some(
+                //     e.render_with_prefix(
+                //         send_time, event_id, &sender, redacter,
+                //     ),
+                // )
+                None
+            }
+        }
+    }
+
     async fn render_message_content(
         &self,
         event_id: &EventId,
@@ -666,30 +940,42 @@ impl MatrixRoom {
     /// buffer.send_message(content).await
     /// ```
     pub async fn send_message(&self, content: RoomMessageEventContent) {
-        let transaction_id = TransactionId::new();
-
         let connection = self.connection.borrow().clone();
 
         if let Some(c) = connection {
-            self.queue_outgoing_message(&transaction_id, &content).await;
-            match c
-                .send_message(
-                    self.room().clone(),
-                    AnyMessageLikeEventContent::RoomMessage(content),
-                    Some(transaction_id.to_owned()),
-                )
-                .await
-            {
-                Ok(r) => {
-                    self.handle_outgoing_message(&transaction_id, &r.event_id)
-                        .await;
-                }
-                Err(_e) => {
-                    // TODO: print out an error, remember to modify the local
-                    // echo line if there is one.
-                    self.outgoing_messages.remove(&transaction_id);
-                }
-            }
+            let timeline = self.timeline.clone();
+
+            let task = self.members.runtime.spawn(async move {
+                timeline
+                    .send(
+                        AnyMessageLikeEventContent::RoomMessage(content),
+                        None,
+                    )
+                    .await
+            });
+
+            // TODO: Do we need to check the return value here?
+
+            // let transaction_id = TransactionId::new();
+            // self.queue_outgoing_message(&transaction_id, &content).await;
+            // match c
+            //     .send_message(
+            //         self.room().clone(),
+            //         AnyMessageLikeEventContent::RoomMessage(content),
+            //         Some(transaction_id.to_owned()),
+            //     )
+            //     .await
+            // {
+            //     Ok(r) => {
+            //         self.handle_outgoing_message(&transaction_id, &r.event_id)
+            //             .await;
+            //     }
+            //     Err(_e) => {
+            //         // TODO: print out an error, remember to modify the local
+            //         // echo line if there is one.
+            //         self.outgoing_messages.remove(&transaction_id);
+            //     }
+            // }
         } else if let Ok(buffer) = self.buffer_handle().upgrade() {
             buffer.print("Error not connected");
         }
