@@ -324,7 +324,7 @@ impl RoomHandle {
                         VecDiff::Push { value } => {
                             room.handle_timeline_push(&value).await;
                         }
-                        VecDiff::UpdateAt { index, value } => {
+                        VecDiff::UpdateAt { value, .. } => {
                             room.handle_timeline_update(&value).await;
                         }
                         _ => {
@@ -587,6 +587,9 @@ impl MatrixRoom {
                             }
                         }
                         TimelineItemContent::RedactedMessage => todo!(),
+                        TimelineItemContent::UnableToDecrypt(utd) => {
+                            unreachable!()
+                        }
                     },
                     TimelineKey::EventId(event_id) => {
                         if let Some(rendered) = self
@@ -633,6 +636,7 @@ impl MatrixRoom {
                             }
                         }
                     }
+                    TimelineItemContent::UnableToDecrypt(_) => unreachable!(),
                     TimelineItemContent::RedactedMessage => todo!(),
                 },
             }
@@ -783,6 +787,10 @@ impl MatrixRoom {
                 )),
                 _ => None,
             },
+
+            TimelineItemContent::UnableToDecrypt(utd) => {
+                Some(utd.render_with_prefix(send_time, event_id, &sender, &()))
+            }
             TimelineItemContent::RedactedMessage => {
                 // let redacter = None;
 

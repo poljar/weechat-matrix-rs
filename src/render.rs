@@ -1,23 +1,27 @@
 use url::Url;
 
-use matrix_sdk::ruma::{
-    events::{
-        room::{
-            encrypted::RoomEncryptedEventContent,
-            member::{MembershipChange, RoomMemberEventContent},
-            message::{
-                AudioMessageEventContent, EmoteMessageEventContent,
-                FileMessageEventContent, ImageMessageEventContent,
-                LocationMessageEventContent, NoticeMessageEventContent,
-                RedactedRoomMessageEventContent,
-                ServerNoticeMessageEventContent, TextMessageEventContent,
-                VideoMessageEventContent,
+use matrix_sdk::{
+    room::timeline::EncryptedMessage,
+    ruma::{
+        events::{
+            room::{
+                encrypted::RoomEncryptedEventContent,
+                member::{MembershipChange, RoomMemberEventContent},
+                message::{
+                    AudioMessageEventContent, EmoteMessageEventContent,
+                    FileMessageEventContent, ImageMessageEventContent,
+                    LocationMessageEventContent, NoticeMessageEventContent,
+                    RedactedRoomMessageEventContent,
+                    ServerNoticeMessageEventContent, TextMessageEventContent,
+                    VideoMessageEventContent,
+                },
+                EncryptedFile, MediaSource,
             },
-            EncryptedFile, MediaSource,
+            OriginalSyncStateEvent, RedactedSyncMessageLikeEvent,
         },
-        OriginalSyncStateEvent, RedactedSyncMessageLikeEvent,
+        uint, EventId, MilliSecondsSinceUnixEpoch, MxcUri, TransactionId,
+        UserId,
     },
-    uint, EventId, MilliSecondsSinceUnixEpoch, MxcUri, TransactionId, UserId,
 };
 
 use weechat::{Prefix, Weechat};
@@ -418,6 +422,30 @@ impl<C: HasUrlOrFile> Render for C {
 
         let line = RenderedLine {
             message,
+            tags: self.tags(),
+        };
+
+        RenderedContent { lines: vec![line] }
+    }
+}
+
+impl Render for EncryptedMessage {
+    const TAGS: &'static [&'static str] = &["matrix_encrypted"];
+    type RenderContext = ();
+
+    fn render(&self, _: &Self::RenderContext) -> RenderedContent {
+        let message = format!(
+            "{}<{}Unable to decrypt message{}>{}",
+            Weechat::color("chat_delimiters"),
+            Weechat::color("logger.color.backlog_line"),
+            Weechat::color("chat_delimiters"),
+            Weechat::color("reset"),
+        );
+
+        let line = RenderedLine {
+            message,
+            // TODO: add tags that allow us decrypt the event at a later point in
+            // time, sender key, algorithm, session id.
             tags: self.tags(),
         };
 

@@ -758,8 +758,7 @@ impl InnerServer {
 
         let mut client_builder = Client::builder()
             .homeserver_url(homeserver)
-            .sled_store(self.get_server_path(), Some("DEFAULT_PASSPHRASE"))
-            .expect("Couldn't open the store");
+            .sled_store(self.get_server_path(), Some("DEFAULT_PASSPHRASE"));
 
         if let Some(proxy) = settings.proxy.as_ref() {
             client_builder = client_builder.proxy(proxy);
