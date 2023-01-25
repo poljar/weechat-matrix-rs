@@ -369,7 +369,10 @@ impl BufferInputCallbackAsync for MatrixRoom {
 
 impl MatrixRoom {
     pub fn is_encrypted(&self) -> bool {
-        self.room.is_encrypted()
+        self.members
+            .runtime
+            .block_on(self.room.is_encrypted())
+            .unwrap_or_default()
     }
 
     pub fn contains_only_verified_devices(&self) -> bool {
@@ -1054,7 +1057,7 @@ impl MatrixRoom {
             SyncMessageLikeEvent::Redacted(e),
         ) = event
         {
-            let redacter = e.unsigned.redacted_because.as_ref()?.sender();
+            let redacter = &e.unsigned.redacted_because.sender;
             let redacter = self.members.get(redacter).await?;
             let sender = self.members.get(&e.sender).await?;
 
