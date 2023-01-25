@@ -73,7 +73,8 @@ use matrix_sdk::{
     ruma::{
         api::client::session::login::v3::Response as LoginResponse,
         events::{
-            room::member::RoomMemberEventContent, AnySyncStateEvent,
+            room::member::RoomMemberEventContent,
+            room_key::ToDeviceRoomKeyEvent, AnySyncStateEvent,
             AnySyncTimelineEvent, SyncStateEvent,
         },
         DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
@@ -742,6 +743,48 @@ impl InnerServer {
         *self.connection.borrow_mut() = Some(connection);
     }
 
+    async fn create_client_helper(
+        &self,
+        homeserver: Url,
+        proxy: Option<Url>,
+        ssl_verify: bool,
+        server_path: PathBuf,
+    ) -> Result<Client, anyhow::Error> {
+        // server_path.push("state.sqlite");
+        //
+        // let options = sqlx::sqlite::SqliteConnectOptions::new()
+        //     .filename(server_path)
+        //     .create_if_missing(true)
+        //     .serialized(true)
+        //     .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+        //
+        // let pool = sqlx::SqlitePool::connect_with(options).await?;
+        // let db = Arc::new(pool);
+        //
+        // let state_store = matrix_sdk_sql::StateStore::new(&db).await?;
+        // let mut crypto_store = matrix_sdk_sql::StateStore::new(&db).await?;
+        // crypto_store.unlock().await?;
+        //
+        // let store_config = StoreConfig::new()
+        //     .state_store(state_store)
+        //     .crypto_store(crypto_store);
+
+        let mut client_builder = Client::builder()
+            .homeserver_url(homeserver)
+            // .store_config(store_config);
+            .sled_store(server_path, Some("DEFAULT_PASSPHRASE"));
+
+        if let Some(proxy) = proxy.as_ref() {
+            client_builder = client_builder.proxy(proxy);
+        }
+
+        if !ssl_verify {
+            client_builder = client_builder.disable_ssl_verification();
+        }
+
+        Ok(client_builder.build().await?)
+    }
+
     pub fn create_client(&self) -> Result<Client, ServerError> {
         let settings = self.settings.borrow();
 
@@ -756,28 +799,31 @@ impl InnerServer {
             ))
         })?;
 
-        let mut client_builder = Client::builder()
-            .homeserver_url(homeserver)
-            .sled_store(self.get_server_path(), Some("DEFAULT_PASSPHRASE"));
+        match self.servers.runtime().block_on(self.create_client_helper(
+            homeserver.to_owned(),
+            settings.proxy.to_owned(),
+            settings.ssl_verify,
+            self.get_server_path(),
+        )) {
+            Ok(c) => {
+                c.add_event_handler(|event: ToDeviceRoomKeyEvent| async move {
+                    Weechat::spawn_from_thread(async move {
+                        Weechat::print(&format!(
+                            "HEEEELLOOOOOO running handler {event:?}"
+                        ))
+                    })
+                });
+                *self.current_settings.borrow_mut() = settings.clone();
+                *self.client.borrow_mut() = Some(c.clone());
 
-        if let Some(proxy) = settings.proxy.as_ref() {
-            client_builder = client_builder.proxy(proxy);
+                Ok(c)
+            }
+            Err(e) => {
+                Weechat::print(&format!("HELLO ERRROR {e:?}"));
+
+                Err(ServerError::StartError(e.to_string()))
+            }
         }
-
-        if !settings.ssl_verify {
-            client_builder = client_builder.disable_ssl_verification();
-        }
-
-        let client: Client = self
-            .servers
-            .runtime()
-            .block_on(client_builder.build())
-            .map_err(ServerError::ClientError)?;
-
-        *self.current_settings.borrow_mut() = settings.clone();
-        *self.client.borrow_mut() = Some(client.clone());
-
-        Ok(client)
     }
 
     pub async fn delete_devices(&self, devices: Vec<OwnedDeviceId>) {
@@ -805,7 +851,7 @@ impl InnerServer {
             match c.delete_devices(devices.clone(), None).await {
                 Ok(_) => print_success(),
                 Err(e) => {
-                    if let Some(info) = e.uiaa_response() {
+                    if let Some(info) = e.as_uiaa_response() {
                         let auth_info = {
                             let settings = self.settings.borrow();
                             InteractiveAuthInfo {

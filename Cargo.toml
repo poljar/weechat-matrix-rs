@@ -11,9 +11,12 @@ name = "matrix"
 crate-type = ["cdylib"]
 
 [features]
-default = []
+default = ["jaeger"]
+jaeger = ["dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry-jaeger"]
+
 
 [dependencies]
+anyhow = "1"
 clap = "2.34.0"
 chrono = "0.4.22"
 dashmap = "5.4.0"
@@ -24,21 +27,27 @@ strum = "0.20.0"
 strum_macros = "0.20.1"
 syntect = "5.0.0"
 tokio = { version = "1.21.1", features = [ "rt-multi-thread", "sync" ] }
+tokio-stream = "0.1.11"
+futures = "0.3.25"
 tracing = "0.1.36"
 tracing-subscriber = { version = "0.3.15", features = ["env-filter"] } 
+tracing-chrome = "0.7.0"
 uuid = { version = "1.1.2", features = ["v4"] }
 unicode-segmentation = "1.10.0"
-futures = "0.3.24"
 futures-signals = "0.3.31"
+tracing-opentelemetry = { version = "0.18.0", optional = true }
+opentelemetry = { version = "0.18.0", optional = true }
+opentelemetry-jaeger = { version = "0.17.0", optional = true }
+opentelemetry-contrib = { version = "0.10.0" , features = ["jaeger_json_exporter", "rt-tokio"] }
 
 [dependencies.weechat]
 git = "https://github.com/poljar/rust-weechat"
 features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
-version = "0.6.0"
-path = "../../matrix/matrix-rust-sdk/crates/matrix-sdk"
-features = ["markdown", "experimental-timeline"]
+# git  = "0.6.0"
+path  = "/home/poljar/werk/matrix/matrix-rust-sdk/crates/matrix-sdk"
+features = ["markdown", "socks", "experimental-timeline"]
 
 [profile.dev.package]
 sha2 = { opt-level = 2 }

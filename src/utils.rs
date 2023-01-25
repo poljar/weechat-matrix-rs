@@ -34,7 +34,8 @@ impl Edit for RoomMessageEventContent {
 
     fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)> {
         if let Some(Relation::Replacement(r)) = self.relates_to.as_ref() {
-            Some((&r.event_id, &r.new_content))
+            None
+            // Some((&r.event_id, &r.new_content))
         } else {
             None
         }

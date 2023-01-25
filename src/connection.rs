@@ -56,10 +56,10 @@ pub struct InteractiveAuthInfo {
 }
 
 impl InteractiveAuthInfo {
-    pub fn as_auth_data(&self) -> AuthData<'_> {
+    pub fn as_auth_data(&self) -> AuthData {
         AuthData::Password(Password::new(
-            UserIdentifier::UserIdOrLocalpart(&self.user),
-            &self.password,
+            UserIdentifier::UserIdOrLocalpart(self.user.clone()),
+            self.password.clone(),
         ))
     }
 }
@@ -303,7 +303,7 @@ impl Connection {
     }
 
     #[allow(clippy::field_reassign_with_default)]
-    fn sync_filter() -> FilterDefinition<'static> {
+    fn sync_filter() -> FilterDefinition {
         let mut filter = FilterDefinition::default();
         let mut room_filter = RoomFilter::default();
         let mut event_filter = RoomEventFilter::default();
@@ -408,16 +408,16 @@ impl Connection {
             .await
             .unwrap();
 
-        let sync_token = client.sync_token().await;
+        // let sync_token = client.sync_token().await;
         let sync_settings = SyncSettings::new()
             .timeout(DEFAULT_SYNC_TIMEOUT)
-            .filter(Filter::FilterId(&filter));
+            .filter(Filter::FilterId(filter));
 
-        let sync_settings = if let Some(t) = sync_token {
-            sync_settings.token(t)
-        } else {
-            sync_settings
-        };
+        // let sync_settings = if let Some(t) = sync_token {
+        //     sync_settings.token(t)
+        // } else {
+        //     sync_settings
+        // };
 
         let sync_channel = &channel;
 

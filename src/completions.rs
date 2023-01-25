@@ -85,20 +85,21 @@ impl CompletionCallback for UsersCompletion {
         completion: &Completion,
     ) -> Result<(), ()> {
         if let Some(server) = self.servers.find_server(buffer) {
-            if let Some(connection) = server.connection() {
-                let tracked_users = self
-                    .servers
-                    .runtime()
-                    .block_on(connection.client().encryption().tracked_users());
-
-                for user in tracked_users.into_iter() {
-                    completion.add_with_options(
-                        user.as_str(),
-                        true,
-                        CompletionPosition::Sorted,
-                    )
-                }
-            }
+            // if let Some(connection) = server.connection() {
+            //     let tracked_users = self
+            //         .servers
+            //         .runtime()
+            //         .block_on(connection.client().encryption().tracked_users())
+            //         .unwrap_or_default();
+            //
+            //     for user in tracked_users.into_iter() {
+            //         completion.add_with_options(
+            //             user.as_str(),
+            //             true,
+            //             CompletionPosition::Sorted,
+            //         )
+            //     }
+            // }
         }
 
         Ok(())

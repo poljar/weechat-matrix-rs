@@ -12,10 +12,23 @@ mod utils;
 use std::{
     cell::{Ref, RefCell},
     collections::HashMap,
+    path::{Path, PathBuf},
     rc::Rc,
 };
 
+use futures::future::BoxFuture;
+use matrix_sdk::async_trait;
+use opentelemetry::{
+    sdk::{
+        export::trace::ExportResult,
+        trace::{BatchMessage, TraceRuntime},
+        util::tokio_interval_stream,
+    },
+    trace::TraceError,
+};
+use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonRuntime;
 use tokio::runtime::{Handle, Runtime};
+use tracing_chrome::FlushGuard;
 use tracing_subscriber::layer::SubscriberExt;
 
 use weechat::{
@@ -42,6 +55,90 @@ pub enum BufferOwner {
     Server(MatrixServer),
     Room(MatrixServer, RoomHandle),
     None,
+}
+
+#[derive(Clone, Debug)]
+struct Foo {
+    runtime: Handle,
+}
+
+impl opentelemetry::runtime::Runtime for Foo {
+    type Interval = tokio_stream::wrappers::IntervalStream;
+    type Delay = tokio::task::JoinHandle<()>;
+
+    fn interval(&self, duration: std::time::Duration) -> Self::Interval {
+        tokio_interval_stream(duration)
+    }
+
+    fn spawn(&self, future: BoxFuture<'static, ()>) {
+        self.runtime.spawn(future);
+    }
+
+    fn delay(&self, duration: std::time::Duration) -> Self::Delay {
+        let handle = self.runtime.spawn(tokio::time::sleep(duration));
+
+        handle
+    }
+}
+
+impl TraceRuntime for Foo {
+    type Receiver = tokio_stream::wrappers::ReceiverStream<BatchMessage>;
+    type Sender = tokio::sync::mpsc::Sender<BatchMessage>;
+
+    fn batch_message_channel(
+        &self,
+        capacity: usize,
+    ) -> (Self::Sender, Self::Receiver) {
+        let (sender, receiver) = tokio::sync::mpsc::channel(capacity);
+        (
+            sender,
+            tokio_stream::wrappers::ReceiverStream::new(receiver),
+        )
+    }
+}
+
+#[async_trait]
+impl JaegerJsonRuntime for Foo {
+    async fn create_dir(&self, path: &Path) -> ExportResult {
+        let path = path.to_owned();
+
+        let handle = self.runtime.spawn(async move {
+            if tokio::fs::metadata(&path).await.is_err() {
+                tokio::fs::create_dir_all(path)
+                    .await
+                    .map_err(|e| TraceError::Other(Box::new(e)))
+            } else {
+                Ok(())
+            }
+        });
+
+        handle.await.unwrap()?;
+
+        Ok(())
+    }
+
+    async fn write_to_file(&self, path: &Path, content: &[u8]) -> ExportResult {
+        use tokio::io::AsyncWriteExt;
+        let path = path.to_owned();
+        let content = content.to_owned();
+
+        let handle = tokio::spawn(async move {
+            let mut file = tokio::fs::File::create(path)
+                .await
+                .map_err(|e| TraceError::Other(Box::new(e)))?;
+            file.write_all(&content)
+                .await
+                .map_err(|e| TraceError::Other(Box::new(e)))?;
+            file.sync_data()
+                .await
+                .map_err(|e| TraceError::Other(Box::new(e)))?;
+            Ok::<(), TraceError>(())
+        });
+
+        handle.await.unwrap()?;
+
+        Ok(())
+    }
 }
 
 impl BufferOwner {
@@ -175,6 +272,7 @@ struct Matrix {
     #[allow(dead_code)]
     completions: Completions,
     debug_buffer: RefCell<Option<BufferHandle>>,
+    flush_guard: FlushGuard,
 }
 
 impl std::fmt::Debug for Matrix {
@@ -231,6 +329,40 @@ impl Plugin for Matrix {
             .with(tracing_subscriber::filter::EnvFilter::from_default_env())
             .with(tracing_subscriber::fmt::layer().with_writer(debug::Debug));
 
+        #[cfg(feature = "jaeger")]
+        let subscriber = {
+            let path = PathBuf::from("/home/poljar/jaeger-json-test");
+
+            let foo = Foo {
+                runtime: global_runtime.handle().to_owned(),
+            };
+
+            let handle = global_runtime.spawn_blocking(|| {
+                opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter::new(
+                    path,
+                    "foo".to_owned(),
+                    "weechat-matrix".to_owned(),
+                    foo,
+                ).install_batch()
+            });
+
+            let tracer = global_runtime.block_on(handle).unwrap();
+
+            // let tracer = opentelemetry_jaeger::new_agent_pipeline()
+            //     .with_service_name("weechat-matrix")
+            //     .install_simple()
+            //     .expect("Can't install jaeger pipeline");
+
+            let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+            let subscriber = subscriber.with(telemetry);
+
+            subscriber
+        };
+
+        let (chrome_layer, guard) =
+            tracing_chrome::ChromeLayerBuilder::new().build();
+        let subscriber = subscriber.with(chrome_layer);
+
         let _ = tracing::subscriber::set_global_default(subscriber).map_err(
             |_err| Weechat::print("Unable to set global default subscriber"),
         );
@@ -258,6 +390,7 @@ impl Plugin for Matrix {
             completions,
             debug_buffer: RefCell::new(None),
             typing_notice_signal: typing,
+            flush_guard: guard,
         };
 
         Weechat::spawn(async move {

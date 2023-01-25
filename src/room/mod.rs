@@ -224,7 +224,7 @@ impl RoomHandle {
             .map(|m| m.name().to_owned())
             .unwrap_or_else(|| own_user_id.localpart().to_owned());
 
-        let timeline: Arc<Timeline> = room.timeline().into();
+        let timeline: Arc<Timeline> = runtime.block_on(room.timeline()).into();
 
         let room = MatrixRoom {
             homeserver: Rc::new(homeserver),
@@ -409,7 +409,10 @@ impl BufferInputCallbackAsync for MatrixRoom {
 
 impl MatrixRoom {
     pub fn is_encrypted(&self) -> bool {
-        self.room.is_encrypted()
+        self.members
+            .runtime
+            .block_on(self.room.is_encrypted())
+            .unwrap_or_default()
     }
 
     pub fn contains_only_verified_devices(&self) -> bool {
@@ -566,9 +569,7 @@ impl MatrixRoom {
         match item {
             TimelineItem::Event(e) => {
                 let sender = self.members.get(e.sender()).await.unwrap();
-                let send_time = e
-                    .origin_server_ts()
-                    .unwrap_or_else(|| MilliSecondsSinceUnixEpoch::now());
+                let send_time = e.timestamp();
                 let content = e.content();
 
                 match e.key() {
@@ -590,6 +591,7 @@ impl MatrixRoom {
                         TimelineItemContent::UnableToDecrypt(utd) => {
                             unreachable!()
                         }
+                        _ => (),
                     },
                     TimelineKey::EventId(event_id) => {
                         if let Some(rendered) = self
@@ -610,9 +612,7 @@ impl MatrixRoom {
     async fn handle_timeline_update(&self, item: &TimelineItem) {
         if let TimelineItem::Event(e) = item {
             let sender = self.members.get(e.sender()).await.unwrap();
-            let send_time = e
-                .origin_server_ts()
-                .unwrap_or_else(|| MilliSecondsSinceUnixEpoch::now());
+            let send_time = e.timestamp();
             let content = e.content();
 
             match e.key() {
@@ -638,6 +638,7 @@ impl MatrixRoom {
                     }
                     TimelineItemContent::UnableToDecrypt(_) => unreachable!(),
                     TimelineItemContent::RedactedMessage => todo!(),
+                    _ => (),
                 },
             }
 
@@ -801,6 +802,7 @@ impl MatrixRoom {
                 // )
                 None
             }
+            _ => None,
         }
     }
 
@@ -1348,7 +1350,7 @@ impl MatrixRoom {
             SyncMessageLikeEvent::Redacted(e),
         ) = event
         {
-            let redacter = e.unsigned.redacted_because.as_ref()?.sender();
+            let redacter = &e.unsigned.redacted_because.sender;
             let redacter = self.members.get(redacter).await?;
             let sender = self.members.get(&e.sender).await?;
 
