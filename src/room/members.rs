@@ -254,10 +254,11 @@ impl Members {
     pub fn calculate_buffer_name(&self) -> Result<String, StoreError> {
         let room = self.room();
         let room_name = self.runtime.block_on(room.display_name())?.to_string();
+        let is_direct = self.runtime.block_on(room.is_direct())?;
 
         let room_name = if room_name == "#" {
             "##".to_owned()
-        } else if room_name.starts_with('#') || room.is_direct() {
+        } else if room_name.starts_with('#') || is_direct {
             room_name
         } else {
             format!("#{}", room_name)

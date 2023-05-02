@@ -24,8 +24,8 @@
 
 mod members;
 
+use eyeball_im::VectorDiff;
 use futures::StreamExt;
-use futures_signals::signal_vec::{SignalVecExt, VecDiff};
 use members::Members;
 pub use members::WeechatRoomMember;
 use tokio::runtime::Handle;
@@ -50,9 +50,7 @@ use matrix_sdk::{
     async_trait,
     deserialized_responses::AmbiguityChange,
     room::{
-        timeline::{
-            Message, Timeline, TimelineItem, TimelineItemContent, TimelineKey,
-        },
+        timeline::{Message, Timeline, TimelineItem, TimelineItemContent},
         Joined,
     },
     ruma::{
@@ -312,8 +310,8 @@ impl RoomHandle {
 
         *room.members.buffer.borrow_mut() = Some(buffer_handle.clone());
 
-        let timeline_stream = timeline.signal();
-        let mut timeline_stream = timeline_stream.to_stream();
+        let (_initial_items, mut timeline_stream) =
+            runtime.block_on(timeline.subscribe());
 
         Weechat::spawn({
             let room = room.clone();
@@ -321,10 +319,10 @@ impl RoomHandle {
             async move {
                 while let Some(diff) = timeline_stream.next().await {
                     match diff {
-                        VecDiff::Push { value } => {
+                        VectorDiff::PushBack { value } => {
                             room.handle_timeline_push(&value).await;
                         }
-                        VecDiff::UpdateAt { value, .. } => {
+                        VectorDiff::Set { index: _, value } => {
                             room.handle_timeline_update(&value).await;
                         }
                         _ => {
@@ -427,7 +425,10 @@ impl MatrixRoom {
     }
 
     pub fn is_direct(&self) -> bool {
-        self.room.is_direct()
+        self.members
+            .runtime
+            .block_on(self.room.is_direct())
+            .unwrap_or_default()
     }
 
     pub fn alias(&self) -> Option<OwnedRoomAliasId> {
@@ -572,28 +573,28 @@ impl MatrixRoom {
                 let send_time = e.timestamp();
                 let content = e.content();
 
-                match e.key() {
-                    TimelineKey::TransactionId(transaction_id) => match content
-                    {
-                        TimelineItemContent::Message(m) => {
-                            if let Some(rendered) = self
-                                .render_local_echo_content(
-                                    &sender,
-                                    transaction_id,
-                                    m,
-                                )
-                                .await
-                            {
-                                self.print_rendered_event(rendered);
-                            }
-                        }
-                        TimelineItemContent::RedactedMessage => todo!(),
-                        TimelineItemContent::UnableToDecrypt(utd) => {
-                            unreachable!()
-                        }
-                        _ => (),
-                    },
-                    TimelineKey::EventId(event_id) => {
+                match e.event_id() {
+                    // TimelineKey::TransactionId(transaction_id) => match content
+                    // {
+                    //     TimelineItemContent::Message(m) => {
+                    //         if let Some(rendered) = self
+                    //             .render_local_echo_content(
+                    //                 &sender,
+                    //                 transaction_id,
+                    //                 m,
+                    //             )
+                    //             .await
+                    //         {
+                    //             self.print_rendered_event(rendered);
+                    //         }
+                    //     }
+                    //     TimelineItemContent::RedactedMessage => todo!(),
+                    //     TimelineItemContent::UnableToDecrypt(utd) => {
+                    //         unreachable!()
+                    //     }
+                    //     _ => (),
+                    // },
+                    Some(event_id) => {
                         if let Some(rendered) = self
                             .render_timeline_content(
                                 &sender, event_id, send_time, content,
@@ -603,6 +604,7 @@ impl MatrixRoom {
                             self.print_rendered_event(rendered)
                         }
                     }
+                    None => (),
                 };
             }
             TimelineItem::Virtual(_) => (), // TODO: Can we do something with virtual timeline items?
@@ -615,11 +617,8 @@ impl MatrixRoom {
             let send_time = e.timestamp();
             let content = e.content();
 
-            match e.key() {
-                TimelineKey::TransactionId(key) => {
-                    // TODO: This is a remote echo
-                }
-                TimelineKey::EventId(event_id) => match content {
+            match e.event_id() {
+                Some(event_id) => match content {
                     TimelineItemContent::Message(m) => {
                         if m.is_edited() {
                             if let Some(rendered) = self
@@ -636,14 +635,15 @@ impl MatrixRoom {
                             }
                         }
                     }
-                    TimelineItemContent::UnableToDecrypt(_) => unreachable!(),
+                    TimelineItemContent::UnableToDecrypt(_) => (),
                     TimelineItemContent::RedactedMessage => todo!(),
                     _ => (),
                 },
+                None => (),
             }
 
             if let Some(Ok(AnySyncTimelineEvent::MessageLike(message))) =
-                e.raw().map(|e| e.deserialize())
+                e.original_json().map(|e| e.deserialize())
             {
                 if let Some(transaction_id) = message.transaction_id() {
                     let event_id = message.event_id();
