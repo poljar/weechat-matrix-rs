@@ -327,7 +327,11 @@ impl Plugin for Matrix {
 
         let subscriber = tracing_subscriber::registry()
             .with(tracing_subscriber::filter::EnvFilter::from_default_env())
-            .with(tracing_subscriber::fmt::layer().with_writer(debug::Debug));
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(debug::Debug)
+                    .pretty(),
+            );
 
         #[cfg(feature = "jaeger")]
         let subscriber = {

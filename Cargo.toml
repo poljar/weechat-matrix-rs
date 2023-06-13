@@ -46,10 +46,14 @@ opentelemetry-contrib = { version = "0.10.0" , features = ["jaeger_json_exporter
 git = "https://github.com/poljar/rust-weechat"
 features = ["async", "config_macro"]
 
-[dependencies.matrix-sdk]
+# [dependencies.matrix-sdk-ui]
 # git  = "0.6.0"
-path  = "/home/poljar/werk/matrix/matrix-rust-sdk/crates/matrix-sdk"
-features = ["markdown", "socks", "experimental-timeline"]
+# path  = "/home/poljar/werk/matrix/matrix-rust-sdk/crates/matrix-sdk-ui"
+
+[dependencies.matrix-sdk]
+git  = "ssh://git@github.com/matrix-org/matrix-rust-sdk-project-neo.git"
+rev  = "003e5453fee82efa494e55ea0a0002946e443078"
+features = ["markdown", "socks", "experimental-timeline", "sled"]
 
 [profile.dev.package]
 sha2 = { opt-level = 2 }

@@ -46,13 +46,14 @@ use std::{
 use unicode_segmentation::UnicodeSegmentation;
 use url::Url;
 
+use matrix_sdk::room::timeline::{
+    Message, Timeline, TimelineItem, TimelineItemContent,
+};
+
 use matrix_sdk::{
     async_trait,
     deserialized_responses::AmbiguityChange,
-    room::{
-        timeline::{Message, Timeline, TimelineItem, TimelineItemContent},
-        Joined,
-    },
+    room::Joined,
     ruma::{
         events::{
             room::{

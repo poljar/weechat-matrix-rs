@@ -48,6 +48,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "android-tzdata"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e999941b234f3131b00bc13c22d06e8c5ff726d1b6318ac7eb276997bbb4fef0"
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -532,13 +538,13 @@ dependencies = [
 
 [[package]]
 name = "chrono"
-version = "0.4.24"
+version = "0.4.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e3c5919066adf22df73762e50cffcde3a758f2a848b113b586d1f86728b673b"
+checksum = "ec837a71355b28f6556dbd569b37b3f363091c0bd4b2e735674521b4c5fd9bc5"
 dependencies = [
+ "android-tzdata",
  "iana-time-zone",
  "js-sys",
- "num-integer",
  "num-traits",
  "time 0.1.45",
  "wasm-bindgen",
@@ -1020,9 +1026,9 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "form_urlencoded"
-version = "1.1.0"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9c384f161156f5260c24a097c56119f9be8c798586aecc13afbcbe7b7e26bf8"
+checksum = "a62bc1cf6f830c2ec14a513a9fb124d0a213a629668a4186f329db21fe045652"
 dependencies = [
  "percent-encoding",
 ]
@@ -1442,9 +1448,9 @@ dependencies = [
 
 [[package]]
 name = "idna"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e14ddfc70884202db2244c223200c204c2bda1bc6e0998d11b5e024d657209e6"
+checksum = "7d20d6b07bfbc108882d88ed8e37d39636dcc260e15e30c45e6ba089610b917c"
 dependencies = [
  "unicode-bidi",
  "unicode-normalization",
@@ -1739,6 +1745,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk"
 version = "0.6.2"
+source = "git+ssh://git@github.com/matrix-org/matrix-rust-sdk-project-neo.git?rev=003e5453fee82efa494e55ea0a0002946e443078#003e5453fee82efa494e55ea0a0002946e443078"
 dependencies = [
  "anymap2",
  "async-stream",
@@ -1781,6 +1788,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-base"
 version = "0.6.1"
+source = "git+ssh://git@github.com/matrix-org/matrix-rust-sdk-project-neo.git?rev=003e5453fee82efa494e55ea0a0002946e443078#003e5453fee82efa494e55ea0a0002946e443078"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1805,6 +1813,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-common"
 version = "0.6.0"
+source = "git+ssh://git@github.com/matrix-org/matrix-rust-sdk-project-neo.git?rev=003e5453fee82efa494e55ea0a0002946e443078#003e5453fee82efa494e55ea0a0002946e443078"
 dependencies = [
  "futures-core",
  "futures-util",
@@ -1820,6 +1829,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-crypto"
 version = "0.6.0"
+source = "git+ssh://git@github.com/matrix-org/matrix-rust-sdk-project-neo.git?rev=003e5453fee82efa494e55ea0a0002946e443078#003e5453fee82efa494e55ea0a0002946e443078"
 dependencies = [
  "aes",
  "async-std",
@@ -1856,6 +1866,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-indexeddb"
 version = "0.2.0"
+source = "git+ssh://git@github.com/matrix-org/matrix-rust-sdk-project-neo.git?rev=003e5453fee82efa494e55ea0a0002946e443078#003e5453fee82efa494e55ea0a0002946e443078"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1881,6 +1892,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-sled"
 version = "0.2.0"
+source = "git+ssh://git@github.com/matrix-org/matrix-rust-sdk-project-neo.git?rev=003e5453fee82efa494e55ea0a0002946e443078#003e5453fee82efa494e55ea0a0002946e443078"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1904,6 +1916,7 @@ dependencies = [
 [[package]]
 name = "matrix-sdk-store-encryption"
 version = "0.2.0"
+source = "git+ssh://git@github.com/matrix-org/matrix-rust-sdk-project-neo.git?rev=003e5453fee82efa494e55ea0a0002946e443078#003e5453fee82efa494e55ea0a0002946e443078"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -2027,16 +2040,6 @@ checksum = "77a8165726e8236064dbb45459242600304b42a5ea24ee2948e18e023bf7ba84"
 dependencies = [
  "overload",
  "winapi",
-]
-
-[[package]]
-name = "num-integer"
-version = "0.1.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "225d3389fb3509a24c93f5c29eb6bde2586b98d9f016636dff58d7c6f7569cd9"
-dependencies = [
- "autocfg 1.1.0",
- "num-traits",
 ]
 
 [[package]]
@@ -2333,9 +2336,9 @@ checksum = "19b17cddbe7ec3f8bc800887bab5e717348c95ea2ca0b1bf0837fb964dc67099"
 
 [[package]]
 name = "percent-encoding"
-version = "2.2.0"
+version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "478c572c3d73181ff3c2539045f6eb99e5491218eae919370993b890cdbdd98e"
+checksum = "9b2a4787296e9989611394c33f193f676704af1686e70b8f8033ab5ba9a35a94"
 
 [[package]]
 name = "pin-project"
@@ -3743,9 +3746,9 @@ dependencies = [
 
 [[package]]
 name = "url"
-version = "2.3.1"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d68c799ae75762b8c3fe375feb6600ef5602c883c5d21eb51c09f22b83c4643"
+checksum = "50bff7831e19200a85b17131d085c25d7811bc4e186efdaf54bbd132994a88cb"
 dependencies = [
  "form_urlencoded",
  "idna",
@@ -3808,7 +3811,7 @@ checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
 [[package]]
 name = "vodozemac"
 version = "0.3.0"
-source = "git+ssh://git@github.com/matrix-org/vodozemac-private.git?rev=f0fe747ad0c4a1950a6a9b745241d6f256731542#f0fe747ad0c4a1950a6a9b745241d6f256731542"
+source = "git+ssh://git@github.com/matrix-org/vodozemac-private.git?rev=38c1f22717e0a98b9fc2cb0607fefa000b79c29c#38c1f22717e0a98b9fc2cb0607fefa000b79c29c"
 dependencies = [
  "aes",
  "arrayvec",

@@ -750,28 +750,8 @@ impl InnerServer {
         ssl_verify: bool,
         server_path: PathBuf,
     ) -> Result<Client, anyhow::Error> {
-        // server_path.push("state.sqlite");
-        //
-        // let options = sqlx::sqlite::SqliteConnectOptions::new()
-        //     .filename(server_path)
-        //     .create_if_missing(true)
-        //     .serialized(true)
-        //     .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
-        //
-        // let pool = sqlx::SqlitePool::connect_with(options).await?;
-        // let db = Arc::new(pool);
-        //
-        // let state_store = matrix_sdk_sql::StateStore::new(&db).await?;
-        // let mut crypto_store = matrix_sdk_sql::StateStore::new(&db).await?;
-        // crypto_store.unlock().await?;
-        //
-        // let store_config = StoreConfig::new()
-        //     .state_store(state_store)
-        //     .crypto_store(crypto_store);
-
         let mut client_builder = Client::builder()
             .homeserver_url(homeserver)
-            // .store_config(store_config);
             .sled_store(server_path, Some("DEFAULT_PASSPHRASE"));
 
         if let Some(proxy) = proxy.as_ref() {

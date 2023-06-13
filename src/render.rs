@@ -1,27 +1,25 @@
+use matrix_sdk::room::timeline::EncryptedMessage;
+// use matrix_sdk_ui::timeline::EncryptedMessage;
 use url::Url;
 
-use matrix_sdk::{
-    room::timeline::EncryptedMessage,
-    ruma::{
-        events::{
-            room::{
-                encrypted::RoomEncryptedEventContent,
-                member::{MembershipChange, RoomMemberEventContent},
-                message::{
-                    AudioMessageEventContent, EmoteMessageEventContent,
-                    FileMessageEventContent, ImageMessageEventContent,
-                    LocationMessageEventContent, NoticeMessageEventContent,
-                    RedactedRoomMessageEventContent,
-                    ServerNoticeMessageEventContent, TextMessageEventContent,
-                    VideoMessageEventContent,
-                },
-                EncryptedFile, MediaSource,
+use matrix_sdk::ruma::{
+    events::{
+        room::{
+            encrypted::RoomEncryptedEventContent,
+            member::{MembershipChange, RoomMemberEventContent},
+            message::{
+                AudioMessageEventContent, EmoteMessageEventContent,
+                FileMessageEventContent, ImageMessageEventContent,
+                LocationMessageEventContent, NoticeMessageEventContent,
+                RedactedRoomMessageEventContent,
+                ServerNoticeMessageEventContent, TextMessageEventContent,
+                VideoMessageEventContent,
             },
-            OriginalSyncStateEvent, RedactedSyncMessageLikeEvent,
+            EncryptedFile, MediaSource,
         },
-        uint, EventId, MilliSecondsSinceUnixEpoch, MxcUri, TransactionId,
-        UserId,
+        OriginalSyncStateEvent, RedactedSyncMessageLikeEvent,
     },
+    uint, EventId, MilliSecondsSinceUnixEpoch, MxcUri, TransactionId, UserId,
 };
 
 use weechat::{Prefix, Weechat};
