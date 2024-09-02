@@ -8,11 +8,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-18.04, ubuntu-latest]
+        os: [ubuntu-20.04, ubuntu-latest]
         include:
-          - os: ubuntu-18.04
+          - os: ubuntu-20.04
             artifact_name: libmatrix.so
-            asset_name: libmatrix.so-ubuntu-18.04
+            asset_name: libmatrix.so-ubuntu-20.04
           - os: ubuntu-latest
             artifact_name: libmatrix.so
             asset_name: libmatrix.so-ubuntu-latest
