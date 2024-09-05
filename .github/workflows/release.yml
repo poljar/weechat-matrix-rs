@@ -34,7 +34,7 @@ jobs:
           echo "version of weechat-plugin.h that weechat-sys uses by default:"
           grep -m 1 -n -H "WEECHAT_PLUGIN_API_VERSION" "/usr/include/weechat/weechat-plugin.h"
           v="$(grep -m 1 -o  'WEECHAT_PLUGIN_API_VERSION.*' '/usr/include/weechat/weechat-plugin.h')"
-          echo "::set-output name=W_API_V::$v"
+          echo "W_API_V=$v" >> $GITHUB_OUTPUT
 
       - name: Checkout sources
         uses: actions/checkout@v4
