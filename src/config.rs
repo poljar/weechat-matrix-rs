@@ -20,6 +20,7 @@ use std::{
     rc::Rc,
 };
 
+use strum::VariantNames;
 use strum_macros::EnumVariantNames;
 use weechat::{
     config,

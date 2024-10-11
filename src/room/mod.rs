@@ -47,7 +47,7 @@ use url::Url;
 use matrix_sdk::{
     async_trait,
     deserialized_responses::AmbiguityChange,
-    room::Joined,
+    room::Room,
     ruma::{
         events::{
             room::{
@@ -148,7 +148,7 @@ pub struct MatrixRoom {
     homeserver: Rc<Url>,
     room_id: Rc<RoomId>,
     own_user_id: Rc<UserId>,
-    room: Joined,
+    room: Room,
     buffer: Rc<RefCell<Option<BufferHandle>>>,
 
     config: Rc<RefCell<Config>>,
@@ -202,7 +202,7 @@ impl RoomHandle {
         runtime: Handle,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
-        room: Joined,
+        room: Room,
         homeserver: Url,
         room_id: &RoomId,
         own_user_id: &UserId,
@@ -287,7 +287,13 @@ impl RoomHandle {
 
         buffer.set_localvar("server", server_name);
         buffer.set_localvar("nick", &own_nick);
-        buffer.set_localvar("domain", room.room_id().server_name().as_str());
+        buffer.set_localvar(
+            "domain",
+            room.room_id()
+                .server_name()
+                .map(|name| name.as_str())
+                .unwrap_or_default(),
+        );
         buffer.set_localvar("room_id", room.room_id().as_str());
         if room.is_direct() {
             buffer.set_localvar("type", "private")
@@ -307,7 +313,7 @@ impl RoomHandle {
     pub async fn restore(
         server_name: &str,
         runtime: Handle,
-        room: Joined,
+        room: Room,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
         homeserver: Url,
@@ -369,7 +375,10 @@ impl BufferInputCallbackAsync for MatrixRoom {
 
 impl MatrixRoom {
     pub fn is_encrypted(&self) -> bool {
-        self.room.is_encrypted()
+        self.members
+            .runtime
+            .block_on(self.room.is_encrypted())
+            .unwrap_or_default()
     }
 
     pub fn contains_only_verified_devices(&self) -> bool {
@@ -384,7 +393,10 @@ impl MatrixRoom {
     }
 
     pub fn is_direct(&self) -> bool {
-        self.room.is_direct()
+        self.members
+            .runtime
+            .block_on(self.room.is_direct())
+            .unwrap_or_default()
     }
 
     pub fn alias(&self) -> Option<OwnedRoomAliasId> {
@@ -440,8 +452,12 @@ impl MatrixRoom {
         // TODO: remove this unwrap.
         let redacter = self.members.get(&event.sender).await.unwrap();
 
-        let event_id_tag =
-            Cow::from(format!("{}_id_{}", PLUGIN_NAME, event.redacts));
+        // TODO: handle unwrapping redacts Option<EventId> properly for rooms versions 11+
+        let event_id_tag = Cow::from(format!(
+            "{}_id_{}",
+            PLUGIN_NAME,
+            event.redacts.clone().unwrap()
+        ));
         let tag = Cow::from("matrix_redacted");
 
         let reason = if let Some(r) = &event.content.reason {
@@ -1011,7 +1027,9 @@ impl MatrixRoom {
                     event_id,
                     send_time,
                     &sender,
-                    &AnyMessageLikeEventContent::RoomMessage(content.clone()),
+                    &AnyMessageLikeEventContent::RoomMessage(
+                        content.clone().with_relation(None),
+                    ),
                 )
                 .await
                 .map(|r| {
@@ -1054,7 +1072,7 @@ impl MatrixRoom {
             SyncMessageLikeEvent::Redacted(e),
         ) = event
         {
-            let redacter = e.unsigned.redacted_because.as_ref()?.sender();
+            let redacter = e.unsigned.redacted_because.sender.as_ref();
             let redacter = self.members.get(redacter).await?;
             let sender = self.members.get(&e.sender).await?;
 
@@ -1139,7 +1157,7 @@ impl MatrixRoom {
         }
     }
 
-    pub fn room(&self) -> &Joined {
+    pub fn room(&self) -> &Room {
         &self.room
     }
 

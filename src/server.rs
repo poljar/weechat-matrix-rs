@@ -69,7 +69,7 @@ use matrix_sdk::{
     self,
     deserialized_responses::AmbiguityChange,
     encryption::RoomKeyImportResult,
-    room::Joined,
+    room::Room,
     ruma::{
         api::client::session::login::v3::Response as LoginResponse,
         events::{
@@ -467,7 +467,7 @@ impl InnerServer {
             let room = client
                 .as_ref()
                 .expect("Receiving events without a client")
-                .get_joined_room(room_id);
+                .get_room(room_id);
 
             let room = room.unwrap_or_else(|| {
                 panic!(
@@ -503,7 +503,7 @@ impl InnerServer {
         self.settings.borrow().password.clone()
     }
 
-    pub async fn restore_room(&self, room: Joined) {
+    pub async fn restore_room(&self, room: Room) {
         let homeserver = self
             .settings
             .borrow()
@@ -758,8 +758,7 @@ impl InnerServer {
 
         let mut client_builder = Client::builder()
             .homeserver_url(homeserver)
-            .sled_store(self.get_server_path(), Some("DEFAULT_PASSPHRASE"))
-            .expect("Couldn't open the store");
+            .sqlite_store(self.get_server_path(), Some("DEFAULT_PASSPHRASE"));
 
         if let Some(proxy) = settings.proxy.as_ref() {
             client_builder = client_builder.proxy(proxy);
@@ -806,7 +805,7 @@ impl InnerServer {
             match c.delete_devices(devices.clone(), None).await {
                 Ok(_) => print_success(),
                 Err(e) => {
-                    if let Some(info) = e.uiaa_response() {
+                    if let Some(info) = e.as_uiaa_response() {
                         let auth_info = {
                             let settings = self.settings.borrow();
                             InteractiveAuthInfo {

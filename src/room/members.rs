@@ -6,7 +6,7 @@ use tracing::{error, info};
 
 use matrix_sdk::{
     deserialized_responses::AmbiguityChange,
-    room::{Joined, RoomMember},
+    room::{Room, RoomMember},
     ruma::{
         events::{
             room::member::{MembershipState, RoomMemberEventContent},
@@ -26,7 +26,7 @@ use crate::render::render_membership;
 
 #[derive(Clone)]
 pub struct Members {
-    room: Joined,
+    room: Room,
     pub(super) runtime: Handle,
     ambiguity_map: Rc<DashMap<OwnedUserId, bool>>,
     nicks: Rc<DashMap<OwnedUserId, String>>,
@@ -41,7 +41,7 @@ pub struct WeechatRoomMember {
 }
 
 impl Members {
-    pub fn new(room: Joined, runtime: Handle) -> Self {
+    pub fn new(room: Room, runtime: Handle) -> Self {
         Self {
             room,
             runtime,
@@ -247,7 +247,7 @@ impl Members {
         }
     }
 
-    fn room(&self) -> &Joined {
+    fn room(&self) -> &Room {
         &self.room
     }
 
@@ -257,7 +257,9 @@ impl Members {
 
         let room_name = if room_name == "#" {
             "##".to_owned()
-        } else if room_name.starts_with('#') || room.is_direct() {
+        } else if room_name.starts_with('#')
+            || self.runtime.block_on(room.is_direct()).unwrap_or(false)
+        {
             room_name
         } else {
             format!("#{}", room_name)
