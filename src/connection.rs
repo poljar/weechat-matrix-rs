@@ -16,7 +16,7 @@ use matrix_sdk::{
     self,
     config::SyncSettings,
     deserialized_responses::AmbiguityChange,
-    room::{Joined, Messages, MessagesOptions},
+    room::{Messages, MessagesOptions, Room},
     ruma::{
         api::client::{
             device::{
@@ -37,7 +37,7 @@ use matrix_sdk::{
         },
         OwnedDeviceId, OwnedRoomId, OwnedTransactionId,
     },
-    Client, LoopCtrl, Result as MatrixResult,
+    Client, LoopCtrl, Result as MatrixResult, RoomMemberships,
 };
 
 use weechat::{Task, Weechat};
@@ -56,10 +56,10 @@ pub struct InteractiveAuthInfo {
 }
 
 impl InteractiveAuthInfo {
-    pub fn as_auth_data(&self) -> AuthData<'_> {
+    pub fn as_auth_data(&self) -> AuthData {
         AuthData::Password(Password::new(
-            UserIdentifier::UserIdOrLocalpart(&self.user),
-            &self.password,
+            UserIdentifier::UserIdOrLocalpart(self.user.clone()),
+            self.password.clone(),
         ))
     }
 }
@@ -74,7 +74,7 @@ pub enum ClientMessage {
         bool,
         Option<AmbiguityChange>,
     ),
-    RestoredRoom(Joined),
+    RestoredRoom(Room),
 }
 
 /// Struct representing an active connection to the homeserver.
@@ -151,12 +151,17 @@ impl Connection {
     /// event will contain the same id in the unsigned part of the event.
     pub async fn send_message(
         &self,
-        room: Joined,
+        room: Room,
         content: AnyMessageLikeEventContent,
         transaction_id: Option<OwnedTransactionId>,
     ) -> MatrixResult<RoomSendResponse> {
         self.spawn(async move {
-            room.send(content, transaction_id.as_deref()).await
+            let mut msg = room.send(content);
+            if let Some(txn_id) = transaction_id.as_deref() {
+                msg = msg.with_transaction_id(txn_id);
+            }
+
+            msg.await
         })
         .await
     }
@@ -182,23 +187,22 @@ impl Connection {
     /// Fetch historical messages for the given room.
     pub async fn room_messages(
         &self,
-        room: Joined,
+        room: Room,
         prev_batch: PrevBatch,
     ) -> MatrixResult<Messages> {
-        Ok(self
-            .spawn(async move {
-                let request = match &prev_batch {
-                    PrevBatch::Backwards(t) => {
-                        MessagesOptions::backward().from(Some(t.as_ref()))
-                    }
-                    PrevBatch::Forward(t) => {
-                        MessagesOptions::forward().from(Some(t.as_ref()))
-                    }
-                };
+        self.spawn(async move {
+            let request = match &prev_batch {
+                PrevBatch::Backwards(t) => {
+                    MessagesOptions::backward().from(Some(t.as_ref()))
+                }
+                PrevBatch::Forward(t) => {
+                    MessagesOptions::forward().from(Some(t.as_ref()))
+                }
+            };
 
-                room.messages(request).await
-            })
-            .await?)
+            room.messages(request).await
+        })
+        .await
     }
 
     /// Get the list of our own devices.
@@ -217,7 +221,7 @@ impl Connection {
     /// * `typing` - Should we set or unset the typing notice.
     pub async fn send_typing_notice(
         &self,
-        room: Joined,
+        room: Room,
         typing: bool,
     ) -> MatrixResult<()> {
         self.spawn(async move { room.typing_notice(typing).await })
@@ -303,7 +307,7 @@ impl Connection {
     }
 
     #[allow(clippy::field_reassign_with_default)]
-    fn sync_filter() -> FilterDefinition<'static> {
+    fn sync_filter() -> FilterDefinition {
         let mut filter = FilterDefinition::default();
         let mut room_filter = RoomFilter::default();
         let mut event_filter = RoomEventFilter::default();
@@ -352,6 +356,7 @@ impl Connection {
             let first_login = device_id.is_none();
 
             let mut builder = client
+                .matrix_auth()
                 .login_username(&username, &password)
                 .initial_device_display_name("WeeChat-Matrix-rs");
 
@@ -408,10 +413,10 @@ impl Connection {
             .await
             .unwrap();
 
-        let sync_token = client.sync_token().await;
+        let sync_token: Option<String> = None;
         let sync_settings = SyncSettings::new()
             .timeout(DEFAULT_SYNC_TIMEOUT)
-            .filter(Filter::FilterId(&filter));
+            .filter(Filter::FilterId(filter));
 
         let sync_settings = if let Some(t) = sync_token {
             sync_settings.token(t)
@@ -426,11 +431,8 @@ impl Connection {
         let _ret = client
             .sync_with_callback(sync_settings, |response| async move {
                 for (room_id, room) in response.rooms.join {
-                    for event in room
-                        .state
-                        .events
-                        .iter()
-                        .filter_map(|e| e.deserialize().ok())
+                    for event in
+                        room.state.iter().filter_map(|e| e.deserialize().ok())
                     {
                         if let AnySyncStateEvent::RoomMember(m) = event {
                             let change = response
@@ -505,32 +507,23 @@ impl Connection {
                         }
                     }
 
-                    if let Some(r) = client_ref.get_joined_room(&room_id) {
+                    if let Some(r) = client_ref.get_room(&room_id) {
                         if !r.are_members_synced() {
                             let room_id = room_id.clone();
                             let channel = sync_channel.clone();
 
                             tokio::spawn(async move {
-                                if let Ok(Some(members)) =
-                                    r.sync_members().await
+                                if let Ok(members) =
+                                    r.members(RoomMemberships::ACTIVE).await
                                 {
-                                    for member in members.chunk.into_iter() {
-                                        let change = members
-                                            .ambiguity_changes
-                                            .changes
-                                            .get(&room_id)
-                                            .and_then(|c| {
-                                                c.get(member.event_id())
-                                            })
-                                            .cloned();
-
+                                    for member in members {
                                         if let Err(e) = channel
                                             .send(Ok(
                                                 ClientMessage::MemberEvent(
                                                     room_id.clone(),
-                                                    member.into(),
+                                                    member.event().as_sync().expect("Member event is not a StateSyncEvent").to_owned(),
                                                     true,
-                                                    change,
+                                                    None,
                                                 ),
                                             ))
                                             .await

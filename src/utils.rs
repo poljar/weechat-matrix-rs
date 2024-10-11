@@ -1,6 +1,9 @@
 use matrix_sdk::ruma::{
     events::{
-        room::message::{Relation, RoomMessageEventContent},
+        room::message::{
+            Relation, RoomMessageEventContent,
+            RoomMessageEventContentWithoutRelation,
+        },
         AnyMessageLikeEvent, AnySyncMessageLikeEvent,
     },
     EventId, UserId,
@@ -24,7 +27,9 @@ impl ToTag for UserId {
 
 pub trait Edit {
     fn is_edit(&self) -> bool;
-    fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)>;
+    fn get_edit(
+        &self,
+    ) -> Option<(&EventId, &RoomMessageEventContentWithoutRelation)>;
 }
 
 impl Edit for RoomMessageEventContent {
@@ -32,7 +37,9 @@ impl Edit for RoomMessageEventContent {
         matches!(self.relates_to.as_ref(), Some(Relation::Replacement(_)))
     }
 
-    fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)> {
+    fn get_edit(
+        &self,
+    ) -> Option<(&EventId, &RoomMessageEventContentWithoutRelation)> {
         if let Some(Relation::Replacement(r)) = self.relates_to.as_ref() {
             Some((&r.event_id, &r.new_content))
         } else {
@@ -52,7 +59,9 @@ impl Edit for AnySyncMessageLikeEvent {
         }
     }
 
-    fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)> {
+    fn get_edit(
+        &self,
+    ) -> Option<(&EventId, &RoomMessageEventContentWithoutRelation)> {
         if let AnySyncMessageLikeEvent::RoomMessage(e) = self {
             e.as_original().map(|e| e.content.get_edit()).flatten()
         } else {
@@ -72,7 +81,9 @@ impl Edit for AnyMessageLikeEvent {
         }
     }
 
-    fn get_edit(&self) -> Option<(&EventId, &RoomMessageEventContent)> {
+    fn get_edit(
+        &self,
+    ) -> Option<(&EventId, &RoomMessageEventContentWithoutRelation)> {
         if let AnyMessageLikeEvent::RoomMessage(e) = self {
             e.as_original().map(|e| e.content.get_edit()).flatten()
         } else {

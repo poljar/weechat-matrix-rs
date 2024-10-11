@@ -89,7 +89,11 @@ impl CompletionCallback for UsersCompletion {
                 let tracked_users = self
                     .servers
                     .runtime()
-                    .block_on(connection.client().encryption().tracked_users());
+                    .block_on(connection.client().encryption().tracked_users())
+                    .unwrap_or_else(|e| {
+                        tracing::warn!("Error getting tracked users: {e}");
+                        Default::default()
+                    });
 
                 for user in tracked_users.into_iter() {
                     completion.add_with_options(
