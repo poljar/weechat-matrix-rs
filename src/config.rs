@@ -26,7 +26,7 @@ use weechat::{
     config,
     config::{
         Conf, ConfigOption, ConfigSection, ConfigSectionSettings,
-        IntegerOptionSettings, OptionChanged, SectionReadCallback,
+        EnumOptionSettings, OptionChanged, SectionReadCallback,
     },
     Weechat,
 };
@@ -194,7 +194,7 @@ impl ConfigHandle {
 
             let servers = servers.clone();
 
-            let settings = IntegerOptionSettings::new("server_buffer")
+            let settings = EnumOptionSettings::new("server_buffer")
                 .description("Should the server buffer be merged with other buffers or independent")
                 .set_change_callback(move |_, _| {
                     for server in servers.borrow().values() {
@@ -210,7 +210,7 @@ impl ConfigHandle {
                 );
 
             look_section
-                .new_integer_option(settings)
+                .new_enum_option(settings)
                 .expect("Can't create server buffers option");
         }
 
@@ -228,7 +228,7 @@ impl ConfigHandle {
 
 impl<'a> LookSection<'a> {
     pub fn server_buffer(&self) -> ServerBuffer {
-        if let ConfigOption::Integer(o) =
+        if let ConfigOption::Enum(o) =
             self.search_option("server_buffer").unwrap()
         {
             ServerBuffer::from(o.value())
