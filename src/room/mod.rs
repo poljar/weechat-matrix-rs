@@ -1130,12 +1130,14 @@ impl MatrixRoom {
                     "Rendering a message but the sender isn't in the nicklist",
                 );
 
-                    let content =
-                        if let Some(content) = event.original_content() {
-                            content
-                        } else {
-                            todo!("Do we just skip redacted events here?")
-                        };
+                    let content = if let Some(content) =
+                        event.original_content()
+                    {
+                        content
+                    } else {
+                        tracing::error!("Unhandled redacted event: {event:?}");
+                        return;
+                    };
 
                     let send_time = event.origin_server_ts();
 
