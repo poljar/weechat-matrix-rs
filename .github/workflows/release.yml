@@ -13,7 +13,10 @@ jobs:
           - os: ubuntu-20.04
             artifact_name: libmatrix.so
             asset_name: libmatrix.so-ubuntu-20.04
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
+            artifact_name: libmatrix.so
+            asset_name: libmatrix.so-ubuntu-22.04
+          - os: ubuntu-latest # currently 24.04
             artifact_name: libmatrix.so
             asset_name: libmatrix.so-ubuntu-latest
         rust:
