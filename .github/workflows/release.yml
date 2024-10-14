@@ -36,6 +36,10 @@ jobs:
           v="$(grep -m 1 -o  'WEECHAT_PLUGIN_API_VERSION.*' '/usr/include/weechat/weechat-plugin.h')"
           echo "W_API_V=$v" >> $GITHUB_OUTPUT
 
+      - name: Install sqlite3 libraries
+        run: |
+          sudo apt install libsqlite3-dev
+
       - name: Checkout sources
         uses: actions/checkout@v4
 
