@@ -304,8 +304,9 @@ impl Members {
 
         let event = match event {
             SyncStateEvent::Original(e) => e,
-            SyncStateEvent::Redacted(_) => {
-                todo!("We don't handle redacted state yet")
+            SyncStateEvent::Redacted(e) => {
+                error!("Unhandled redacted event: {e:?}");
+                return;
             }
         };
 
