@@ -330,7 +330,7 @@ impl RoomHandle {
             config,
             room_clone,
             homeserver,
-            room_id.clone(),
+            room_id,
             own_user_id,
         );
 
