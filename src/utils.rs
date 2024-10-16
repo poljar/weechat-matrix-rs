@@ -1,10 +1,10 @@
 use matrix_sdk::ruma::{
     events::{
         room::message::{
-            Relation, RoomMessageEventContent,
+            MessageType, Relation, RoomMessageEventContent,
             RoomMessageEventContentWithoutRelation,
         },
-        AnyMessageLikeEvent, AnySyncMessageLikeEvent,
+        AnyMessageLikeEvent, AnySyncMessageLikeEvent, SyncMessageLikeEvent,
     },
     EventId, UserId,
 };
@@ -30,6 +30,35 @@ pub trait Edit {
     fn get_edit(
         &self,
     ) -> Option<(&EventId, &RoomMessageEventContentWithoutRelation)>;
+}
+
+pub trait VerificationEvent {
+    fn is_verification(&self) -> bool;
+}
+
+impl VerificationEvent for AnySyncMessageLikeEvent {
+    fn is_verification(&self) -> bool {
+        match self {
+            AnySyncMessageLikeEvent::KeyVerificationReady(_)
+            | AnySyncMessageLikeEvent::KeyVerificationStart(_)
+            | AnySyncMessageLikeEvent::KeyVerificationCancel(_)
+            | AnySyncMessageLikeEvent::KeyVerificationAccept(_)
+            | AnySyncMessageLikeEvent::KeyVerificationKey(_)
+            | AnySyncMessageLikeEvent::KeyVerificationMac(_)
+            | AnySyncMessageLikeEvent::KeyVerificationDone(_) => true,
+            AnySyncMessageLikeEvent::RoomMessage(m) => {
+                if let SyncMessageLikeEvent::Original(m) = m {
+                    if let MessageType::VerificationRequest(_) =
+                        m.content.msgtype
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
 }
 
 impl Edit for RoomMessageEventContent {

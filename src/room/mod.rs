@@ -22,12 +22,16 @@
 //! we're sending ourselves before we receive them in a sync response, or if we
 //! decrypt a previously undecryptable event.
 
+mod buffer;
 mod members;
+mod verification;
 
+use buffer::RoomBuffer;
 use members::Members;
 pub use members::WeechatRoomMember;
 use tokio::runtime::Handle;
 use tracing::{debug, trace};
+use verification::Verification;
 
 use std::{
     borrow::Cow,
@@ -71,7 +75,7 @@ use matrix_sdk::{
 use weechat::{
     buffer::{
         Buffer, BufferBuilderAsync, BufferHandle, BufferInputCallbackAsync,
-        BufferLine, LineData,
+        BufferLine,
     },
     Weechat,
 };
@@ -80,7 +84,7 @@ use crate::{
     config::{Config, RedactionStyle},
     connection::Connection,
     render::{Render, RenderedEvent},
-    utils::{Edit, ToTag},
+    utils::{Edit, VerificationEvent},
     PLUGIN_NAME,
 };
 
@@ -149,7 +153,7 @@ pub struct MatrixRoom {
     room_id: Rc<RoomId>,
     own_user_id: Rc<UserId>,
     room: Room,
-    buffer: Rc<RefCell<Option<BufferHandle>>>,
+    buffer: RoomBuffer,
 
     config: Rc<RefCell<Config>>,
     connection: Rc<RefCell<Option<Connection>>>,
@@ -160,6 +164,7 @@ pub struct MatrixRoom {
     outgoing_messages: MessageQueue,
 
     members: Members,
+    verification: Verification,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -207,7 +212,9 @@ impl RoomHandle {
         room_id: &RoomId,
         own_user_id: &UserId,
     ) -> Self {
-        let members = Members::new(room.clone(), runtime.clone());
+        let buffer = RoomBuffer::new(room.clone(), runtime.clone());
+        let members =
+            Members::new(room.clone(), runtime.clone(), buffer.clone());
 
         let own_nick = runtime
             .block_on(room.get_member_no_sync(own_user_id))
@@ -215,6 +222,13 @@ impl RoomHandle {
             .flatten()
             .map(|m| m.name().to_owned())
             .unwrap_or_else(|| own_user_id.localpart().to_owned());
+
+        let verification = Verification::new(
+            own_user_id.into(),
+            connection.clone(),
+            members.clone(),
+            buffer.clone(),
+        );
 
         let room = MatrixRoom {
             homeserver: Rc::new(homeserver),
@@ -225,8 +239,9 @@ impl RoomHandle {
                 room.last_prev_batch().map(PrevBatch::Backwards),
             )),
             own_user_id: own_user_id.into(),
-            members: members.clone(),
-            buffer: members.buffer,
+            members,
+            buffer,
+            verification,
             outgoing_messages: MessageQueue::new(),
             messages_in_flight: IntMutex::new(),
             room,
@@ -305,7 +320,7 @@ impl RoomHandle {
             buffer.set_localvar("alias", alias.as_str());
         }
 
-        *room.members.buffer.borrow_mut() = Some(buffer_handle.clone());
+        *room.buffer.inner.borrow_mut() = Some(buffer_handle.clone());
 
         Self { inner: room }
     }
@@ -349,8 +364,8 @@ impl RoomHandle {
         *room_buffer.prev_batch.borrow_mut() =
             prev_batch.map(PrevBatch::Forward);
 
-        room_buffer.update_buffer_name();
-        room_buffer.set_topic();
+        room_buffer.buffer.update_buffer_name();
+        room_buffer.buffer.set_topic();
 
         Ok(room_buffer)
     }
@@ -408,28 +423,21 @@ impl MatrixRoom {
     }
 
     pub fn buffer_handle(&self) -> BufferHandle {
-        self.buffer
-            .borrow()
-            .as_ref()
-            .expect("Room struct wasn't initialized properly")
-            .clone()
+        self.buffer.buffer_handle()
     }
 
-    fn print_rendered_event(&self, rendered: RenderedEvent) {
-        let buffer = self.buffer_handle();
+    pub fn accept_verification(&self) {
+        let verification = self.verification.clone();
+        Weechat::spawn(async move { verification.accept().await }).detach();
+    }
 
-        if let Ok(buffer) = buffer.upgrade() {
-            for line in rendered.content.lines {
-                let message = format!("{}{}", &rendered.prefix, &line.message);
-                let tags: Vec<&str> =
-                    line.tags.iter().map(|t| t.as_str()).collect();
-                buffer.print_date_tags(
-                    rendered.message_timestamp,
-                    &tags,
-                    &message,
-                )
-            }
-        }
+    pub fn confirm_verification(&self) {
+        let verification = self.verification.clone();
+        Weechat::spawn(async move { verification.confirm().await }).detach();
+    }
+
+    pub fn cancel_verification(&self) {
+        todo!()
     }
 
     async fn redact_event(&self, event: &SyncRoomRedactionEvent) {
@@ -649,7 +657,7 @@ impl MatrixRoom {
                 let local_echo = c
                     .render_with_prefix_for_echo(&sender, transaction_id, &())
                     .add_self_tags();
-                self.print_rendered_event(local_echo);
+                self.buffer.print_rendered_event(local_echo);
 
                 self.outgoing_messages
                     .add_with_echo(transaction_id.to_owned(), content.clone());
@@ -692,7 +700,7 @@ impl MatrixRoom {
                 .send_message(
                     self.room().clone(),
                     AnyMessageLikeEventContent::RoomMessage(content),
-                    Some(transaction_id.to_owned()),
+                    Some(transaction_id.clone()),
                 )
                 .await
             {
@@ -804,12 +812,12 @@ impl MatrixRoom {
 
                 if let Some(PrevBatch::Forward(t)) = prev_batch.as_ref() {
                     *prev_batch = Some(PrevBatch::Backwards(t.to_owned()));
-                    self.sort_messages();
+                    self.buffer.sort_messages();
                 } else if r.chunk.is_empty() {
                     *prev_batch = None;
                 } else {
                     *prev_batch = r.end.map(PrevBatch::Backwards);
-                    self.sort_messages();
+                    self.buffer.sort_messages();
                 }
             }
         }
@@ -818,76 +826,6 @@ impl MatrixRoom {
 
         Weechat::bar_item_update("buffer_modes");
         Weechat::bar_item_update("matrix_modes");
-    }
-
-    fn sort_messages(&self) {
-        struct LineCopy {
-            date: i64,
-            date_printed: i64,
-            tags: Vec<String>,
-            prefix: String,
-            message: String,
-        }
-
-        impl<'a> From<BufferLine<'a>> for LineCopy {
-            fn from(line: BufferLine) -> Self {
-                Self {
-                    date: line.date(),
-                    date_printed: line.date_printed(),
-                    message: line.message().to_string(),
-                    prefix: line.prefix().to_string(),
-                    tags: line.tags().iter().map(|t| t.to_string()).collect(),
-                }
-            }
-        }
-
-        // TODO: update the highlight once Weechat starts supporting it.
-        if let Ok(buffer) = self.buffer_handle().upgrade() {
-            let mut lines: Vec<LineCopy> =
-                buffer.lines().map(|l| l.into()).collect();
-            lines.sort_by_key(|l| l.date);
-
-            for (line, new) in buffer.lines().zip(lines.drain(..)) {
-                let tags =
-                    new.tags.iter().map(|t| t.as_str()).collect::<Vec<&str>>();
-                let data = LineData {
-                    prefix: Some(&new.prefix),
-                    message: Some(&new.message),
-                    date: Some(new.date),
-                    date_printed: Some(new.date_printed),
-                    tags: Some(&tags),
-                };
-                line.update(data)
-            }
-        }
-    }
-
-    /// Replace the local echo of an event with a fully rendered one.
-    fn replace_local_echo(
-        &self,
-        transaction_id: &TransactionId,
-        buffer: &Buffer,
-        rendered: RenderedEvent,
-    ) {
-        let uuid_tag =
-            Cow::from(format!("matrix_echo_{}", transaction_id.to_string()));
-        let line_contains_uuid = |l: &BufferLine| l.tags().contains(&uuid_tag);
-
-        let mut lines = buffer.lines();
-        let mut current_line = lines.rfind(line_contains_uuid);
-
-        // We go in reverse order here since we also use rfind(). We got from
-        // the bottom of the buffer to the top since we're expecting these
-        // lines to be freshly printed and thus at the bottom.
-        let mut line_num = rendered.content.lines.len();
-
-        while let Some(line) = &current_line {
-            line_num -= 1;
-            let rendered_line = &rendered.content.lines[line_num];
-
-            line.set_message(&rendered_line.message);
-            current_line = lines.next_back().filter(line_contains_uuid);
-        }
     }
 
     async fn handle_outgoing_message(
@@ -915,100 +853,11 @@ impl MatrixRoom {
                 .await
                 .expect("Sent out an event that we don't know how to render");
 
-            if let Ok(buffer) = self.buffer_handle().upgrade() {
-                if echo {
-                    self.replace_local_echo(&transaction_id, &buffer, rendered);
-                } else {
-                    self.print_rendered_event(rendered);
-                }
+            if echo {
+                self.buffer.replace_local_echo(transaction_id, rendered);
+            } else {
+                self.buffer.print_rendered_event(rendered);
             }
-        }
-    }
-
-    fn set_topic(&self) {
-        if let Ok(buffer) = self.buffer_handle().upgrade() {
-            buffer.set_title(&self.room().topic().unwrap_or_default());
-        }
-    }
-
-    fn set_alias(&self) {
-        if let Some(alias) = self.alias() {
-            if let Ok(b) = self.buffer_handle().upgrade() {
-                b.set_localvar("alias", alias.as_str());
-            }
-        }
-    }
-
-    fn update_buffer_name(&self) {
-        self.members.update_buffer_name();
-    }
-
-    fn replace_edit(
-        &self,
-        event_id: &EventId,
-        sender: &UserId,
-        event: RenderedEvent,
-    ) {
-        if let Ok(buffer) = self.buffer_handle().upgrade() {
-            let sender_tag = Cow::from(sender.to_tag());
-            let event_id_tag = Cow::from(event_id.to_tag());
-
-            let lines: Vec<BufferLine> = buffer
-                .lines()
-                .filter(|l| l.tags().contains(&event_id_tag))
-                .collect();
-
-            if lines
-                .get(0)
-                .map(|l| l.tags().contains(&sender_tag))
-                .unwrap_or(false)
-            {
-                self.replace_event_helper(&buffer, lines, event);
-            }
-        }
-    }
-
-    fn replace_event_helper(
-        &self,
-        buffer: &Buffer,
-        lines: Vec<BufferLine<'_>>,
-        event: RenderedEvent,
-    ) {
-        use std::cmp::Ordering;
-        let date = lines.get(0).map(|l| l.date()).unwrap_or_default();
-
-        for (line, new) in lines.iter().zip(event.content.lines.iter()) {
-            let tags: Vec<&str> = new.tags.iter().map(|t| t.as_str()).collect();
-            let data = LineData {
-                // Our prefixes always come with a \t character, but when we
-                // replace stuff we're able to replace the prefix and the
-                // message separately, so trim the whitespace in the prefix.
-                prefix: Some(event.prefix.trim_end()),
-                message: Some(&new.message),
-                tags: Some(&tags),
-                ..Default::default()
-            };
-
-            line.update(data);
-        }
-
-        match lines.len().cmp(&event.content.lines.len()) {
-            Ordering::Greater => {
-                for line in &lines[event.content.lines.len()..] {
-                    line.set_message("");
-                }
-            }
-            Ordering::Less => {
-                for line in &event.content.lines[lines.len()..] {
-                    let message = format!("{}{}", &event.prefix, &line.message);
-                    let tags: Vec<&str> =
-                        line.tags.iter().map(|t| t.as_str()).collect();
-                    buffer.print_date_tags(date, &tags, &message)
-                }
-
-                self.sort_messages()
-            }
-            Ordering::Equal => (),
         }
     }
 
@@ -1041,7 +890,7 @@ impl MatrixRoom {
                     }
                 })
             {
-                self.replace_edit(event_id, event.sender(), rendered);
+                self.buffer.replace_edit(event_id, event.sender(), rendered);
             }
         }
     }
@@ -1057,10 +906,12 @@ impl MatrixRoom {
 
         if let AnySyncMessageLikeEvent::RoomRedaction(r) = event {
             self.redact_event(r).await;
+        } else if event.is_verification() {
+            self.verification.handle_room_verification(event).await;
         } else if event.is_edit() {
             self.handle_edits(event).await;
         } else if let Some(rendered) = self.render_sync_message(event).await {
-            self.print_rendered_event(rendered);
+            self.buffer.print_rendered_event(rendered);
         }
     }
 
@@ -1150,7 +1001,7 @@ impl MatrixRoom {
                         )
                         .await
                     {
-                        self.print_rendered_event(rendered);
+                        self.buffer.print_rendered_event(rendered);
                     }
                 }
             }
@@ -1169,9 +1020,9 @@ impl MatrixRoom {
         _state_event: bool,
     ) {
         match event {
-            AnySyncStateEvent::RoomName(_) => self.update_buffer_name(),
-            AnySyncStateEvent::RoomTopic(_) => self.set_topic(),
-            AnySyncStateEvent::RoomCanonicalAlias(_) => self.set_alias(),
+            AnySyncStateEvent::RoomName(_) => self.buffer.update_buffer_name(),
+            AnySyncStateEvent::RoomTopic(_) => self.buffer.set_topic(),
+            AnySyncStateEvent::RoomCanonicalAlias(_) => self.buffer.set_alias(),
             _ => (),
         }
     }
