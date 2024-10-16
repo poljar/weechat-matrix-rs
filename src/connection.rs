@@ -33,7 +33,8 @@ use matrix_sdk::{
         },
         events::{
             room::member::RoomMemberEventContent, AnyMessageLikeEventContent,
-            AnySyncStateEvent, AnySyncTimelineEvent, SyncStateEvent,
+            AnySyncStateEvent, AnySyncTimelineEvent, AnyToDeviceEvent,
+            SyncStateEvent,
         },
         OwnedDeviceId, OwnedRoomId, OwnedTransactionId,
     },
@@ -69,6 +70,7 @@ pub enum ClientMessage {
     LoginMessage(LoginResponse),
     SyncState(OwnedRoomId, AnySyncStateEvent),
     SyncEvent(OwnedRoomId, AnySyncTimelineEvent),
+    ToDeviceEvent(AnyToDeviceEvent),
     MemberEvent(
         OwnedRoomId,
         SyncStateEvent<RoomMemberEventContent>,
@@ -291,6 +293,9 @@ impl Connection {
                     ClientMessage::RestoredRoom(room) => {
                         server.restore_room(room).await
                     }
+                    ClientMessage::ToDeviceEvent(e) => {
+                        server.receive_to_device_event(e).await
+                    }
                     ClientMessage::MemberEvent(
                         room_id,
                         e,
@@ -432,6 +437,16 @@ impl Connection {
         loop {
             let ret = client
             .sync_with_callback(sync_settings.clone(), |response| async move {
+                for event in response.to_device.iter().filter_map(|e| e.to_raw().deserialize().ok()){
+                    if sync_channel
+                        .send(Ok(ClientMessage::ToDeviceEvent(event)))
+                        .await
+                        .is_err()
+                    {
+                        return LoopCtrl::Break;
+                    }
+                }
+
                 for (room_id, room) in response.rooms.joined {
                     if let State::Before(state) = room.state {
                         for event in

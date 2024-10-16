@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use dashmap::DashMap;
 use tokio::runtime::Handle;
@@ -17,15 +17,14 @@ use matrix_sdk::{
         },
         uint, Int, OwnedUserId, UserId,
     },
-    StoreError,
 };
 
 use weechat::{
-    buffer::{Buffer, BufferHandle, NickSettings},
+    buffer::{Buffer, NickSettings},
     Prefix, Weechat,
 };
 
-use crate::render::render_membership;
+use crate::{render::render_membership, room::buffer::RoomBuffer};
 
 #[derive(Clone)]
 pub struct Members {
@@ -33,7 +32,7 @@ pub struct Members {
     pub(super) runtime: Handle,
     ambiguity_map: Rc<DashMap<OwnedUserId, bool>>,
     nicks: Rc<DashMap<OwnedUserId, String>>,
-    pub(super) buffer: Rc<RefCell<Option<BufferHandle>>>,
+    buffer: RoomBuffer,
 }
 
 #[derive(Clone, Debug)]
@@ -43,22 +42,21 @@ pub struct WeechatRoomMember {
     ambiguous_nick: Rc<bool>,
 }
 
+impl PartialEq for WeechatRoomMember {
+    fn eq(&self, other: &Self) -> bool {
+        self.user_id() == other.user_id()
+    }
+}
+
 impl Members {
-    pub fn new(room: Room, runtime: Handle) -> Self {
+    pub fn new(room: Room, runtime: Handle, buffer: RoomBuffer) -> Self {
         Self {
             room,
             runtime,
             nicks: DashMap::new().into(),
             ambiguity_map: DashMap::new().into(),
-            buffer: RefCell::new(None).into(),
+            buffer,
         }
-    }
-
-    fn buffer(&self) -> BufferHandle {
-        self.buffer
-            .borrow()
-            .clone()
-            .expect("Members struct wasn't initialized properly")
     }
 
     fn add_nick(&self, buffer: &Buffer, member: &WeechatRoomMember) {
@@ -88,14 +86,6 @@ impl Members {
     }
 
     pub async fn restore_member(&self, user_id: OwnedUserId) {
-        let buffer = self.buffer();
-
-        let buffer = if let Ok(b) = buffer.upgrade() {
-            b
-        } else {
-            return;
-        };
-
         let room = self.room.clone();
         let user = user_id.to_owned();
 
@@ -114,7 +104,7 @@ impl Members {
                 panic!(
                     "Couldn't find member {} in {}",
                     user_id,
-                    buffer.short_name()
+                    self.buffer.short_name()
                 )
             }
             Err(e) => {
@@ -128,7 +118,7 @@ impl Members {
     }
 
     pub async fn update_member(&self, user_id: &UserId) {
-        let buffer = self.buffer();
+        let buffer = self.buffer.buffer_handle();
 
         let buffer = if let Ok(b) = buffer.upgrade() {
             b
@@ -198,7 +188,7 @@ impl Members {
             }
         }
 
-        let buffer = self.buffer();
+        let buffer = self.buffer.buffer_handle();
 
         let buffer = if let Ok(b) = buffer.upgrade() {
             b
@@ -254,51 +244,13 @@ impl Members {
         &self.room
     }
 
-    pub fn calculate_buffer_name(&self) -> Result<String, StoreError> {
-        let room = self.room();
-        let room_name = self.runtime.block_on(room.display_name())?.to_string();
-
-        let room_name = if room_name == "#" {
-            "##".to_owned()
-        } else if room_name.starts_with('#')
-            || self.runtime.block_on(room.is_direct()).unwrap_or(false)
-        {
-            room_name
-        } else {
-            format!("#{}", room_name)
-        };
-
-        Ok(room_name.to_string())
-    }
-
-    pub fn update_buffer_name(&self) {
-        let buffer = self.buffer();
-
-        let buffer = if let Ok(b) = buffer.upgrade() {
-            b
-        } else {
-            return;
-        };
-
-        match self.calculate_buffer_name() {
-            Ok(name) => buffer.set_short_name(&name),
-            Err(e) => {
-                Weechat::print(&format!(
-                    "{}: Error fetching the room name from the store: {}",
-                    Weechat::prefix(Prefix::Error),
-                    e,
-                ));
-            }
-        }
-    }
-
     pub async fn handle_membership_event(
         &self,
         event: &SyncStateEvent<RoomMemberEventContent>,
         state_event: bool,
         ambiguity_change: Option<&AmbiguityChange>,
     ) {
-        let buffer = self.buffer();
+        let buffer = self.buffer.buffer_handle();
         let buffer = if let Ok(b) = buffer.upgrade() {
             b
         } else {
@@ -352,7 +304,7 @@ impl Members {
 
         // Names of rooms without display names can get affected by the
         // member list so we need to update them.
-        self.update_buffer_name();
+        self.buffer.update_buffer_name();
 
         if !state_event {
             let sender = self.get(&sender_id).await;
