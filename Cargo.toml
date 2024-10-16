@@ -25,6 +25,8 @@ tracing = "0.1.36"
 tracing-subscriber = { version = "0.3.15", features = ["env-filter"] }
 uuid = { version = "1.1.2", features = ["v4"] }
 unicode-segmentation = "1.10.0"
+qrcode = { version = "0.13.0", default-features = false }
+image = { version = "0.25.0", default-features = false, features = ["jpeg"] }
 
 [dependencies.weechat]
 git = "https://github.com/poljar/rust-weechat"
@@ -32,7 +34,7 @@ features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
 version = "0.7.0"
-features = ["markdown", "socks"]
+features = ["markdown", "socks", "qrcode"]
 
 [profile.dev.package]
 sha2 = { opt-level = 2 }
