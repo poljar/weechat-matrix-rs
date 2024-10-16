@@ -8,6 +8,7 @@ mod render;
 mod room;
 mod server;
 mod utils;
+mod verification_buffer;
 
 use std::{
     cell::{Ref, RefCell},
@@ -27,6 +28,7 @@ use weechat::{
 use crate::{
     bar_items::BarItems, commands::Commands, completions::Completions,
     config::ConfigHandle, room::RoomHandle, server::MatrixServer,
+    verification_buffer::VerificationBuffer,
 };
 
 const PLUGIN_NAME: &str = "matrix";
@@ -41,6 +43,7 @@ pub struct Servers {
 pub enum BufferOwner {
     Server(MatrixServer),
     Room(MatrixServer, RoomHandle),
+    Verification(MatrixServer, VerificationBuffer),
     None,
 }
 
@@ -49,6 +52,7 @@ impl BufferOwner {
         match self {
             BufferOwner::Server(s) => Some(s),
             BufferOwner::Room(s, _) => Some(s),
+            BufferOwner::Verification(s, _) => Some(s),
             BufferOwner::None => None,
         }
     }
@@ -120,6 +124,17 @@ impl Servers {
                 if let Ok(b) = buffer_handle.upgrade() {
                     if buffer == &b {
                         return BufferOwner::Room(server.clone(), room);
+                    }
+                }
+            }
+
+            for verification in server.verifications() {
+                if let Ok(b) = verification.buffer().upgrade() {
+                    if buffer == &b {
+                        return BufferOwner::Verification(
+                            server.clone(),
+                            verification,
+                        );
                     }
                 }
             }

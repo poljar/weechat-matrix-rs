@@ -1,23 +1,45 @@
 use url::Url;
 
-use matrix_sdk::ruma::{
-    events::{
-        room::{
-            encrypted::RoomEncryptedEventContent,
-            member::{MembershipChange, RoomMemberEventContent},
-            message::{
-                AudioMessageEventContent, EmoteMessageEventContent,
-                FileMessageEventContent, ImageMessageEventContent,
-                LocationMessageEventContent, NoticeMessageEventContent,
-                RedactedRoomMessageEventContent,
-                ServerNoticeMessageEventContent, TextMessageEventContent,
-                VideoMessageEventContent,
-            },
-            EncryptedFile, MediaSource,
-        },
-        OriginalSyncStateEvent, RedactedSyncMessageLikeEvent,
+use matrix_sdk::{
+    encryption::verification::{
+        SasVerification, Verification, VerificationRequest,
     },
-    uint, EventId, MilliSecondsSinceUnixEpoch, MxcUri, TransactionId, UserId,
+    ruma::{
+        events::{
+            key::verification::{
+                key::{
+                    KeyVerificationKeyEventContent,
+                    ToDeviceKeyVerificationKeyEventContent,
+                },
+                ready::{
+                    KeyVerificationReadyEventContent,
+                    ToDeviceKeyVerificationReadyEventContent,
+                },
+                request::ToDeviceKeyVerificationRequestEventContent,
+                start::{
+                    KeyVerificationStartEventContent,
+                    ToDeviceKeyVerificationStartEventContent,
+                },
+            },
+            room::{
+                encrypted::RoomEncryptedEventContent,
+                member::{MembershipChange, RoomMemberEventContent},
+                message::{
+                    AudioMessageEventContent, EmoteMessageEventContent,
+                    FileMessageEventContent, ImageMessageEventContent,
+                    KeyVerificationRequestEventContent,
+                    LocationMessageEventContent, NoticeMessageEventContent,
+                    RedactedRoomMessageEventContent,
+                    ServerNoticeMessageEventContent, TextMessageEventContent,
+                    VideoMessageEventContent,
+                },
+                EncryptedFile, MediaSource,
+            },
+            OriginalSyncStateEvent, RedactedSyncMessageLikeEvent,
+        },
+        uint, EventId, MilliSecondsSinceUnixEpoch, MxcUri, OwnedUserId,
+        TransactionId, UserId,
+    },
 };
 
 use weechat::{Prefix, Weechat};
@@ -472,6 +494,238 @@ impl Render for RedactedSyncMessageLikeEvent<RedactedRoomMessageEventContent> {
         RenderedContent { lines: vec![line] }
     }
 }
+
+pub enum StartVerificationContext {
+    Room(OwnedUserId, Verification),
+    ToDevice(OwnedUserId, Verification),
+}
+
+impl StartVerificationContext {
+    fn sender(&self) -> &UserId {
+        match self {
+            StartVerificationContext::Room(s, _) => &s,
+            StartVerificationContext::ToDevice(s, _) => &s,
+        }
+    }
+
+    fn verification(&self) -> &Verification {
+        match self {
+            StartVerificationContext::Room(_, v) => &v,
+            StartVerificationContext::ToDevice(_, v) => &v,
+        }
+    }
+
+    fn is_self_verification(&self) -> bool {
+        self.verification().is_self_verification()
+    }
+}
+
+macro_rules! render_start_content {
+    ($type: ident) => {
+        impl Render for $type {
+            const TAGS: &'static [&'static str] = &[];
+
+            type RenderContext = StartVerificationContext;
+
+            fn prefix(&self, _: &WeechatRoomMember) -> String {
+                Weechat::prefix(Prefix::Network)
+            }
+
+            fn render(&self, context: &Self::RenderContext) -> RenderedContent {
+                let message = match context.verification() {
+                    Verification::SasV1(sas) => {
+                        if context.sender() == sas.own_user_id() {
+                            if context.is_self_verification() {
+                                if sas.started_from_request() {
+                                    // We auto accept emoji verifications that start
+                                    // from a verification request, so don't print
+                                    // anything.
+                                    return RenderedContent {
+                                        lines: vec![],
+                                    }
+                                } else {
+                                    format!(
+                                        "You have started an interactive emoji \
+                                            verification, accept on your other device.",
+                                    )
+                                }
+                            } else {
+                                format!(
+                                    "You have started an interactive emoji \
+                                        verification, waiting for {} to accept",
+                                    sas.other_device().user_id()
+                                )
+                            }
+                        } else {
+                            if sas.started_from_request() {
+                                format!(
+                                    "{} has started an interactive emoji verifiaction \
+                                        with you, accept with TODO",
+                                    sas.other_device().user_id()
+                                )
+                            } else {
+                                // We auto accept emoji verifications that start
+                                // from a verification request, so don't print
+                                // anything.
+                                return RenderedContent {
+                                    lines: vec![],
+                                }
+                            }
+                        }
+                    }
+                    Verification::QrV1(_) => {
+                        // We don't support QR code scanning, so if there's an QR
+                        // code verification struct it's because someone else
+                        // scanned our QR code.
+                        format!(
+                            "{} has scanned our QR code, confirm that he \
+                                has done so TODO",
+                            context.sender(),
+                        )
+                    }
+                    _ => unreachable!(),
+                };
+
+                RenderedContent {
+                    lines: vec![RenderedLine {
+                        message,
+                        tags: self.tags(),
+                    }],
+                }
+            }
+        }
+    };
+}
+
+render_start_content!(KeyVerificationStartEventContent);
+render_start_content!(ToDeviceKeyVerificationStartEventContent);
+
+pub enum VerificationContext {
+    Room(WeechatRoomMember, WeechatRoomMember),
+    ToDevice(VerificationRequest),
+}
+
+macro_rules! render_request_content {
+    ($type: ident) => {
+        impl Render for $type {
+            const TAGS: &'static [&'static str] = &[];
+
+            type RenderContext = VerificationContext;
+
+            fn prefix(&self, _: &WeechatRoomMember) -> String {
+                Weechat::prefix(Prefix::Network)
+            }
+
+            fn render(&self, context: &Self::RenderContext) -> RenderedContent {
+                let message = match context {
+                    VerificationContext::Room(own_member, sender) => {
+                        if own_member == sender {
+                            "You sent a verification request".to_string()
+                        } else {
+                            format!(
+                                "{} has sent a verification request",
+                                sender.nick_colored()
+                            )
+                        }
+                    }
+                    VerificationContext::ToDevice(_) => {
+                        format!("You have requested this device to be verified")
+                    }
+                };
+
+                RenderedContent {
+                    lines: vec![RenderedLine {
+                        message,
+                        tags: self.tags(),
+                    }],
+                }
+            }
+        }
+    };
+}
+
+render_request_content!(KeyVerificationRequestEventContent);
+render_request_content!(ToDeviceKeyVerificationRequestEventContent);
+
+macro_rules! render_ready_content {
+    ($type: ident) => {
+        impl Render for $type {
+            const TAGS: &'static [&'static str] = &[];
+
+            type RenderContext = (WeechatRoomMember, WeechatRoomMember);
+
+            fn prefix(&self, _: &WeechatRoomMember) -> String {
+                Weechat::prefix(Prefix::Network)
+            }
+
+            fn render(&self, context: &Self::RenderContext) -> RenderedContent {
+                let (own_mebmer, sender) = context;
+
+                let message = if own_mebmer == sender {
+                    "You answered the verification request".to_string()
+                } else {
+                    format!(
+                        "{} has answered the verification request",
+                        sender.nick_colored()
+                    )
+                };
+
+                RenderedContent {
+                    lines: vec![RenderedLine {
+                        message,
+                        tags: self.tags(),
+                    }],
+                }
+            }
+        }
+    };
+}
+
+render_ready_content!(KeyVerificationReadyEventContent);
+render_ready_content!(ToDeviceKeyVerificationReadyEventContent);
+
+macro_rules! render_key_content {
+    ($type: ident) => {
+        impl Render for $type {
+            const TAGS: &'static [&'static str] = &[];
+            type RenderContext = SasVerification;
+
+            fn prefix(&self, _: &WeechatRoomMember) -> String {
+                Weechat::prefix(Prefix::Network)
+            }
+
+            fn render(&self, sas: &Self::RenderContext) -> RenderedContent {
+                let (message, short_auth_string) = if sas.supports_emoji() {
+                    (
+                        "Do the emojis match?".to_string(),
+                        format!("{:?}", sas.emoji()),
+                    )
+                } else {
+                    (
+                        "Do the decimals match".to_string(),
+                        format!("{:?}", sas.decimals()),
+                    )
+                };
+
+                RenderedContent {
+                    lines: vec![
+                        RenderedLine {
+                            message,
+                            tags: self.tags(),
+                        },
+                        RenderedLine {
+                            message: short_auth_string,
+                            tags: self.tags(),
+                        },
+                    ],
+                }
+            }
+        }
+    };
+}
+
+render_key_content!(KeyVerificationKeyEventContent);
+render_key_content!(ToDeviceKeyVerificationKeyEventContent);
 
 /// Trait for message event types that contain an optional formatted body.
 /// `resolve_body` will return the formatted body if present, else fallback to
