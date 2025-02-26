@@ -1,4 +1,5 @@
-WEECHAT_HOME ?= $(HOME)/.weechat
+XDG_CONFIG_HOME ?= $(HOME)/.config
+WEECHAT_HOME ?= $(XDG_CONFIG_HOME)/weechat
 PREFIX ?= $(WEECHAT_HOME)
 
 SOURCES := $(wildcard src/*.rs src/commands/*.rs Cargo.lock)
