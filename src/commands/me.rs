@@ -1,9 +1,6 @@
 use std::borrow::Cow;
 
-use matrix_sdk::ruma::events::{
-    message::MessageEventContent,
-    room::message::{NoticeMessageEventContent, RoomMessageEventContent},
-};
+use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
 use weechat::{
     buffer::Buffer,
     hooks::{CommandRun, CommandRunCallback},
