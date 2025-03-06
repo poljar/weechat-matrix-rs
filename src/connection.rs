@@ -160,7 +160,7 @@ impl Connection {
         self.spawn(async move {
             let mut msg = room.send(content);
             if let Some(txn_id) = transaction_id.as_deref() {
-                msg = msg.with_transaction_id(txn_id);
+                msg = msg.with_transaction_id(txn_id.to_owned());
             }
 
             msg.await
@@ -450,11 +450,9 @@ impl Connection {
                         room.state.iter().filter_map(|e| e.deserialize().ok())
                     {
                         if let AnySyncStateEvent::RoomMember(m) = event {
-                            let change = response
+                            let change = room
                                 .ambiguity_changes
-                                .changes
-                                .get(&room_id)
-                                .and_then(|c| c.get(m.event_id()))
+                                .get(m.event_id())
                                 .cloned();
 
                             if sync_channel
@@ -485,17 +483,15 @@ impl Connection {
                         .timeline
                         .events
                         .iter()
-                        .filter_map(|e| e.event.deserialize().ok())
+                        .filter_map(|e| e.raw().deserialize().ok())
                     {
                         if let AnySyncTimelineEvent::State(
                             AnySyncStateEvent::RoomMember(m),
                         ) = event
                         {
-                            let change = response
+                            let change = room
                                 .ambiguity_changes
-                                .changes
-                                .get(&room_id)
-                                .and_then(|c| c.get(m.event_id()))
+                                .get(m.event_id())
                                 .cloned();
 
                             if sync_channel
