@@ -377,7 +377,8 @@ impl MatrixRoom {
     pub fn is_encrypted(&self) -> bool {
         self.members
             .runtime
-            .block_on(self.room.is_encrypted())
+            .block_on(self.room.latest_encryption_state())
+            .map(|s| s.is_encrypted())
             .unwrap_or_default()
     }
 
@@ -545,7 +546,7 @@ impl MatrixRoom {
         sender: &WeechatRoomMember,
         content: &AnyMessageLikeEventContent,
     ) -> Option<RenderedEvent> {
-        use AnyMessageLikeEventContent::*;
+        use AnyMessageLikeEventContent::{RoomEncrypted, RoomMessage};
         use MessageType::*;
 
         let rendered = match content {
@@ -792,12 +793,16 @@ impl MatrixRoom {
 
         if let Some(connection) = connection {
             let room = self.room().clone();
+            let room_id = room.room_id().to_owned();
 
             if let Ok(r) = connection.room_messages(room, prev_batch).await {
                 for event in
-                    r.chunk.iter().filter_map(|e| e.event.deserialize().ok())
+                    r.chunk.iter().filter_map(|e| e.raw().deserialize().ok())
                 {
-                    self.handle_room_event(&event).await;
+                    self.handle_room_event(
+                        &event.into_full_event(room_id.clone()),
+                    )
+                    .await;
                 }
 
                 let mut prev_batch = self.prev_batch.borrow_mut();
