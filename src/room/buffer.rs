@@ -89,7 +89,7 @@ impl RoomBuffer {
                 .collect();
 
             if lines
-                .get(0)
+                .first()
                 .map(|l| l.tags().contains(&sender_tag))
                 .unwrap_or(false)
             {
@@ -105,7 +105,7 @@ impl RoomBuffer {
         event: RenderedEvent,
     ) {
         use std::cmp::Ordering;
-        let date = lines.get(0).map(|l| l.date()).unwrap_or_default();
+        let date = lines.first().map(|l| l.date()).unwrap_or_default();
 
         for (line, new) in lines.iter().zip(event.content.lines.iter()) {
             let data = LineData {
@@ -149,7 +149,7 @@ impl RoomBuffer {
             message: String,
         }
 
-        impl<'a> From<BufferLine<'a>> for LineCopy {
+        impl From<BufferLine<'_>> for LineCopy {
             fn from(line: BufferLine) -> Self {
                 Self {
                     date: line.date(),
@@ -230,9 +230,8 @@ impl RoomBuffer {
             Ok(name) => buffer.set_short_name(&name),
             Err(e) => {
                 Weechat::print(&format!(
-                    "{}: Error fetching the room name from the store: {}",
+                    "{}: Error fetching the room name from the store: {e}",
                     Weechat::prefix(Prefix::Error),
-                    e.to_string(),
                 ));
             }
         }
