@@ -98,9 +98,9 @@ use crate::{
 
 #[derive(Debug)]
 pub enum ServerError {
-    StartError(String),
-    ClientError(matrix_sdk::ClientBuildError),
-    IoError(String),
+    Start(String),
+    Client(matrix_sdk::ClientBuildError),
+    Io(String),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -737,7 +737,9 @@ impl InnerServer {
                                     .cloned();
 
                                 if let Some(mut buffer) = buffer {
-                                    buffer.update(sas).await;
+                                    if let Err(e) = buffer.update(sas).await {
+                                        error!("{e}");
+                                    };
                                     buffer.handle_event(&event).await;
                                 } else {
                                     let buffer = VerificationBuffer::new(
@@ -863,14 +865,11 @@ impl InnerServer {
         let settings = self.settings.borrow();
 
         let homeserver = settings.homeserver.as_ref().ok_or_else(|| {
-            ServerError::StartError("Homeserver not configured".to_owned())
+            ServerError::Start("Homeserver not configured".to_owned())
         })?;
 
         self.create_server_dir().map_err(|e| {
-            ServerError::IoError(format!(
-                "Error creating the session dir: {}",
-                e
-            ))
+            ServerError::Io(format!("Error creating the session dir: {}", e))
         })?;
 
         let mut client_builder = Client::builder()
@@ -889,7 +888,7 @@ impl InnerServer {
             .servers
             .runtime()
             .block_on(client_builder.build())
-            .map_err(ServerError::ClientError)?;
+            .map_err(ServerError::Client)?;
 
         *self.current_settings.borrow_mut() = settings.clone();
         *self.client.borrow_mut() = Some(client.clone());

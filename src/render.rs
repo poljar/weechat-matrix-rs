@@ -183,7 +183,8 @@ pub trait Render {
         context: &Self::RenderContext,
     ) -> RenderedContent {
         let mut content = self.render(context);
-        let uuid_tag = format!("matrix_echo_{}", uuid);
+
+        let uuid_tag = format!("matrix_echo_{uuid}");
 
         for line in &mut content.lines {
             let message = Weechat::remove_color(&line.message);
@@ -503,15 +504,15 @@ pub enum StartVerificationContext {
 impl StartVerificationContext {
     fn sender(&self) -> &UserId {
         match self {
-            StartVerificationContext::Room(s, _) => &s,
-            StartVerificationContext::ToDevice(s, _) => &s,
+            StartVerificationContext::Room(s, _) => s,
+            StartVerificationContext::ToDevice(s, _) => s,
         }
     }
 
     fn verification(&self) -> &Verification {
         match self {
-            StartVerificationContext::Room(_, v) => &v,
-            StartVerificationContext::ToDevice(_, v) => &v,
+            StartVerificationContext::Room(_, v) => v,
+            StartVerificationContext::ToDevice(_, v) => v,
         }
     }
 

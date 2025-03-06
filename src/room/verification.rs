@@ -139,8 +139,7 @@ impl Verification {
                         .encryption()
                         .get_verification(&e.sender, flow_id.as_str())
                         .await
-                        .map(|s| s.sas())
-                        .flatten()
+                        .and_then(|s| s.sas())
                     {
                         let context = StartVerificationContext::Room(
                             e.sender.to_owned(),

@@ -32,9 +32,8 @@ use weechat::{
 
 use crate::{MatrixServer, Servers};
 
-#[derive(EnumVariantNames)]
+#[derive(EnumVariantNames, Default)]
 #[strum(serialize_all = "kebab_case")]
-#[derive(Default)]
 pub enum RedactionStyle {
     #[default]
     StrikeThrough,
@@ -53,9 +52,8 @@ impl From<i32> for RedactionStyle {
     }
 }
 
-#[derive(EnumVariantNames)]
+#[derive(EnumVariantNames, Default)]
 #[strum(serialize_all = "kebab_case")]
-#[derive(Default)]
 pub enum ServerBuffer {
     #[default]
     MergeWithCore,

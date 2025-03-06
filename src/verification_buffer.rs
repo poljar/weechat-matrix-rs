@@ -294,7 +294,7 @@ impl VerificationBuffer {
         let verification = self.inner.verification.borrow().clone();
 
         if let Some(c) = self.inner.connection.borrow().clone() {
-            c.spawn(async move { verification.accept().await }).await?;
+            c.spawn(async move { verification.accept().await }).await?
         } else {
             // TODO print an error
         }
