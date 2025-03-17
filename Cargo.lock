@@ -279,7 +279,7 @@ dependencies = [
  "bitflags 2.9.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.10.1",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -1556,15 +1556,6 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
@@ -2373,7 +2364,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.10.1",
  "proc-macro2",
  "quote",
  "syn 2.0.87",
@@ -3817,7 +3808,7 @@ dependencies = [
 [[package]]
 name = "weechat"
 version = "0.4.0"
-source = "git+https://github.com/poljar/rust-weechat#58a836b0310d992a4f55dbd1863fcbc66ea59772"
+source = "git+https://github.com/poljar/rust-weechat#cd338bfeb15639e223e7c09a7682c37309d54bd4"
 dependencies = [
  "async-task",
  "async-trait",
@@ -3834,7 +3825,7 @@ dependencies = [
 [[package]]
 name = "weechat-macro"
 version = "0.4.0"
-source = "git+https://github.com/poljar/rust-weechat#58a836b0310d992a4f55dbd1863fcbc66ea59772"
+source = "git+https://github.com/poljar/rust-weechat#cd338bfeb15639e223e7c09a7682c37309d54bd4"
 dependencies = [
  "libc",
  "proc-macro2",
@@ -3866,7 +3857,7 @@ dependencies = [
 [[package]]
 name = "weechat-sys"
 version = "0.4.0"
-source = "git+https://github.com/poljar/rust-weechat#58a836b0310d992a4f55dbd1863fcbc66ea59772"
+source = "git+https://github.com/poljar/rust-weechat#cd338bfeb15639e223e7c09a7682c37309d54bd4"
 dependencies = [
  "bindgen",
  "libc",
