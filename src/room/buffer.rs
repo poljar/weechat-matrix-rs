@@ -142,8 +142,8 @@ impl RoomBuffer {
 
     pub fn sort_messages(&self) {
         struct LineCopy {
-            date: i64,
-            date_printed: i64,
+            date: isize,
+            date_printed: isize,
             tags: Vec<String>,
             prefix: String,
             message: String,
@@ -173,8 +173,8 @@ impl RoomBuffer {
                 let data = LineData {
                     prefix: Some(&new.prefix),
                     message: Some(&new.message),
-                    date: Some(new.date),
-                    date_printed: Some(new.date_printed),
+                    date: Some(new.date as i64),
+                    date_printed: Some(new.date_printed as i64),
                     tags: Some(&tags),
                 };
                 line.update(data)
@@ -263,7 +263,7 @@ impl RoomBuffer {
                 let tags: Vec<&str> =
                     line.tags.iter().map(|t| t.as_str()).collect();
                 buffer.print_date_tags(
-                    rendered.message_timestamp,
+                    rendered.message_timestamp as isize,
                     &tags,
                     &message,
                 )
