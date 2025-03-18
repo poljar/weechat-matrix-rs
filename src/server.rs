@@ -74,7 +74,7 @@ use matrix_sdk::{
         api::client::session::login::v3::Response as LoginResponse,
         events::{
             room::member::RoomMemberEventContent, AnySyncStateEvent,
-            AnySyncTimelineEvent, SyncStateEvent,
+            AnySyncTimelineEvent, AnyToDeviceEvent, SyncStateEvent,
         },
         DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
         OwnedDeviceId, OwnedRoomId, OwnedUserId, RoomId, UserId,
@@ -92,14 +92,15 @@ use crate::{
     config::ServerBuffer,
     connection::{Connection, InteractiveAuthInfo},
     room::RoomHandle,
+    verification_buffer::VerificationBuffer,
     ConfigHandle, Servers, PLUGIN_NAME,
 };
 
 #[derive(Debug)]
 pub enum ServerError {
-    StartError(String),
-    ClientError(matrix_sdk::ClientBuildError),
-    IoError(String),
+    Start(String),
+    Client(matrix_sdk::ClientBuildError),
+    Io(String),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -173,6 +174,7 @@ pub struct InnerServer {
     login_state: Rc<RefCell<Option<LoginInfo>>>,
     connection: Rc<RefCell<Option<Connection>>>,
     server_buffer: Rc<RefCell<Option<BufferHandle>>>,
+    verification_buffers: Rc<RefCell<HashMap<String, VerificationBuffer>>>,
 }
 
 impl MatrixServer {
@@ -195,6 +197,7 @@ impl MatrixServer {
             login_state: Rc::new(RefCell::new(None)),
             connection: Rc::new(RefCell::new(None)),
             server_buffer: Rc::new(RefCell::new(None)),
+            verification_buffers: Rc::new(RefCell::new(HashMap::new())),
         };
 
         let server = server.into();
@@ -451,6 +454,14 @@ impl InnerServer {
         self.rooms.borrow().values().cloned().collect()
     }
 
+    pub fn verifications(&self) -> Vec<VerificationBuffer> {
+        self.verification_buffers
+            .borrow()
+            .values()
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn get_or_create_room(&self, room_id: &RoomId) -> RoomHandle {
         if !self.rooms.borrow().contains_key(room_id) {
             let homeserver = self
@@ -670,6 +681,117 @@ impl InnerServer {
         self.connection.borrow().is_some()
     }
 
+    pub async fn receive_to_device_event(&self, event: AnyToDeviceEvent) {
+        let handle_event = |event, transaction_id: String| async move {
+            if let Some(b) =
+                self.verification_buffers.borrow().get(&transaction_id)
+            {
+                b.handle_event(event).await;
+            }
+        };
+
+        match &event {
+            AnyToDeviceEvent::RoomKey(_) => {}
+            AnyToDeviceEvent::RoomKeyRequest(_) => {}
+            AnyToDeviceEvent::KeyVerificationRequest(e) => {
+                if let Some(client) = self.get_client() {
+                    if let Some(request) = client
+                        .encryption()
+                        .get_verification_request(
+                            &e.sender,
+                            &e.content.transaction_id,
+                        )
+                        .await
+                    {
+                        let buffer = VerificationBuffer::new(
+                            &self.server_name,
+                            &e.sender,
+                            request,
+                            self.connection.clone(),
+                        );
+                        buffer.handle_event(&event).await;
+                        self.verification_buffers.borrow_mut().insert(
+                            e.content.transaction_id.to_string(),
+                            buffer,
+                        );
+                    }
+                }
+            }
+            AnyToDeviceEvent::KeyVerificationStart(e) => {
+                if let Some(client) = self.get_client() {
+                    use matrix_sdk::encryption::verification::Verification;
+                    match client
+                        .encryption()
+                        .get_verification(
+                            &e.sender,
+                            e.content.transaction_id.as_str(),
+                        )
+                        .await
+                    {
+                        Some(Verification::SasV1(sas)) => {
+                            if !sas.is_cancelled() {
+                                let buffer = self
+                                    .verification_buffers
+                                    .borrow()
+                                    .get(e.content.transaction_id.as_str())
+                                    .cloned();
+
+                                if let Some(mut buffer) = buffer {
+                                    if let Err(e) = buffer.update(sas).await {
+                                        error!("{e}");
+                                    };
+                                    buffer.handle_event(&event).await;
+                                } else {
+                                    let buffer = VerificationBuffer::new(
+                                        &self.server_name,
+                                        &e.sender,
+                                        sas,
+                                        self.connection.clone(),
+                                    );
+                                    buffer.handle_event(&event).await;
+                                    self.verification_buffers
+                                        .borrow_mut()
+                                        .insert(
+                                            e.content
+                                                .transaction_id
+                                                .to_string(),
+                                            buffer,
+                                        );
+                                }
+                            }
+                        }
+                        Some(Verification::QrV1(qr)) => {
+                            if let Some(buffer) = self
+                                .verification_buffers
+                                .borrow_mut()
+                                .get_mut(e.content.transaction_id.as_str())
+                            {
+                                buffer.update_qr(qr).await;
+                                buffer.handle_event(&event).await;
+                            }
+                        }
+                        Some(_) => unreachable!(),
+                        None => todo!(),
+                    }
+                }
+            }
+            AnyToDeviceEvent::KeyVerificationCancel(e) => {
+                handle_event(&event, e.content.transaction_id.to_string())
+                    .await;
+            }
+            AnyToDeviceEvent::KeyVerificationAccept(e) => {
+                handle_event(&event, e.content.transaction_id.to_string()).await
+            }
+            AnyToDeviceEvent::KeyVerificationKey(e) => {
+                handle_event(&event, e.content.transaction_id.to_string()).await
+            }
+            AnyToDeviceEvent::KeyVerificationMac(e) => {
+                handle_event(&event, e.content.transaction_id.to_string()).await
+            }
+            _ => {}
+        }
+    }
+
     pub async fn receive_member(
         &self,
         room_id: OwnedRoomId,
@@ -743,14 +865,11 @@ impl InnerServer {
         let settings = self.settings.borrow();
 
         let homeserver = settings.homeserver.as_ref().ok_or_else(|| {
-            ServerError::StartError("Homeserver not configured".to_owned())
+            ServerError::Start("Homeserver not configured".to_owned())
         })?;
 
         self.create_server_dir().map_err(|e| {
-            ServerError::IoError(format!(
-                "Error creating the session dir: {}",
-                e
-            ))
+            ServerError::Io(format!("Error creating the session dir: {}", e))
         })?;
 
         let mut client_builder = Client::builder()
@@ -769,7 +888,7 @@ impl InnerServer {
             .servers
             .runtime()
             .block_on(client_builder.build())
-            .map_err(ServerError::ClientError)?;
+            .map_err(ServerError::Client)?;
 
         *self.current_settings.borrow_mut() = settings.clone();
         *self.client.borrow_mut() = Some(client.clone());
