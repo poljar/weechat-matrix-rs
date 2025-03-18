@@ -221,7 +221,7 @@ impl MatrixServer {
         }
 
         let client = self.get_or_create_client()?;
-        let connection = Connection::new(&self, &client);
+        let connection = Connection::new(self, &client);
         self.set_connection(connection);
 
         self.print_network(&format!(
@@ -242,7 +242,7 @@ impl MatrixServer {
         let server_buffer = self.inner.server_buffer.borrow_mut();
 
         if let Some(buffer) =
-            server_buffer.as_ref().map(|b| b.upgrade().ok()).flatten()
+            server_buffer.as_ref().and_then(|b| b.upgrade().ok())
         {
             self.inner.merge_server_buffer(&buffer);
         }
@@ -526,10 +526,7 @@ impl InnerServer {
 
                 self.rooms.borrow_mut().insert(room_id, buffer);
             }
-            Err(e) => self.print_error(&format!(
-                "Error restoring room: {}",
-                e.to_string()
-            )),
+            Err(e) => self.print_error(&format!("Error restoring room: {}", e)),
         }
     }
 
@@ -996,7 +993,7 @@ impl InnerServer {
         let devices = connection
             .client()
             .encryption()
-            .get_user_devices(&user_id)
+            .get_user_devices(user_id)
             .await?;
 
         let lines: Vec<_> = devices
@@ -1013,7 +1010,7 @@ impl InnerServer {
                     device
                         .get_key(DeviceKeyAlgorithm::Ed25519)
                         .map(|f| f.to_base64()),
-                    device.display_name().as_deref(),
+                    device.display_name(),
                     false,
                     device_trust,
                     None,
@@ -1139,7 +1136,7 @@ impl InnerServer {
                              Fingerprint: {}\n  \
                                Last seen: {}\n",
             bold,
-            display_name.as_deref().unwrap_or(""),
+            display_name.unwrap_or(""),
             Weechat::color(&color),
             device_id.as_str(),
             Weechat::color("reset"),
@@ -1161,7 +1158,7 @@ impl InnerServer {
             if Some(user_id.as_ref()) == connection.client().user_id() {
                 self.list_own_devices(connection).await
             } else {
-                self.list_other_devices(connection, &user_id).await
+                self.list_other_devices(connection, user_id).await
             }
         } else {
             self.list_own_devices(connection).await

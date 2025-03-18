@@ -145,10 +145,10 @@ impl Connection {
     /// * `room_id` - The id of the room which the message should be sent to.
     ///
     /// * `content` - The content of the message that will be sent to the
-    /// server.
+    ///   server.
     ///
     /// * `transaction_id` - Attach an unique id to this message, later on the
-    /// event will contain the same id in the unsigned part of the event.
+    ///   event will contain the same id in the unsigned part of the event.
     pub async fn send_message(
         &self,
         room: Room,
@@ -216,7 +216,7 @@ impl Connection {
     /// # Arguments
     ///
     /// * `room_id` - The id of the room where the typing notice should be
-    /// active.
+    ///   active.
     ///
     /// * `typing` - Should we set or unset the typing notice.
     pub async fn send_typing_notice(
@@ -235,7 +235,7 @@ impl Connection {
     ) -> std::io::Result<()> {
         server_path.push(user_name);
         server_path.set_extension("device_id");
-        std::fs::write(&server_path, &response.device_id.to_string())
+        std::fs::write(&server_path, &response.device_id)
     }
 
     fn load_device_id(

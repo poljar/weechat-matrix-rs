@@ -37,7 +37,7 @@ impl MatrixCommand {
             .add_argument("disconnect <server-name>")
             .add_argument("reconnect <server-name>")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
-            .arguments_description(&format!(
+            .arguments_description(format!(
                 "      server: List, add, or remove Matrix servers.
      connect: Connect to Matrix servers.
   disconnect: Disconnect from one or all Matrix servers.
@@ -51,7 +51,7 @@ Use /matrix [command] help to find out more.\n",
             ))
             .add_completion("server add|delete|list|listfull")
             .add_completion("devices list|delete|set-name %(matrix-users)")
-            .add_completion(&format!("keys {}", KeysCommand::COMPLETION))
+            .add_completion(format!("keys {}", KeysCommand::COMPLETION))
             .add_completion("connect %(matrix_servers)")
             .add_completion("disconnect %(matrix_servers)")
             .add_completion("reconnect %(matrix_servers)")

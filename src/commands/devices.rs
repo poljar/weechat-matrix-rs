@@ -145,7 +145,7 @@ impl CommandCallback for DevicesCommand {
             .subcommands(Self::subcommands());
 
         parse_and_run(argparse, arguments, |matches| {
-            Self::run(buffer, &self.servers, &matches)
+            Self::run(buffer, &self.servers, matches)
         });
     }
 }
