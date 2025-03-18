@@ -63,7 +63,7 @@ impl Edit for AnySyncMessageLikeEvent {
         &self,
     ) -> Option<(&EventId, &RoomMessageEventContentWithoutRelation)> {
         if let AnySyncMessageLikeEvent::RoomMessage(e) = self {
-            e.as_original().map(|e| e.content.get_edit()).flatten()
+            e.as_original().and_then(|e| e.content.get_edit())
         } else {
             None
         }
@@ -85,7 +85,7 @@ impl Edit for AnyMessageLikeEvent {
         &self,
     ) -> Option<(&EventId, &RoomMessageEventContentWithoutRelation)> {
         if let AnyMessageLikeEvent::RoomMessage(e) = self {
-            e.as_original().map(|e| e.content.get_edit()).flatten()
+            e.as_original().and_then(|e| e.content.get_edit())
         } else {
             None
         }

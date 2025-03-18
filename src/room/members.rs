@@ -118,7 +118,7 @@ impl Members {
                 Weechat::print(&format!(
                     "{}: Error fetching a room member from the store: {}",
                     Weechat::prefix(Prefix::Error),
-                    e.to_string(),
+                    e,
                 ));
             }
         }
@@ -240,7 +240,7 @@ impl Members {
                 Weechat::print(&format!(
                     "{}: Error fetching a room member from the store: {}",
                     Weechat::prefix(Prefix::Error),
-                    e.to_string(),
+                    e,
                 ));
                 None
             }
@@ -283,7 +283,7 @@ impl Members {
                 Weechat::print(&format!(
                     "{}: Error fetching the room name from the store: {}",
                     Weechat::prefix(Prefix::Error),
-                    e.to_string(),
+                    e,
                 ));
             }
         }
@@ -438,7 +438,7 @@ impl WeechatRoomMember {
             // TODO: this should color the parenthesis differently.
             format!(
                 "{}{}{} ({})",
-                Weechat::color(&self.color()),
+                Weechat::color(self.color()),
                 self.nick_raw(),
                 Weechat::color("reset"),
                 self.user_id(),

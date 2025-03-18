@@ -109,7 +109,7 @@ impl Servers {
 
         for server in servers.values() {
             if let Some(b) = &*server.server_buffer() {
-                if b.upgrade().map_or(false, |b| &b == buffer) {
+                if b.upgrade().is_ok_and(|b| &b == buffer) {
                     return BufferOwner::Server(server.clone());
                 }
             }

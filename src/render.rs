@@ -123,7 +123,7 @@ pub trait Render {
 
         let tags = self.event_tags(
             event_id,
-            &sender.user_id(),
+            sender.user_id(),
             &sender.nick(),
             sender.color(),
         );
@@ -161,7 +161,7 @@ pub trait Render {
         context: &Self::RenderContext,
     ) -> RenderedContent {
         let mut content = self.render(context);
-        let uuid_tag = format!("matrix_echo_{}", uuid.to_string());
+        let uuid_tag = format!("matrix_echo_{}", uuid);
 
         for line in &mut content.lines {
             let message = Weechat::remove_color(&line.message);
@@ -401,7 +401,7 @@ impl<C: HasUrlOrFile> Render for C {
         // Convert MXC to HTTP(s) or EMXC, but fallback to MXC if unable to.
         let mxc_url = match self.encrypted_file() {
             Some(encrypted_file) => {
-                mxc_to_emxc(self.resolve_url(), homeserver, &encrypted_file)
+                mxc_to_emxc(self.resolve_url(), homeserver, encrypted_file)
             }
             None => mxc_to_http(self.resolve_url(), homeserver),
         }
@@ -514,7 +514,7 @@ pub trait HasUrlOrFile {
     #[inline]
     fn resolve_url(&self) -> &MxcUri {
         match self.source() {
-            MediaSource::Plain(s) => &s,
+            MediaSource::Plain(s) => s,
             MediaSource::Encrypted(e) => &e.url,
         }
     }
@@ -664,7 +664,7 @@ pub fn render_membership(
                         Some(name) => format!(
                             "{prefix}{target} {color_action}changed their display name to{color_reset} {new}",
                             prefix = Weechat::prefix(prefix),
-                            target = event.prev_content().as_ref().map(|p| p.displayname.clone()).flatten().unwrap_or(target_name),
+                            target = event.prev_content().as_ref().and_then(|p| p.displayname.clone()).unwrap_or(target_name),
                             new = name,
                             color_action = color_action,
                             color_reset = color_reset
@@ -721,8 +721,6 @@ pub fn render_membership(
 
 #[cfg(test)]
 mod tests {
-    use std::convert::TryFrom;
-
     use matrix_sdk::ruma::{
         events::room::{EncryptedFileInit, JsonWebKeyInit},
         serde::Base64,
@@ -745,8 +743,7 @@ mod tests {
         use std::collections::BTreeMap;
 
         let homeserver = url::Url::parse("https://matrix.org").unwrap();
-        let mxc_url =
-            OwnedMxcUri::try_from("mxc://matrix.org/some-media-id").unwrap();
+        let mxc_url = OwnedMxcUri::from("mxc://matrix.org/some-media-id");
         let mut hashes: BTreeMap<String, Base64> = BTreeMap::new();
         hashes.insert("sha256".to_string(), Base64::parse("aGFzaA").unwrap());
         let encrypt_info = EncryptedFileInit {

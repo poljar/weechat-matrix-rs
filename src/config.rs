@@ -34,16 +34,12 @@ use crate::{MatrixServer, Servers};
 
 #[derive(EnumVariantNames)]
 #[strum(serialize_all = "kebab_case")]
+#[derive(Default)]
 pub enum RedactionStyle {
+    #[default]
     StrikeThrough,
     Delete,
     Notice,
-}
-
-impl Default for RedactionStyle {
-    fn default() -> Self {
-        RedactionStyle::StrikeThrough
-    }
 }
 
 impl From<i32> for RedactionStyle {
@@ -59,16 +55,12 @@ impl From<i32> for RedactionStyle {
 
 #[derive(EnumVariantNames)]
 #[strum(serialize_all = "kebab_case")]
+#[derive(Default)]
 pub enum ServerBuffer {
+    #[default]
     MergeWithCore,
     MergeWithoutCore,
     Independent,
-}
-
-impl Default for ServerBuffer {
-    fn default() -> Self {
-        ServerBuffer::MergeWithCore
-    }
 }
 
 impl From<i32> for ServerBuffer {
@@ -225,7 +217,7 @@ impl ConfigHandle {
     }
 }
 
-impl<'a> LookSection<'a> {
+impl LookSection<'_> {
     pub fn server_buffer(&self) -> ServerBuffer {
         if let ConfigOption::Enum(o) =
             self.search_option("server_buffer").unwrap()
@@ -264,7 +256,7 @@ impl SectionReadCallback for ConfigHandle {
         if !self.servers.contains(server_name) {
             let server = MatrixServer::new(
                 server_name,
-                &self,
+                self,
                 section,
                 self.servers.clone(),
             );

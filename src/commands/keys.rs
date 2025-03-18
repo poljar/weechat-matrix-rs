@@ -51,16 +51,14 @@ impl KeysCommand {
         let passphrase = args
             .args
             .get("passphrase")
-            .map(|p| p.vals.get(0).map(|p| p.clone().into_string().ok()))
-            .flatten()
+            .and_then(|p| p.vals.first().map(|p| p.clone().into_string().ok()))
             .flatten()
             .expect("No passphrase found");
 
         let file = args
             .args
             .get("file")
-            .map(|f| f.vals.get(0))
-            .flatten()
+            .and_then(|f| f.vals.first())
             .expect("No file found");
         let file = Weechat::expand_home(&file.to_string_lossy());
         let file = PathBuf::from(file);

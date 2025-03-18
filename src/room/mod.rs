@@ -113,7 +113,7 @@ struct IntMutexGuard<'a> {
     inner: MutexGuard<'a, Rc<AtomicBool>>,
 }
 
-impl<'a> Drop for IntMutexGuard<'a> {
+impl Drop for IntMutexGuard<'_> {
     fn drop(&mut self) {
         self.inner.store(false, Ordering::SeqCst)
     }
@@ -557,39 +557,39 @@ impl MatrixRoom {
                     c.render_with_prefix(send_time, event_id, sender, &())
                 }
                 Emote(c) => {
-                    c.render_with_prefix(send_time, event_id, &sender, &sender)
+                    c.render_with_prefix(send_time, event_id, sender, sender)
                 }
                 Notice(c) => {
-                    c.render_with_prefix(send_time, event_id, &sender, &sender)
+                    c.render_with_prefix(send_time, event_id, sender, sender)
                 }
                 ServerNotice(c) => {
-                    c.render_with_prefix(send_time, event_id, &sender, &sender)
+                    c.render_with_prefix(send_time, event_id, sender, sender)
                 }
                 Location(c) => {
-                    c.render_with_prefix(send_time, event_id, &sender, &sender)
+                    c.render_with_prefix(send_time, event_id, sender, sender)
                 }
                 Audio(c) => c.render_with_prefix(
                     send_time,
                     event_id,
-                    &sender,
+                    sender,
                     &self.homeserver,
                 ),
                 Video(c) => c.render_with_prefix(
                     send_time,
                     event_id,
-                    &sender,
+                    sender,
                     &self.homeserver,
                 ),
                 File(c) => c.render_with_prefix(
                     send_time,
                     event_id,
-                    &sender,
+                    sender,
                     &self.homeserver,
                 ),
                 Image(c) => c.render_with_prefix(
                     send_time,
                     event_id,
-                    &sender,
+                    sender,
                     &self.homeserver,
                 ),
                 _ => return None,
@@ -829,7 +829,7 @@ impl MatrixRoom {
             message: String,
         }
 
-        impl<'a> From<BufferLine<'a>> for LineCopy {
+        impl From<BufferLine<'_>> for LineCopy {
             fn from(line: BufferLine) -> Self {
                 Self {
                     date: line.date(),
@@ -869,8 +869,7 @@ impl MatrixRoom {
         buffer: &Buffer,
         rendered: RenderedEvent,
     ) {
-        let uuid_tag =
-            Cow::from(format!("matrix_echo_{}", transaction_id.to_string()));
+        let uuid_tag = Cow::from(format!("matrix_echo_{}", transaction_id));
         let line_contains_uuid = |l: &BufferLine| l.tags().contains(&uuid_tag);
 
         let mut lines = buffer.lines();
@@ -896,10 +895,10 @@ impl MatrixRoom {
         event_id: &EventId,
     ) {
         if let Some((echo, content)) =
-            self.outgoing_messages.remove(&transaction_id)
+            self.outgoing_messages.remove(transaction_id)
         {
             let event = OriginalSyncMessageLikeEvent {
-                sender: (&*self.own_user_id).to_owned(),
+                sender: (*self.own_user_id).to_owned(),
                 origin_server_ts: MilliSecondsSinceUnixEpoch::now(),
                 event_id: event_id.to_owned(),
                 content,
@@ -917,7 +916,7 @@ impl MatrixRoom {
 
             if let Ok(buffer) = self.buffer_handle().upgrade() {
                 if echo {
-                    self.replace_local_echo(&transaction_id, &buffer, rendered);
+                    self.replace_local_echo(transaction_id, &buffer, rendered);
                 } else {
                     self.print_rendered_event(rendered);
                 }
@@ -959,7 +958,7 @@ impl MatrixRoom {
                 .collect();
 
             if lines
-                .get(0)
+                .first()
                 .map(|l| l.tags().contains(&sender_tag))
                 .unwrap_or(false)
             {
@@ -975,7 +974,7 @@ impl MatrixRoom {
         event: RenderedEvent,
     ) {
         use std::cmp::Ordering;
-        let date = lines.get(0).map(|l| l.date()).unwrap_or_default();
+        let date = lines.first().map(|l| l.date()).unwrap_or_default();
 
         for (line, new) in lines.iter().zip(event.content.lines.iter()) {
             let tags: Vec<&str> = new.tags.iter().map(|t| t.as_str()).collect();
