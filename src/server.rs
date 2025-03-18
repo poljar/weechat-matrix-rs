@@ -904,6 +904,7 @@ impl InnerServer {
         &self,
         connection: Connection,
     ) -> Result<(), Error> {
+        let client = connection.client();
         let mut response = connection.devices().await?;
 
         if response.devices.is_empty() {
@@ -919,20 +920,34 @@ impl InnerServer {
         ));
 
         response.devices.sort_by_key(|d| Reverse(d.last_seen_ts));
-        let own_device_id = connection.client().device_id();
-        let own_user_id = connection
-            .client()
-            .user_id()
+        let own_device_id = client.device_id();
+        let own_user_id = client
+            .session_meta()
+            .map(|s| s.user_id.to_owned())
             .expect("Getting our own devices while not being logged in");
 
         let mut lines: Vec<String> = Vec::new();
 
         for device_info in response.devices {
-            let device = connection
-                .client()
-                .encryption()
-                .get_device(&own_user_id, &device_info.device_id)
-                .await?;
+            let client = client.clone();
+            let own_user_id = own_user_id.clone();
+            let device_info_move = device_info.clone();
+            let device = match connection
+                .spawn(async move {
+                    client
+                        .clone()
+                        .encryption()
+                        .get_device(&own_user_id, &device_info_move.device_id)
+                        .await
+                })
+                .await
+            {
+                Ok(d) => d,
+                Err(e) => {
+                    self.print_error(&format!("Failed to obtain device: {e}"));
+                    continue;
+                }
+            };
 
             let own_device = own_device_id == Some(&device_info.device_id);
 
