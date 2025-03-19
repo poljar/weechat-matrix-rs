@@ -36,23 +36,26 @@ Alternatively, `make install` will build and install the plugin in your
 
 # Configuration
 
-Configuration is completed primarily through the Weechat interface.  First start Weechat, and then issue the following commands:
+Configuration is completed primarily through the Weechat interface. First start Weechat, and then issue the following commands _(replace the placeholders in brackets [] with your own details)_:
 
-1. Add a server, username and password:
+1. Add a server _(make sure the url includes the scheme e.g. 'https://matrix.org')_:
 
        /matrix server add [server-name] [server-url]
+
+2. Set your username and password:
+
        /set matrix-rust.server.[server-name].username [username]
        /set matrix-rust.server.[server-name].password [password]
 
-2. Now try to connect:
+3. Now try to connect:
 
        /matrix connect [server-name]
 
-3. Automatically connect to the server
+4. Automatically connect to the server:
 
        /set matrix.server.[server-name].autoconnect on
 
-4. If everything works, save the configuration
+5. If everything works, save the configuration:
 
        /save
 
