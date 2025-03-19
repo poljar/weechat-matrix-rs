@@ -33,3 +33,11 @@ default `.weechat/plugins/`.
 
 Alternatively, `make install` will build and install the plugin in your
 `$WEECHAT_HOME` as well.
+
+# Usage
+
+`/help matrix` displays all Matrix-specific commands along with brief descriptions. To connect to a new server, follow these steps:
+
+1. Add a server using `/matrix server add [server-name] [server-url]`. Make sure the url includes the scheme (eg 'https://matrix.org').
+2. Add username and password: `/set matrix-rust.server.[server-name].username [username]` and `/set matrix-rust.server.[server-name].password [password]`.
+3. Connect to server using `/matrix connect [server-name]`. This may take several minutes, be patient.
