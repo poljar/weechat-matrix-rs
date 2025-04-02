@@ -53,7 +53,7 @@ Configuration is completed primarily through the Weechat interface. First start 
 
 4. Automatically connect to the server:
 
-       /set matrix.server.[server-name].autoconnect on
+       /set matrix-rust.server.[server-name].autoconnect on
 
 5. If everything works, save the configuration:
 
