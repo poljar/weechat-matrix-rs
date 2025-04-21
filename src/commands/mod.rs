@@ -10,12 +10,14 @@ mod buffer_clear;
 mod devices;
 mod keys;
 mod matrix;
+mod me;
 mod page_up;
 
 use buffer_clear::BufferClearCommand;
 use devices::DevicesCommand;
 use keys::KeysCommand;
 use matrix::MatrixCommand;
+use me::MeCommand;
 use page_up::PageUpCommand;
 
 pub struct Commands {
@@ -24,6 +26,7 @@ pub struct Commands {
     _devices: Command,
     _page_up: CommandRun,
     _buffer_clear: CommandRun,
+    _me: CommandRun,
 }
 
 impl Commands {
@@ -37,6 +40,7 @@ impl Commands {
             _keys: KeysCommand::create(servers)?,
             _page_up: PageUpCommand::create(servers)?,
             _buffer_clear: BufferClearCommand::create(servers)?,
+            _me: MeCommand::create(servers)?,
         })
     }
 }
