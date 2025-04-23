@@ -392,7 +392,8 @@ impl MatrixRoom {
     pub fn is_encrypted(&self) -> bool {
         self.members
             .runtime
-            .block_on(self.room.is_encrypted())
+            .block_on(self.room.latest_encryption_state())
+            .map(|s| s.is_encrypted())
             .unwrap_or_default()
     }
 

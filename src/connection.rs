@@ -339,7 +339,7 @@ impl Connection {
         server_name: String,
         server_path: PathBuf,
     ) {
-        if !client.logged_in() {
+        if !client.matrix_auth().logged_in() {
             let device_id =
                 Connection::load_device_id(&username, server_path.clone());
 
