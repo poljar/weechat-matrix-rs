@@ -433,7 +433,7 @@ impl Connection {
 
         let client_ref = &client;
 
-        let _ret = client
+        let ret = client
             .sync_with_callback(sync_settings, |response| async move {
                 for event in response.to_device.iter().filter_map(|e| e.deserialize().ok()){
                     if sync_channel
@@ -540,8 +540,7 @@ impl Connection {
                                             .await
                                         {
                                             error!(
-                                                "Failed to send room member {}",
-                                                e
+                                                "Failed to send room member {e}"
                                             );
                                         }
                                     }
@@ -554,5 +553,9 @@ impl Connection {
                 LoopCtrl::Continue
             })
             .await;
+
+        if let Err(err) = ret {
+            error!("Matrix sync failed: {err}");
+        }
     }
 }
