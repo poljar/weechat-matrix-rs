@@ -428,8 +428,9 @@ impl Connection {
 
         let client_ref = &client;
 
-        let _ret = client
-            .sync_with_callback(sync_settings, |response| async move {
+        loop {
+            let ret = client
+            .sync_with_callback(sync_settings.clone(), |response| async move {
                 for (room_id, room) in response.rooms.join {
                     for event in
                         room.state.iter().filter_map(|e| e.deserialize().ok())
@@ -543,5 +544,12 @@ impl Connection {
                 LoopCtrl::Continue
             })
             .await;
+
+            if let Err(err) = ret {
+                error!("Matrix sync failed: {err}");
+            } else {
+                break;
+            }
+        }
     }
 }
