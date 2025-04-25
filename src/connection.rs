@@ -433,8 +433,9 @@ impl Connection {
 
         let client_ref = &client;
 
-        let ret = client
-            .sync_with_callback(sync_settings, |response| async move {
+        loop {
+            let ret = client
+            .sync_with_callback(sync_settings.clone(), |response| async move {
                 for event in response.to_device.iter().filter_map(|e| e.deserialize().ok()){
                     if sync_channel
                         .send(Ok(ClientMessage::ToDeviceEvent(event)))
@@ -554,8 +555,11 @@ impl Connection {
             })
             .await;
 
-        if let Err(err) = ret {
-            error!("Matrix sync failed: {err}");
+            if let Err(err) = ret {
+                error!("Matrix sync failed: {err}");
+            } else {
+                break;
+            }
         }
     }
 }
