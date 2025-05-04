@@ -380,7 +380,7 @@ impl Members {
 
             let timestamp: i64 =
                 (event.origin_server_ts.0 / uint!(1000)).into();
-            buffer.print_date_tags(timestamp as i64, &[], &message);
+            buffer.print_date_tags(timestamp as isize, &[], &message);
         }
     }
 }

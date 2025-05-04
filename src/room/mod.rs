@@ -822,8 +822,8 @@ impl MatrixRoom {
 
     fn sort_messages(&self) {
         struct LineCopy {
-            date: i64,
-            date_printed: i64,
+            date: isize,
+            date_printed: isize,
             tags: Vec<String>,
             prefix: String,
             message: String,
