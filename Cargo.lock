@@ -3758,7 +3758,7 @@ dependencies = [
 [[package]]
 name = "weechat"
 version = "0.4.0"
-source = "git+https://github.com/poljar/rust-weechat#58a836b0310d992a4f55dbd1863fcbc66ea59772"
+source = "git+https://github.com/poljar/rust-weechat#b4baca13c0808495d1b363266222d571287c4847"
 dependencies = [
  "async-task",
  "async-trait",
@@ -3775,7 +3775,7 @@ dependencies = [
 [[package]]
 name = "weechat-macro"
 version = "0.4.0"
-source = "git+https://github.com/poljar/rust-weechat#58a836b0310d992a4f55dbd1863fcbc66ea59772"
+source = "git+https://github.com/poljar/rust-weechat#b4baca13c0808495d1b363266222d571287c4847"
 dependencies = [
  "libc",
  "proc-macro2",
@@ -3805,7 +3805,7 @@ dependencies = [
 [[package]]
 name = "weechat-sys"
 version = "0.4.0"
-source = "git+https://github.com/poljar/rust-weechat#58a836b0310d992a4f55dbd1863fcbc66ea59772"
+source = "git+https://github.com/poljar/rust-weechat#b4baca13c0808495d1b363266222d571287c4847"
 dependencies = [
  "bindgen",
  "libc",
