@@ -1,9 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{
-    App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
-    SubCommand,
-};
+use clap::{Arg, ArgMatches, Command as ArgParse};
 
 use weechat::{
     buffer::Buffer,
@@ -21,12 +18,6 @@ pub struct KeysCommand {
 impl KeysCommand {
     pub const DESCRIPTION: &'static str = "Import or export E2EE keys.";
     pub const COMPLETION: &'static str = "import|export %(filename)";
-    pub const SETTINGS: &'static [ArgParseSettings] = &[
-        ArgParseSettings::DisableHelpFlags,
-        ArgParseSettings::DisableVersion,
-        ArgParseSettings::VersionlessSubcommands,
-        ArgParseSettings::SubcommandRequiredElseHelp,
-    ];
 
     pub fn create(servers: &Servers) -> Result<Command, ()> {
         let settings = CommandSettings::new("keys")
@@ -49,20 +40,13 @@ impl KeysCommand {
 
     fn upcast_args(args: &ArgMatches) -> (PathBuf, String) {
         let passphrase = args
-            .args
-            .get("passphrase")
-            .and_then(|p| p.vals.first().map(|p| p.clone().into_string().ok()))
-            .flatten()
+            .get_one::<String>("passphrase")
             .expect("No passphrase found");
 
-        let file = args
-            .args
-            .get("file")
-            .and_then(|f| f.vals.first())
-            .expect("No file found");
-        let file = Weechat::expand_home(&file.to_string_lossy());
+        let file = args.get_one::<String>("file").expect("No file found");
+        let file = Weechat::expand_home(file);
         let file = PathBuf::from(file);
-        (file, passphrase)
+        (file, passphrase.to_owned())
     }
 
     fn import(server: MatrixServer, file: PathBuf, passphrase: String) {
@@ -82,16 +66,12 @@ impl KeysCommand {
     pub fn run(buffer: &Buffer, servers: &Servers, args: &ArgMatches) {
         if let Some(server) = servers.find_server(buffer) {
             match args.subcommand() {
-                ("import", args) => {
-                    let (file, passphrase) = Self::upcast_args(
-                        args.expect("No args were provided to the subcommand"),
-                    );
+                Some(("import", args)) => {
+                    let (file, passphrase) = Self::upcast_args(args);
                     Self::import(server, file, passphrase);
                 }
-                ("export", args) => {
-                    let (file, passphrase) = Self::upcast_args(
-                        args.expect("No args were provided to the subcommand"),
-                    );
+                Some(("export", args)) => {
+                    let (file, passphrase) = Self::upcast_args(args);
                     Self::export(server, file, passphrase);
                 }
                 _ => unreachable!(),
@@ -101,26 +81,29 @@ impl KeysCommand {
         }
     }
 
-    pub fn subcommands() -> Vec<Argparse<'static, 'static>> {
+    pub fn subcommands() -> Vec<ArgParse> {
         vec![
-            SubCommand::with_name("import")
+            ArgParse::new("import")
                 .about("Import the E2EE keys from the given file.")
-                .arg(Arg::with_name("file").required(true))
-                .arg(Arg::with_name("passphrase").required(true)),
-            SubCommand::with_name("export")
+                .arg(Arg::new("file").required(true))
+                .arg(Arg::new("passphrase").required(true)),
+            ArgParse::new("export")
                 // TODO add the ability to export keys only for a given room.
                 .about("Export your E2EE keys to the given file.")
-                .arg(Arg::with_name("file").required(true))
-                .arg(Arg::with_name("passphrase").required(true)),
+                .arg(Arg::new("file").required(true))
+                .arg(Arg::new("passphrase").required(true)),
         ]
     }
 }
 
 impl CommandCallback for KeysCommand {
     fn callback(&mut self, _: &Weechat, buffer: &Buffer, arguments: Args) {
-        let argparse = Argparse::new("keys")
+        let argparse = ArgParse::new("keys")
             .about(Self::DESCRIPTION)
-            .settings(Self::SETTINGS)
+            .disable_help_flag(true)
+            .disable_version_flag(true)
+            .disable_help_subcommand(true)
+            .subcommand_required(true)
             .subcommands(Self::subcommands());
 
         parse_and_run(argparse, arguments, |matches| {

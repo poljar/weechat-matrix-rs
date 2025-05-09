@@ -1,7 +1,4 @@
-use clap::{
-    App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
-    SubCommand,
-};
+use clap::{Arg, ArgMatches, Command as ArgParse};
 use url::Url;
 
 use weechat::{
@@ -70,10 +67,10 @@ Use /matrix [command] help to find out more.\n",
 
     fn add_server(&self, args: &ArgMatches) {
         let server_name = args
-            .value_of("name")
+            .get_one::<String>("name")
             .expect("Server name not set but was required");
         let homeserver = args
-            .value_of("homeserver")
+            .get_one::<String>("homeserver")
             .expect("Homeserver not set but was required");
         let homeserver = Url::parse(homeserver)
             .expect("Can't parse Homeserver even if validation passed");
@@ -108,7 +105,7 @@ Use /matrix [command] help to find out more.\n",
 
     fn delete_server(&self, args: &ArgMatches) {
         let server_name = args
-            .value_of("name")
+            .get_one::<String>("name")
             .expect("Server name not set but was required");
 
         let connected = {
@@ -165,10 +162,10 @@ Use /matrix [command] help to find out more.\n",
 
     fn server_command(&self, args: &ArgMatches) {
         match args.subcommand() {
-            ("add", Some(subargs)) => self.add_server(subargs),
-            ("delete", Some(subargs)) => self.delete_server(subargs),
-            ("list", _) => self.list_servers(false),
-            ("listfull", _) => self.list_servers(true),
+            Some(("add", subargs)) => self.add_server(subargs),
+            Some(("delete", subargs)) => self.delete_server(subargs),
+            Some(("list", _)) => self.list_servers(false),
+            Some(("listfull", _)) => self.list_servers(true),
             _ => self.list_servers(false),
         }
     }
@@ -185,9 +182,20 @@ Use /matrix [command] help to find out more.\n",
     }
 
     fn connect_command(&self, args: &ArgMatches) {
-        let server_names = args
-            .values_of("name")
-            .expect("Server names not set but were required");
+        let server_names = match args.try_get_many("name") {
+            Ok(Some(server_names)) => {
+                server_names.cloned().collect::<Vec<&String>>()
+            }
+            _ => {
+                if let Ok(Some(server_name)) =
+                    args.try_get_one::<String>("name")
+                {
+                    vec![server_name]
+                } else {
+                    return;
+                }
+            }
+        };
 
         for server_name in server_names {
             if let Some(s) = self.servers.get(server_name) {
@@ -203,7 +211,7 @@ Use /matrix [command] help to find out more.\n",
 
     fn disconnect_command(&self, args: &ArgMatches) {
         let server_name = args
-            .value_of("name")
+            .get_one::<String>("name")
             .expect("Server name not set but was required");
 
         if let Some(s) = self.servers.get(server_name) {
@@ -215,16 +223,23 @@ Use /matrix [command] help to find out more.\n",
 
     fn run(&self, buffer: &Buffer, args: &ArgMatches) {
         match args.subcommand() {
-            ("connect", Some(subargs)) => self.connect_command(subargs),
-            ("disconnect", Some(subargs)) => self.disconnect_command(subargs),
-            ("server", Some(subargs)) => self.server_command(subargs),
-            ("devices", Some(subargs)) => {
+            Some(("connect", subargs)) => self.connect_command(subargs),
+            Some(("disconnect", subargs)) => self.disconnect_command(subargs),
+            Some(("server", subargs)) => self.server_command(subargs),
+            Some(("devices", subargs)) => {
                 DevicesCommand::run(buffer, &self.servers, subargs)
             }
-            ("keys", Some(subargs)) => {
+            Some(("keys", subargs)) => {
                 KeysCommand::run(buffer, &self.servers, subargs)
             }
-            _ => unreachable!(),
+            Some((cmd, args)) => Weechat::print(&format!(
+                "{}Unhandled command: {cmd:?} {args:?}",
+                Weechat::prefix(Prefix::Error)
+            )),
+            None => Weechat::print(&format!(
+                "{}Command required",
+                Weechat::prefix(Prefix::Error)
+            )),
         }
     }
 }
@@ -236,76 +251,72 @@ impl CommandCallback for MatrixCommand {
         buffer: &Buffer,
         arguments: Args,
     ) {
-        let server_command = SubCommand::with_name("server")
+        let server_command = ArgParse::new("server")
             .about("List, add or delete Matrix servers.")
             .subcommand(
-                SubCommand::with_name("add")
+                ArgParse::new("add")
                     .about("Add a new Matrix server.")
                     .arg(
-                        Arg::with_name("name")
+                        Arg::new("name")
                             .value_name("server-name")
                             .required(true),
                     )
                     .arg(
-                        Arg::with_name("homeserver")
+                        Arg::new("homeserver")
                             .required(true)
-                            .validator(MatrixServer::parse_url),
+                            .value_parser(MatrixServer::parse_url),
                     ),
             )
             .subcommand(
-                SubCommand::with_name("delete")
+                ArgParse::new("delete")
                     .about("Delete an existing Matrix server.")
                     .arg(
-                        Arg::with_name("name")
+                        Arg::new("name")
                             .value_name("server-name")
                             .required(true),
                     ),
             )
             .subcommand(
-                SubCommand::with_name("list")
+                ArgParse::new("list")
                     .about("List the configured Matrix servers."),
             )
             .subcommand(
-                SubCommand::with_name("listfull")
+                ArgParse::new("listfull")
                     .about("List detailed information about the configured Matrix servers."),
             );
 
-        let argparse = Argparse::new("matrix")
+        let argparse = ArgParse::new("matrix")
             .about("Matrix chat protocol command.")
-            .global_settings(&[
-                ArgParseSettings::DisableHelpFlags,
-                ArgParseSettings::DisableVersion,
-                ArgParseSettings::VersionlessSubcommands,
-            ])
-            .setting(ArgParseSettings::SubcommandRequiredElseHelp)
+            .disable_help_flag(true)
+            .disable_version_flag(true)
+            .subcommand_required(true)
             .subcommand(server_command)
             .subcommand(
-                SubCommand::with_name("devices")
+                ArgParse::new("devices")
                     .about(DevicesCommand::DESCRIPTION)
-                    .settings(DevicesCommand::SETTINGS)
                     .subcommands(DevicesCommand::subcommands()),
             )
             .subcommand(
-                SubCommand::with_name("keys")
+                ArgParse::new("keys")
                     .about(KeysCommand::DESCRIPTION)
-                    .settings(KeysCommand::SETTINGS)
                     .subcommands(KeysCommand::subcommands()),
             )
             .subcommand(
-                SubCommand::with_name("connect")
+                ArgParse::new("connect")
                     .about("Connect to Matrix servers.")
                     .arg(
-                        Arg::with_name("name")
+                        Arg::new("name")
                             .value_name("server-name")
                             .required(true)
-                            .multiple(true),
+                            .trailing_var_arg(true)
+                            .allow_hyphen_values(true),
                     ),
             )
             .subcommand(
-                SubCommand::with_name("disconnect")
+                ArgParse::new("disconnect")
                     .about("Disconnect from one or all Matrix servers")
                     .arg(
-                        Arg::with_name("name")
+                        Arg::new("name")
                             .value_name("server-name")
                             .required(true),
                     ),

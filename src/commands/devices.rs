@@ -1,7 +1,4 @@
-use clap::{
-    App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
-    SubCommand,
-};
+use clap::{Arg, ArgMatches, Command as ArgParse};
 use matrix_sdk::ruma::{OwnedDeviceId, OwnedUserId, UserId};
 
 use weechat::{
@@ -21,13 +18,6 @@ pub struct DevicesCommand {
 impl DevicesCommand {
     pub const DESCRIPTION: &'static str =
         "List, delete or rename Matrix devices";
-
-    pub const SETTINGS: &'static [ArgParseSettings] = &[
-        ArgParseSettings::DisableHelpFlags,
-        ArgParseSettings::DisableVersion,
-        ArgParseSettings::VersionlessSubcommands,
-        ArgParseSettings::SubcommandRequiredElseHelp,
-    ];
 
     pub fn create(servers: &Servers) -> Result<Command, ()> {
         let settings = CommandSettings::new("devices")
@@ -80,27 +70,21 @@ impl DevicesCommand {
 
     pub fn run(buffer: &Buffer, servers: &Servers, args: &ArgMatches) {
         match args.subcommand() {
-            ("list", args) => {
-                let user_id = args.and_then(|a| {
-                    a.args.get("user-id").and_then(|a| {
-                        a.vals.first().map(|u| {
-                            UserId::parse(u.to_string_lossy().as_ref())
-                                .expect("Argument wasn't a valid user id")
-                        })
-                    })
+            Some(("list", args)) => {
+                let user_id = args.get_one::<String>("user-id").map(|u| {
+                    UserId::parse(u).expect("Argument wasn't a valid user id")
                 });
 
                 Self::list(servers, buffer, user_id);
             }
-            ("delete", args) => {
-                let devices = args
-                    .and_then(|a| a.args.get("device-id"))
-                    .expect("Args didn't contain any device ids");
-                let devices: Vec<OwnedDeviceId> = devices
-                    .vals
-                    .iter()
-                    .map(|d| d.clone().to_string_lossy().as_ref().into())
+            Some(("delete", args)) => {
+                let devices: Vec<&str> = args
+                    .get_many("device-id")
+                    .expect("Args didn't contain any device ids")
+                    .copied()
                     .collect();
+                let devices: Vec<OwnedDeviceId> =
+                    devices.iter().map(|d| (*d).into()).collect();
                 Self::delete(servers, buffer, devices);
             }
             _ => Weechat::print(&format!(
@@ -110,38 +94,37 @@ impl DevicesCommand {
         }
     }
 
-    pub fn subcommands() -> Vec<Argparse<'static, 'static>> {
+    pub fn subcommands() -> Vec<ArgParse> {
+        fn parse_user_id(u: &str) -> Result<OwnedUserId, String> {
+            UserId::parse(u)
+                .map_err(|_| "The given user isn't a valid user ID".to_owned())
+        }
         vec![
-            SubCommand::with_name("list")
-                .arg(Arg::with_name("user-id").required(false).validator(|u| {
-                    UserId::parse(u)
-                        .map_err(|_| {
-                            "The given user isn't a valid user ID".to_owned()
-                        })
-                        .map(|_| ())
-                }))
-                .about("List your own Matrix devices on the server."),
-            SubCommand::with_name("delete")
-                .about("Delete the given device")
+            ArgParse::new("list")
                 .arg(
-                    Arg::with_name("device-id")
-                        .require_delimiter(true)
-                        .multiple(true)
-                        .required(true),
-                ),
-            SubCommand::with_name("set-name")
+                    Arg::new("user-id")
+                        .required(false)
+                        .value_parser(parse_user_id),
+                )
+                .about("List your own Matrix devices on the server."),
+            ArgParse::new("delete")
+                .about("Delete the given device")
+                .arg(Arg::new("device-id").num_args(1..).required(true)),
+            ArgParse::new("set-name")
                 .about("Set the human readable name of the given device")
-                .arg(Arg::with_name("device-id").required(true))
-                .arg(Arg::with_name("name").required(true)),
+                .arg(Arg::new("device-id").required(true))
+                .arg(Arg::new("name").required(true)),
         ]
     }
 }
 
 impl CommandCallback for DevicesCommand {
     fn callback(&mut self, _: &Weechat, buffer: &Buffer, arguments: Args) {
-        let argparse = Argparse::new("devices")
+        let argparse = ArgParse::new("devices")
             .about(Self::DESCRIPTION)
-            .settings(Self::SETTINGS)
+            .disable_help_flag(true)
+            .disable_version_flag(true)
+            .subcommand_required(true)
             .subcommands(Self::subcommands());
 
         parse_and_run(argparse, arguments, |matches| {
