@@ -73,7 +73,6 @@ impl CommandCallback for BanCommand {
             .about(Self::DESCRIPTION)
             .disable_help_flag(true)
             .disable_version_flag(true)
-            .disable_help_subcommand(true)
             .arg(Arg::new("user").required(true))
             .arg(
                 Arg::new("reason")
