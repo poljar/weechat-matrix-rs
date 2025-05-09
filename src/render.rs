@@ -704,11 +704,26 @@ pub fn render_membership(
         }
         Banned | Unbanned | Kicked | Invited | InvitationRevoked
         | KickedAndBanned => format!(
-            "{prefix}{target} {op} {sender}",
+            "{prefix}{target} {op} {sender}{reason}",
             prefix = Weechat::prefix(prefix),
             target = target_name,
             op = operation,
-            sender = sender_name
+            sender = sender_name,
+            reason = if matches!(
+                change_op,
+                Banned | Unbanned | Kicked | KickedAndBanned
+            ) {
+                format!(
+                    " (reason: {})",
+                    &event
+                        .content
+                        .reason
+                        .clone()
+                        .unwrap_or("empty".to_string())
+                )
+            } else {
+                String::new()
+            }
         ),
         _ => format!(
             "{prefix}{target} {op}",

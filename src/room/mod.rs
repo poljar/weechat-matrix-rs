@@ -407,6 +407,13 @@ impl MatrixRoom {
         &self.room_id
     }
 
+    pub fn leave_room(&self) {
+        self.members
+            .runtime
+            .block_on(self.room().leave())
+            .unwrap_or_default()
+    }
+
     pub fn buffer_handle(&self) -> BufferHandle {
         self.buffer
             .borrow()

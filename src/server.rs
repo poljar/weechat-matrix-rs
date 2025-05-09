@@ -265,8 +265,8 @@ impl MatrixServer {
     }
 
     /// Parse an URL returning an error if the parse step fails.
-    pub fn parse_url(value: String) -> Result<(), String> {
-        let url = Url::parse(&value);
+    pub fn parse_url(value: &str) -> Result<(), String> {
+        let url = Url::parse(value);
 
         match url {
             Ok(u) => {
@@ -285,7 +285,7 @@ impl MatrixServer {
         if value.is_empty() {
             true
         } else {
-            MatrixServer::parse_url(value.to_string()).is_ok()
+            MatrixServer::parse_url(value).is_ok()
         }
     }
 
