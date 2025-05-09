@@ -33,7 +33,8 @@ use matrix_sdk::{
         },
         events::{
             room::member::RoomMemberEventContent, AnyMessageLikeEventContent,
-            AnySyncStateEvent, AnySyncTimelineEvent, SyncStateEvent,
+            AnySyncStateEvent, AnySyncTimelineEvent, AnyToDeviceEvent,
+            SyncStateEvent,
         },
         OwnedDeviceId, OwnedRoomId, OwnedTransactionId,
     },
@@ -68,6 +69,7 @@ pub enum ClientMessage {
     LoginMessage(LoginResponse),
     SyncState(OwnedRoomId, AnySyncStateEvent),
     SyncEvent(OwnedRoomId, AnySyncTimelineEvent),
+    ToDeviceEvent(AnyToDeviceEvent),
     MemberEvent(
         OwnedRoomId,
         SyncStateEvent<RoomMemberEventContent>,
@@ -158,7 +160,7 @@ impl Connection {
         self.spawn(async move {
             let mut msg = room.send(content);
             if let Some(txn_id) = transaction_id.as_deref() {
-                msg = msg.with_transaction_id(txn_id);
+                msg = msg.with_transaction_id(txn_id.to_owned());
             }
 
             msg.await
@@ -290,6 +292,9 @@ impl Connection {
                     ClientMessage::RestoredRoom(room) => {
                         server.restore_room(room).await
                     }
+                    ClientMessage::ToDeviceEvent(e) => {
+                        server.receive_to_device_event(e).await
+                    }
                     ClientMessage::MemberEvent(
                         room_id,
                         e,
@@ -334,7 +339,7 @@ impl Connection {
         server_name: String,
         server_path: PathBuf,
     ) {
-        if !client.logged_in() {
+        if !client.matrix_auth().logged_in() {
             let device_id =
                 Connection::load_device_id(&username, server_path.clone());
 
@@ -428,18 +433,27 @@ impl Connection {
 
         let client_ref = &client;
 
-        let _ret = client
-            .sync_with_callback(sync_settings, |response| async move {
+        loop {
+            let ret = client
+            .sync_with_callback(sync_settings.clone(), |response| async move {
+                for event in response.to_device.iter().filter_map(|e| e.deserialize().ok()){
+                    if sync_channel
+                        .send(Ok(ClientMessage::ToDeviceEvent(event)))
+                        .await
+                        .is_err()
+                    {
+                        return LoopCtrl::Break;
+                    }
+                }
+
                 for (room_id, room) in response.rooms.join {
                     for event in
                         room.state.iter().filter_map(|e| e.deserialize().ok())
                     {
                         if let AnySyncStateEvent::RoomMember(m) = event {
-                            let change = response
+                            let change = room
                                 .ambiguity_changes
-                                .changes
-                                .get(&room_id)
-                                .and_then(|c| c.get(m.event_id()))
+                                .get(m.event_id())
                                 .cloned();
 
                             if sync_channel
@@ -470,17 +484,15 @@ impl Connection {
                         .timeline
                         .events
                         .iter()
-                        .filter_map(|e| e.event.deserialize().ok())
+                        .filter_map(|e| e.raw().deserialize().ok())
                     {
                         if let AnySyncTimelineEvent::State(
                             AnySyncStateEvent::RoomMember(m),
                         ) = event
                         {
-                            let change = response
+                            let change = room
                                 .ambiguity_changes
-                                .changes
-                                .get(&room_id)
-                                .and_then(|c| c.get(m.event_id()))
+                                .get(m.event_id())
                                 .cloned();
 
                             if sync_channel
@@ -529,8 +541,7 @@ impl Connection {
                                             .await
                                         {
                                             error!(
-                                                "Failed to send room member {}",
-                                                e
+                                                "Failed to send room member {e}"
                                             );
                                         }
                                     }
@@ -543,5 +554,12 @@ impl Connection {
                 LoopCtrl::Continue
             })
             .await;
+
+            if let Err(err) = ret {
+                error!("Matrix sync failed: {err}");
+            } else {
+                break;
+            }
+        }
     }
 }
