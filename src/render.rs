@@ -27,7 +27,7 @@ use crate::{room::WeechatRoomMember, utils::ToTag};
 /// The rendered version of an event.
 pub struct RenderedEvent {
     /// The UNIX timestamp of the event.
-    pub message_timestamp: i64,
+    pub message_timestamp: isize,
     pub prefix: String,
     pub content: RenderedContent,
 }
@@ -134,7 +134,7 @@ pub trait Render {
 
         RenderedEvent {
             prefix,
-            message_timestamp: timestamp,
+            message_timestamp: timestamp as isize,
             content,
         }
     }
