@@ -1,4 +1,5 @@
 use clap::{App, ArgMatches};
+use verification::VerificationCommand;
 use weechat::{
     hooks::{Command, CommandRun},
     Args, Weechat,
@@ -12,6 +13,7 @@ mod keys;
 mod matrix;
 mod me;
 mod page_up;
+mod verification;
 
 use buffer_clear::BufferClearCommand;
 use devices::DevicesCommand;
@@ -25,6 +27,7 @@ pub struct Commands {
     _keys: Command,
     _devices: Command,
     _page_up: CommandRun,
+    _verification: Command,
     _buffer_clear: CommandRun,
     _me: CommandRun,
 }
@@ -39,6 +42,7 @@ impl Commands {
             _devices: DevicesCommand::create(servers)?,
             _keys: KeysCommand::create(servers)?,
             _page_up: PageUpCommand::create(servers)?,
+            _verification: VerificationCommand::create(servers)?,
             _buffer_clear: BufferClearCommand::create(servers)?,
             _me: MeCommand::create(servers)?,
         })
