@@ -431,7 +431,7 @@ impl Connection {
         loop {
             let ret = client
             .sync_with_callback(sync_settings.clone(), |response| async move {
-                for (room_id, room) in response.rooms.join {
+                for (room_id, room) in response.rooms.joined {
                     for event in
                         room.state.iter().filter_map(|e| e.deserialize().ok())
                     {
