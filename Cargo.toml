@@ -31,7 +31,7 @@ git = "https://github.com/poljar/rust-weechat"
 features = ["async", "config_macro"]
 
 [dependencies.matrix-sdk]
-version = "0.11.0"
+version = "0.12.0"
 features = ["markdown", "socks"]
 
 [profile.dev.package]
