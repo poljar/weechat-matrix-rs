@@ -45,6 +45,11 @@ impl BarItemCallback for BufferName {
                 format!("{}{}", Weechat::color(color), buffer.short_name())
             }
 
+            BufferOwner::Verification(_, _) => {
+                // TODO special format this
+                format!("{}{}", Weechat::color("status_name"), buffer.name())
+            }
+
             BufferOwner::None => {
                 format!("{}{}", Weechat::color("status_name"), buffer.name())
             }
