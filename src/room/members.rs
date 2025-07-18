@@ -9,10 +9,13 @@ use matrix_sdk::{
     room::{Room, RoomMember},
     ruma::{
         events::{
-            room::member::{MembershipState, RoomMemberEventContent},
+            room::{
+                member::{MembershipState, RoomMemberEventContent},
+                power_levels::UserPowerLevel,
+            },
             SyncStateEvent,
         },
-        uint, OwnedUserId, UserId,
+        uint, Int, OwnedUserId, UserId,
     },
     StoreError,
 };
@@ -404,18 +407,20 @@ impl WeechatRoomMember {
 
     fn nicklist_group_name(&self) -> &str {
         match self.inner.normalized_power_level() {
-            p if p >= 100 => "000|o",
-            p if p >= 50 => "001|h",
-            p if p > 0 => "002|v",
+            UserPowerLevel::Infinite => "000|o",
+            p if p >= Int::from(100) => "000|o",
+            p if p >= Int::from(50) => "001|h",
+            p if p > Int::from(0) => "002|v",
             _ => "999|...",
         }
     }
 
     fn nicklist_prefix(&self) -> &str {
         match self.inner.normalized_power_level() {
-            p if p >= 100 => "&",
-            p if p >= 50 => "@",
-            p if p > 0 => "+",
+            UserPowerLevel::Infinite => "&",
+            p if p >= Int::from(100) => "&",
+            p if p >= Int::from(50) => "@",
+            p if p > Int::from(0) => "+",
             _ => " ",
         }
     }
