@@ -63,7 +63,7 @@ use matrix_sdk::{
             OriginalSyncMessageLikeEvent, SyncMessageLikeEvent, SyncStateEvent,
         },
         EventId, MilliSecondsSinceUnixEpoch, OwnedRoomAliasId,
-        OwnedTransactionId, RoomId, TransactionId, UserId,
+        OwnedTransactionId, OwnedUserId, RoomId, TransactionId, UserId,
     },
     StoreError,
 };
@@ -390,7 +390,7 @@ impl MatrixRoom {
     }
 
     pub fn is_public(&self) -> bool {
-        self.room.is_public()
+        self.room.is_public().unwrap_or_default()
     }
 
     pub fn is_direct(&self) -> bool {
@@ -1076,8 +1076,13 @@ impl MatrixRoom {
             SyncMessageLikeEvent::Redacted(e),
         ) = event
         {
-            let redacter = e.unsigned.redacted_because.sender.as_ref();
-            let redacter = self.members.get(redacter).await?;
+            let redacter = e
+                .unsigned
+                .redacted_because
+                .get_field::<OwnedUserId>("sender")
+                .ok()
+                .flatten()?;
+            let redacter = self.members.get(redacter.as_ref()).await?;
             let sender = self.members.get(&e.sender).await?;
 
             Some(e.render_with_prefix(

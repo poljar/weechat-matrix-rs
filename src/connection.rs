@@ -37,6 +37,7 @@ use matrix_sdk::{
         },
         OwnedDeviceId, OwnedRoomId, OwnedTransactionId,
     },
+    sync::State,
     Client, LoopCtrl, Result as MatrixResult, RoomMemberships,
 };
 
@@ -432,36 +433,38 @@ impl Connection {
             let ret = client
             .sync_with_callback(sync_settings.clone(), |response| async move {
                 for (room_id, room) in response.rooms.joined {
-                    for event in
-                        room.state.iter().filter_map(|e| e.deserialize().ok())
-                    {
-                        if let AnySyncStateEvent::RoomMember(m) = event {
-                            let change = room
-                                .ambiguity_changes
-                                .get(m.event_id())
-                                .cloned();
+                    if let State::Before(state) = room.state {
+                        for event in
+                            state.iter().filter_map(|e| e.deserialize().ok())
+                        {
+                            if let AnySyncStateEvent::RoomMember(m) = event {
+                                let change = room
+                                    .ambiguity_changes
+                                    .get(m.event_id())
+                                    .cloned();
 
-                            if sync_channel
-                                .send(Ok(ClientMessage::MemberEvent(
+                                if sync_channel
+                                    .send(Ok(ClientMessage::MemberEvent(
+                                        room_id.clone(),
+                                        m,
+                                        true,
+                                        change,
+                                    )))
+                                    .await
+                                    .is_err()
+                                {
+                                    return LoopCtrl::Break;
+                                }
+                            } else if sync_channel
+                                .send(Ok(ClientMessage::SyncState(
                                     room_id.clone(),
-                                    m,
-                                    true,
-                                    change,
+                                    event,
                                 )))
                                 .await
                                 .is_err()
                             {
                                 return LoopCtrl::Break;
                             }
-                        } else if sync_channel
-                            .send(Ok(ClientMessage::SyncState(
-                                room_id.clone(),
-                                event,
-                            )))
-                            .await
-                            .is_err()
-                        {
-                            return LoopCtrl::Break;
                         }
                     }
 
