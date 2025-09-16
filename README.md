@@ -24,14 +24,18 @@ If you are interested in helping out take a look at the issue tracker.
 
 After Rust is installed the plugin can be compiled with:
 
+    cargo build --release
+
+If you are developing on weechat-matrix-rs, use debug builds which are faster at the expense of plugin performance:
+
     cargo build
 
-On Linux this creates a `libmatrix.so` file in the `target/debug/` folder, this
+On Linux this creates a `libmatrix.so` file in the `target/release/` (`target/debug` for dev builds) folder, this
 file needs to be renamed to `matrix.so` and copied to your Weechat plugin
 directory. A plugin directory can be created in your `$WEECHAT_HOME` folder, by
 default `.weechat/plugins/`.
 
-Alternatively, `make install` will build and install the plugin in your
+Alternatively, `make install` (`make install PROFILE=debug` for dev build) will build and install the plugin in your
 `$WEECHAT_HOME` as well.
 
 # Configuration
