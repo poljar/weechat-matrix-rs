@@ -30,7 +30,7 @@ use buffer::RoomBuffer;
 use members::Members;
 pub use members::WeechatRoomMember;
 use tokio::runtime::Handle;
-use tracing::{debug, trace};
+use tracing::{debug, error, trace};
 use verification::Verification;
 
 use std::{
@@ -69,6 +69,7 @@ use matrix_sdk::{
         EventId, MilliSecondsSinceUnixEpoch, OwnedRoomAliasId,
         OwnedTransactionId, OwnedUserId, RoomId, TransactionId, UserId,
     },
+    stream::StreamExt,
     StoreError,
 };
 
@@ -247,7 +248,11 @@ impl RoomHandle {
             room,
         };
 
-        let buffer_name = format!("{}.{}", server_name, room_id);
+        let buffer_name = if let Some(name) = room.room().name() {
+            format!("{server_name}.{name}.{room_id}")
+        } else {
+            format!("{server_name}.{room_id}")
+        };
 
         let buffer_handle = BufferBuilderAsync::new(&buffer_name)
             .input_callback(room.clone())
@@ -311,9 +316,39 @@ impl RoomHandle {
         );
         buffer.set_localvar("room_id", room.room_id().as_str());
         if room.is_direct() {
-            buffer.set_localvar("type", "private")
+            buffer.set_localvar("type", "private");
         } else {
-            buffer.set_localvar("type", "channel")
+            buffer.set_localvar("type", "channel");
+
+            if room.room().is_space() {
+                buffer.set_localvar("m.type", "m.space");
+            } else {
+                if let Some(spaces) = runtime.block_on(async {
+                    if let Ok(spaces) = room.room().parent_spaces().await {
+                        let spaces = spaces.collect::<Vec<_>>().await;
+                        return Some(spaces);
+                    };
+                    return None;
+                }) {
+                    if let Some(parent) = spaces
+                        .iter()
+                        .filter_map(|s| s.as_ref().ok())
+                        .find_map(|s| {
+                            use matrix_sdk::room::ParentSpace::*;
+                            if let Reciprocal(room) = s {
+                                Some(room)
+                            } else {
+                                None
+                            }
+                        })
+                    {
+                        buffer.set_localvar(
+                            "m.space.parent",
+                            parent.room_id().as_str(),
+                        );
+                    };
+                }
+            }
         }
 
         if let Some(alias) = room.alias() {
@@ -351,6 +386,12 @@ impl RoomHandle {
 
         debug!("Restoring room {}", room.room_id());
 
+        *room_buffer.prev_batch.borrow_mut() =
+            prev_batch.map(PrevBatch::Forward);
+
+        room_buffer.buffer.update_buffer_name();
+        room_buffer.buffer.set_topic();
+
         let matrix_members = runtime
             .spawn(async move { room.joined_user_ids().await })
             .await
@@ -360,12 +401,6 @@ impl RoomHandle {
             trace!("Restoring member {}", &user_id);
             room_buffer.members.restore_member(user_id).await;
         }
-
-        *room_buffer.prev_batch.borrow_mut() =
-            prev_batch.map(PrevBatch::Forward);
-
-        room_buffer.buffer.update_buffer_name();
-        room_buffer.buffer.set_topic();
 
         Ok(room_buffer)
     }
@@ -991,14 +1026,13 @@ impl MatrixRoom {
                     "Rendering a message but the sender isn't in the nicklist",
                 );
 
-                    let content = if let Some(content) =
-                        event.original_content()
-                    {
-                        content
-                    } else {
-                        tracing::error!("Unhandled redacted event: {event:?}");
-                        return;
-                    };
+                    let content =
+                        if let Some(content) = event.original_content() {
+                            content
+                        } else {
+                            error!("Unhandled redacted event: {event:?}");
+                            return;
+                        };
 
                     let send_time = event.origin_server_ts();
 

@@ -2,6 +2,7 @@ use std::{
     future::Future,
     path::PathBuf,
     rc::{Rc, Weak},
+    str::FromStr,
     time::Duration,
 };
 
@@ -17,6 +18,7 @@ use matrix_sdk::{
     config::SyncSettings,
     deserialized_responses::AmbiguityChange,
     room::{Messages, MessagesOptions, Room},
+    room_preview::RoomPreview,
     ruma::{
         api::client::{
             device::{
@@ -39,7 +41,8 @@ use matrix_sdk::{
         OwnedDeviceId, OwnedRoomId, OwnedTransactionId,
     },
     sync::State,
-    Client, LoopCtrl, Result as MatrixResult, RoomMemberships,
+    Client, LoopCtrl, OwnedServerName, Result as MatrixResult, RoomMemberships,
+    RoomState,
 };
 
 use weechat::{Task, Weechat};
@@ -403,6 +406,26 @@ impl Connection {
 
             if !first_login {
                 for room in client.joined_rooms() {
+                    // Do not restore rooms which we are not part of, when matrix is confused about our membership
+                    if RoomPreview::from_room_summary(
+                        &client,
+                        room.room_id().to_owned(),
+                        room.room_id().into(),
+                        vec![OwnedServerName::from_str(
+                            client.homeserver().host_str().unwrap(),
+                        )
+                        .unwrap()],
+                    )
+                    .await
+                    .iter()
+                    .find_map(|preview| preview.state)
+                        == Some(RoomState::Left)
+                    {
+                        // TODO: figure out how to remove the room from cache
+                        error!("Restoring room which we are not part of, this is a bug: {room:?}");
+                        continue;
+                    };
+
                     if channel
                         .send(Ok(ClientMessage::RestoredRoom(room)))
                         .await

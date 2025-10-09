@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use tracing::warn;
 use weechat::{
     buffer::Buffer,
     hooks::{
@@ -91,7 +92,7 @@ impl CompletionCallback for UsersCompletion {
                     .runtime()
                     .block_on(connection.client().encryption().tracked_users())
                     .unwrap_or_else(|e| {
-                        tracing::warn!("Error getting tracked users: {e}");
+                        warn!("Error getting tracked users: {e}");
                         Default::default()
                     });
 
