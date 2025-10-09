@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use dashmap::DashMap;
 use tokio::runtime::Handle;
-use tracing::{error, info};
+use tracing::{error, trace};
 
 use matrix_sdk::{
     deserialized_responses::AmbiguityChange,
@@ -71,10 +71,10 @@ impl Members {
             .set_prefix(member.nicklist_prefix())
             .set_prefix_color(member.prefix_color());
 
-        info!("Inserting nick {} for room {}", nick, buffer.short_name());
+        trace!("Inserting nick {} for room {}", nick, buffer.short_name());
 
         if group.add_nick(nick_settings).is_err() {
-            error!(
+            trace!(
                 "Error adding nick {} ({}) to room {}, already added.",
                 nick,
                 member.user_id(),
@@ -265,7 +265,7 @@ impl Members {
             }
         };
 
-        info!(
+        trace!(
             "Handling membership event for room {} {} {:?}",
             buffer.short_name(),
             event.state_key,

@@ -30,7 +30,7 @@ use buffer::RoomBuffer;
 use members::Members;
 pub use members::WeechatRoomMember;
 use tokio::runtime::Handle;
-use tracing::{debug, trace};
+use tracing::{debug, error, trace};
 use verification::Verification;
 
 use std::{
@@ -991,14 +991,13 @@ impl MatrixRoom {
                     "Rendering a message but the sender isn't in the nicklist",
                 );
 
-                    let content = if let Some(content) =
-                        event.original_content()
-                    {
-                        content
-                    } else {
-                        tracing::error!("Unhandled redacted event: {event:?}");
-                        return;
-                    };
+                    let content =
+                        if let Some(content) = event.original_content() {
+                            content
+                        } else {
+                            error!("Unhandled redacted event: {event:?}");
+                            return;
+                        };
 
                     let send_time = event.origin_server_ts();
 
