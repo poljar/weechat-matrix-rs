@@ -247,7 +247,11 @@ impl RoomHandle {
             room,
         };
 
-        let buffer_name = format!("{}.{}", server_name, room_id);
+        let buffer_name = if let Some(name) = room.room().name() {
+            format!("{server_name}.{name}.{room_id}")
+        } else {
+            format!("{server_name}.{room_id}")
+        };
 
         let buffer_handle = BufferBuilderAsync::new(&buffer_name)
             .input_callback(room.clone())
@@ -351,6 +355,12 @@ impl RoomHandle {
 
         debug!("Restoring room {}", room.room_id());
 
+        *room_buffer.prev_batch.borrow_mut() =
+            prev_batch.map(PrevBatch::Forward);
+
+        room_buffer.buffer.update_buffer_name();
+        room_buffer.buffer.set_topic();
+
         let matrix_members = runtime
             .spawn(async move { room.joined_user_ids().await })
             .await
@@ -360,12 +370,6 @@ impl RoomHandle {
             trace!("Restoring member {}", &user_id);
             room_buffer.members.restore_member(user_id).await;
         }
-
-        *room_buffer.prev_batch.borrow_mut() =
-            prev_batch.map(PrevBatch::Forward);
-
-        room_buffer.buffer.update_buffer_name();
-        room_buffer.buffer.set_topic();
 
         Ok(room_buffer)
     }
