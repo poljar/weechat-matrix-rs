@@ -74,7 +74,7 @@ impl Members {
         trace!("Inserting nick {} for room {}", nick, buffer.short_name());
 
         if group.add_nick(nick_settings).is_err() {
-            trace!(
+            error!(
                 "Error adding nick {} ({}) to room {}, already added.",
                 nick,
                 member.user_id(),
