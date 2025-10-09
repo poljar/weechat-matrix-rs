@@ -69,6 +69,7 @@ use matrix_sdk::{
         EventId, MilliSecondsSinceUnixEpoch, OwnedRoomAliasId,
         OwnedTransactionId, OwnedUserId, RoomId, TransactionId, UserId,
     },
+    stream::StreamExt,
     StoreError,
 };
 
@@ -315,9 +316,39 @@ impl RoomHandle {
         );
         buffer.set_localvar("room_id", room.room_id().as_str());
         if room.is_direct() {
-            buffer.set_localvar("type", "private")
+            buffer.set_localvar("type", "private");
         } else {
-            buffer.set_localvar("type", "channel")
+            buffer.set_localvar("type", "channel");
+
+            if room.room().is_space() {
+                buffer.set_localvar("m.type", "m.space");
+            } else {
+                if let Some(spaces) = runtime.block_on(async {
+                    if let Ok(spaces) = room.room().parent_spaces().await {
+                        let spaces = spaces.collect::<Vec<_>>().await;
+                        return Some(spaces);
+                    };
+                    return None;
+                }) {
+                    if let Some(parent) = spaces
+                        .iter()
+                        .filter_map(|s| s.as_ref().ok())
+                        .find_map(|s| {
+                            use matrix_sdk::room::ParentSpace::*;
+                            if let Reciprocal(room) = s {
+                                Some(room)
+                            } else {
+                                None
+                            }
+                        })
+                    {
+                        buffer.set_localvar(
+                            "m.space.parent",
+                            parent.room_id().as_str(),
+                        );
+                    };
+                }
+            }
         }
 
         if let Some(alias) = room.alias() {
