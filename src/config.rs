@@ -24,11 +24,17 @@ use strum::{EnumVariantNames, VariantNames};
 use weechat::{
     config,
     config::{
-        Conf, ConfigOption, ConfigSection, ConfigSectionSettings,
-        EnumOptionSettings, OptionChanged, SectionReadCallback,
+        Conf, ConfigOption, ConfigSection, ConfigSectionSettings, OptionChanged,
+        SectionReadCallback,
     },
     Weechat,
 };
+
+#[cfg(weechat410)]
+use weechat::config::IntegerOptionSettings;
+
+#[cfg(not(weechat410))]
+use weechat::config::EnumOptionSettings;
 
 use crate::{MatrixServer, Servers};
 
@@ -185,24 +191,49 @@ impl ConfigHandle {
 
             let servers = servers.clone();
 
-            let settings = EnumOptionSettings::new("server_buffer")
-                .description("Should the server buffer be merged with other buffers or independent")
-                .set_change_callback(move |_, _| {
-                    for server in servers.borrow().values() {
-                        server.merge_server_buffers();
-                    }
-                })
-                .default_value(ServerBuffer::default() as i32)
-                .string_values(
-                    ServerBuffer::VARIANTS
-                        .iter()
-                        .map(|v| v.to_string())
-                        .collect::<Vec<String>>(),
-                );
+            #[cfg(weechat410)]
+            {
+                let settings = IntegerOptionSettings::new("server_buffer")
+                    .description("Should the server buffer be merged with other buffers or independent")
+                    .set_change_callback(move |_, _| {
+                        for server in servers.borrow().values() {
+                            server.merge_server_buffers();
+                        }
+                    })
+                    .default_value(ServerBuffer::default() as i32)
+                    .string_values(
+                        ServerBuffer::VARIANTS
+                            .iter()
+                            .map(|v| v.to_string())
+                            .collect::<Vec<String>>(),
+                    );
 
-            look_section
-                .new_enum_option(settings)
-                .expect("Can't create server buffers option");
+                look_section
+                    .new_integer_option(settings)
+                    .expect("Can't create server buffers option");
+            }
+
+            #[cfg(not(weechat410))]
+            {
+                let settings = EnumOptionSettings::new("server_buffer")
+                    .description("Should the server buffer be merged with other buffers or independent")
+                    .set_change_callback(move |_, _| {
+                        for server in servers.borrow().values() {
+                            server.merge_server_buffers();
+                        }
+                    })
+                    .default_value(ServerBuffer::default() as i32)
+                    .string_values(
+                        ServerBuffer::VARIANTS
+                            .iter()
+                            .map(|v| v.to_string())
+                            .collect::<Vec<String>>(),
+                    );
+
+                look_section
+                    .new_enum_option(settings)
+                    .expect("Can't create server buffers option");
+            }
         }
 
         config
@@ -219,12 +250,12 @@ impl ConfigHandle {
 
 impl LookSection<'_> {
     pub fn server_buffer(&self) -> ServerBuffer {
-        if let ConfigOption::Enum(o) =
-            self.search_option("server_buffer").unwrap()
-        {
-            ServerBuffer::from(o.value())
-        } else {
-            panic!("Server buffer option has the wrong type");
+        match self.search_option("server_buffer").unwrap() {
+            #[cfg(weechat410)]
+            ConfigOption::Integer(o) => ServerBuffer::from(o.value()),
+            #[cfg(not(weechat410))]
+            ConfigOption::Enum(o) => ServerBuffer::from(o.value()),
+            _ => panic!("Server buffer option has the wrong type"),
         }
     }
 }
