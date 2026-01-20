@@ -36,12 +36,14 @@ impl MatrixCommand {
             .add_argument("keys import|export <file> <passphrase>")
             .add_argument("disconnect <server-name>")
             .add_argument("reconnect <server-name>")
+            .add_argument("sso-complete <server-name> <login-token>")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
             .arguments_description(format!(
                 "      server: List, add, or remove Matrix servers.
      connect: Connect to Matrix servers.
   disconnect: Disconnect from one or all Matrix servers.
    reconnect: Reconnect to server(s).
+ sso-complete: Complete SSO login with a token from the browser.
      devices: {}
         keys: {}
 verification: {}
@@ -61,8 +63,9 @@ Use /matrix [command] help to find out more.\n",
             .add_completion("connect %(matrix_servers)")
             .add_completion("disconnect %(matrix_servers)")
             .add_completion("reconnect %(matrix_servers)")
+            .add_completion("sso-complete %(matrix_servers)")
             .add_completion(
-                "help server|connect|disconnect|reconnect|keys|devices",
+                "help server|connect|disconnect|reconnect|sso-complete|keys|devices",
             );
 
         Command::new(
@@ -219,10 +222,31 @@ Use /matrix [command] help to find out more.\n",
         }
     }
 
+    fn sso_complete_command(&self, args: &ArgMatches) {
+        let server_name = args
+            .value_of("name")
+            .expect("Server name not set but was required");
+        let login_token = args
+            .value_of("token")
+            .expect("Login token not set but was required")
+            .to_string();
+
+        if let Some(s) = self.servers.get(server_name) {
+            let server = s.clone();
+            Weechat::spawn(async move {
+                server.complete_sso_login(login_token).await;
+            })
+            .detach();
+        } else {
+            self.server_not_found(server_name)
+        }
+    }
+
     fn run(&self, buffer: &Buffer, args: &ArgMatches) {
         match args.subcommand() {
             ("connect", Some(subargs)) => self.connect_command(subargs),
             ("disconnect", Some(subargs)) => self.disconnect_command(subargs),
+            ("sso-complete", Some(subargs)) => self.sso_complete_command(subargs),
             ("server", Some(subargs)) => self.server_command(subargs),
             ("devices", Some(subargs)) => {
                 DevicesCommand::run(buffer, &self.servers, subargs)
@@ -322,6 +346,22 @@ impl CommandCallback for MatrixCommand {
                         Arg::with_name("name")
                             .value_name("server-name")
                             .required(true),
+                    ),
+            )
+            .subcommand(
+                SubCommand::with_name("sso-complete")
+                    .about("Complete SSO login with a token from the browser.")
+                    .arg(
+                        Arg::with_name("name")
+                            .value_name("server-name")
+                            .required(true)
+                            .index(1),
+                    )
+                    .arg(
+                        Arg::with_name("token")
+                            .value_name("login-token")
+                            .required(true)
+                            .index(2),
                     ),
             );
 

@@ -90,7 +90,8 @@ use weechat::{
 
 use crate::{
     config::ServerBuffer,
-    connection::{Connection, InteractiveAuthInfo},
+    connection::Connection,
+    connection::InteractiveAuthInfo,
     room::RoomHandle,
     verification_buffer::VerificationBuffer,
     ConfigHandle, Servers, PLUGIN_NAME,
@@ -118,6 +119,7 @@ pub struct ServerSettings {
     pub username: String,
     pub password: String,
     pub ssl_verify: bool,
+    pub use_sso: bool,
 }
 
 impl Default for ServerSettings {
@@ -129,6 +131,7 @@ impl Default for ServerSettings {
             homeserver: None,
             username: "".to_owned(),
             password: "".to_owned(),
+            use_sso: false,
         }
     }
 }
@@ -211,6 +214,45 @@ impl MatrixServer {
         Rc::downgrade(&self.inner)
     }
 
+    /// Complete SSO login - this is on MatrixServer to access the Weak<InnerServer>
+    pub async fn complete_sso_login(&self, login_token: String) {
+        let connection = if let Some(c) = self.connection() {
+            c
+        } else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        // For SSO, don't reuse old device_id - create fresh session
+        match connection.login_with_token(&login_token, None).await {
+            Ok(response) => {
+                // Save the new device ID using user_id from response
+                let user_id = response.user_id.to_string();
+                if let Err(e) = Connection::save_device_id(
+                    &user_id,
+                    self.get_server_path(),
+                    &response,
+                ) {
+                    self.print_error(&format!(
+                        "Error while writing the device id: {:?}",
+                        e
+                    ));
+                }
+
+                self.receive_login(response);
+                self.print_network("SSO login successful! Starting sync...");
+                
+                // Start the sync loop now that we're logged in
+                if let Some(conn) = self.connection() {
+                    conn.start_sync(self.clone_weak());
+                }
+            }
+            Err(e) => {
+                self.print_error(&format!("Failed to complete SSO login: {:?}", e));
+            }
+        }
+    }
+
     pub fn connect(&self) -> Result<(), ServerError> {
         if self.connected() {
             self.print_error(&format!(
@@ -221,6 +263,16 @@ impl MatrixServer {
             ));
 
             return Ok(());
+        }
+
+        // If SSO is enabled, clear old session data to avoid device ID conflicts
+        if self.use_sso() {
+            if let Err(e) = self.clear_session_data() {
+                self.print_error(&format!(
+                    "Warning: Failed to clear session data for SSO: {}",
+                    e
+                ));
+            }
         }
 
         let client = self.get_or_create_client()?;
@@ -395,6 +447,7 @@ impl MatrixServer {
             .expect("Can't create password option");
 
         let server = server_copy;
+        let server_copy = server.clone();
 
         let ssl_verify =
             BooleanOptionSettings::new(format!("{}.ssl_verify", server_name))
@@ -411,7 +464,27 @@ impl MatrixServer {
 
         server_section
             .new_boolean_option(ssl_verify)
-            .expect("Can't create autoconnect option");
+            .expect("Can't create ssl_verify option");
+
+        let server = server_copy;
+
+        let use_sso =
+            BooleanOptionSettings::new(format!("{}.sso", server_name))
+                .description("Force SSO login even if username/password are set")
+                .default_value(false)
+                .set_change_callback(move |_, option| {
+                    let value = option.value();
+
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
+
+                    server_ref.settings.borrow_mut().use_sso = value;
+                });
+
+        server_section
+            .new_boolean_option(use_sso)
+            .expect("Can't create sso option");
     }
 }
 
@@ -432,6 +505,7 @@ impl Drop for MatrixServer {
                 "homeserver",
                 "password",
                 "proxy",
+                "sso",
                 "ssl_verify",
                 "username",
             ] {
@@ -512,6 +586,10 @@ impl InnerServer {
 
     pub fn password(&self) -> String {
         self.settings.borrow().password.clone()
+    }
+
+    pub fn use_sso(&self) -> bool {
+        self.settings.borrow().use_sso
     }
 
     pub async fn restore_room(&self, room: Room) {
@@ -837,6 +915,55 @@ impl InnerServer {
         *self.login_state.borrow_mut() = Some(login_state);
     }
 
+    pub fn receive_sso_url(&self, url: String) {
+        self.print_network(&format!(
+            "SSO login required. Please open this URL in your browser:\n{}{}{}\n\n\
+            After authenticating, browser will try to redirect to localhost (and fail).\n\
+            Copy the {}loginToken=XXX{} value from the browser's URL bar (just the token, not 'loginToken=').\n\
+            Example: {}/matrix sso-complete {} syl_abc123xyz...{}",
+            Weechat::color("yellow"),
+            url,
+            Weechat::color("reset"),
+            Weechat::color("yellow"),
+            Weechat::color("reset"),
+            Weechat::color("white"),
+            self.name(),
+            Weechat::color("reset")
+        ));
+        
+        // Try to open browser automatically (silence output)
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            use std::process::{Command, Stdio};
+            let _ = Command::new("xdg-open")
+                .arg(&url)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use std::process::{Command, Stdio};
+            let _ = Command::new("open")
+                .arg(&url)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+        }
+        #[cfg(target_os = "windows")]
+        {
+            use std::process::{Command, Stdio};
+            let _ = Command::new("cmd")
+                .args(["/C", "start", "", &url])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+        }
+    }
+
     fn create_server_dir(&self) -> std::io::Result<()> {
         let path = self.get_server_path();
         std::fs::create_dir_all(path)
@@ -849,6 +976,19 @@ impl InnerServer {
         path.push(server_name);
 
         path
+    }
+
+    /// Clear session data to allow fresh SSO login
+    pub fn clear_session_data(&self) -> std::io::Result<()> {
+        // Clear cached client to force new one with fresh crypto store
+        *self.client.borrow_mut() = None;
+        *self.login_state.borrow_mut() = None;
+        
+        let path = self.get_server_path();
+        if path.exists() {
+            std::fs::remove_dir_all(&path)?;
+        }
+        self.create_server_dir()
     }
 
     pub fn connection(&self) -> Option<Connection> {
@@ -874,8 +1014,14 @@ impl InnerServer {
         })?;
 
         let mut client_builder = Client::builder()
-            .homeserver_url(homeserver)
-            .sqlite_store(self.get_server_path(), Some("DEFAULT_PASSPHRASE"));
+            .homeserver_url(homeserver);
+        
+        // For SSO, don't use sqlite_store initially to avoid device ID mismatch
+        // The crypto identity is created at client build time, before login
+        if !settings.use_sso {
+            client_builder = client_builder
+                .sqlite_store(self.get_server_path(), Some("DEFAULT_PASSPHRASE"));
+        }
 
         if let Some(proxy) = settings.proxy.as_ref() {
             client_builder = client_builder.proxy(proxy);

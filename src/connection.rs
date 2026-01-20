@@ -27,7 +27,10 @@ use matrix_sdk::{
                 FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
             },
             message::send_message_event::v3::Response as RoomSendResponse,
-            session::login::v3::Response as LoginResponse,
+            session::{
+                get_login_types::v3::LoginType,
+                login::v3::Response as LoginResponse,
+            },
             sync::sync_events::v3::Filter,
             uiaa::{AuthData, Password, UserIdentifier},
         },
@@ -68,6 +71,7 @@ impl InteractiveAuthInfo {
 
 pub enum ClientMessage {
     LoginMessage(LoginResponse),
+    SsoLoginUrl(String),
     SyncState(OwnedRoomId, AnySyncStateEvent),
     SyncEvent(OwnedRoomId, AnySyncTimelineEvent),
     ToDeviceEvent(AnyToDeviceEvent),
@@ -130,6 +134,7 @@ impl Connection {
             tx,
             server.user_name(),
             server.password(),
+            server.use_sso(),
             server_name.to_string(),
             server.get_server_path(),
         ));
@@ -187,6 +192,172 @@ impl Connection {
             .await?)
     }
 
+    pub async fn login_with_token(
+        &self,
+        login_token: &str,
+        device_id: Option<String>,
+    ) -> MatrixResult<LoginResponse> {
+        let client = self.client.clone();
+        let login_token = login_token.to_string();
+        Ok(self
+            .spawn(async move {
+                let mut builder = client
+                    .matrix_auth()
+                    .login_token(&login_token)
+                    .initial_device_display_name("WeeChat-Matrix-rs");
+                
+                if let Some(device_id) = device_id {
+                    builder = builder.device_id(&device_id);
+                }
+                
+                builder.send().await
+            })
+            .await?)
+    }
+
+    /// Start the sync loop after SSO login completes
+    pub fn start_sync(&self, server: Weak<crate::server::InnerServer>) {
+        let client = self.client.clone();
+        let (tx, rx) = channel(10_000);
+        
+        // Spawn the receiver task on Weechat's main thread
+        Weechat::spawn(Connection::response_receiver(rx, server))
+            .detach();
+        
+        // Spawn the sync-only loop on tokio runtime
+        self.runtime.spawn(Connection::sync_only_loop(client, tx));
+    }
+
+    /// Sync loop that doesn't do login - used after SSO login completes
+    async fn sync_only_loop(
+        client: Client,
+        channel: Sender<Result<ClientMessage, String>>,
+    ) {
+        // Restore existing rooms
+        for room in client.joined_rooms() {
+            if channel
+                .send(Ok(ClientMessage::RestoredRoom(room)))
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+
+        let filter = match client
+            .get_or_upload_filter("sync", Connection::sync_filter())
+            .await
+        {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = channel.send(Err(format!("Failed to upload filter: {:?}", e))).await;
+                return;
+            }
+        };
+
+        let sync_settings = SyncSettings::new()
+            .timeout(DEFAULT_SYNC_TIMEOUT)
+            .filter(Filter::FilterId(filter));
+
+        let sync_channel = &channel;
+        let client_ref = &client;
+
+        loop {
+            let ret = client
+                .sync_with_callback(sync_settings.clone(), |response| async move {
+                    for event in response.to_device.iter().filter_map(|e| e.to_raw().deserialize().ok()) {
+                        if sync_channel
+                            .send(Ok(ClientMessage::ToDeviceEvent(event)))
+                            .await
+                            .is_err()
+                        {
+                            return LoopCtrl::Break;
+                        }
+                    }
+
+                    for (room_id, room) in response.rooms.joined {
+                        if let State::Before(state) = room.state {
+                            for event in state.iter().filter_map(|e| e.deserialize().ok()) {
+                                if let AnySyncStateEvent::RoomMember(m) = event {
+                                    let change = room.ambiguity_changes.get(m.event_id()).cloned();
+                                    if sync_channel
+                                        .send(Ok(ClientMessage::MemberEvent(
+                                            room_id.clone(),
+                                            m,
+                                            true,
+                                            change,
+                                        )))
+                                        .await
+                                        .is_err()
+                                    {
+                                        return LoopCtrl::Break;
+                                    }
+                                } else if sync_channel
+                                    .send(Ok(ClientMessage::SyncState(room_id.clone(), event)))
+                                    .await
+                                    .is_err()
+                                {
+                                    return LoopCtrl::Break;
+                                }
+                            }
+                        }
+
+                        for event in room.timeline.events.iter().filter_map(|e| e.raw().deserialize().ok()) {
+                            if let AnySyncTimelineEvent::State(AnySyncStateEvent::RoomMember(m)) = event {
+                                let change = room.ambiguity_changes.get(m.event_id()).cloned();
+                                if sync_channel
+                                    .send(Ok(ClientMessage::MemberEvent(room_id.clone(), m, false, change)))
+                                    .await
+                                    .is_err()
+                                {
+                                    return LoopCtrl::Break;
+                                }
+                            } else if sync_channel
+                                .send(Ok(ClientMessage::SyncEvent(room_id.clone(), event)))
+                                .await
+                                .is_err()
+                            {
+                                return LoopCtrl::Break;
+                            }
+                        }
+
+                        if let Some(r) = client_ref.get_room(&room_id) {
+                            if !r.are_members_synced() {
+                                let room_id = room_id.clone();
+                                let channel = sync_channel.clone();
+                                tokio::spawn(async move {
+                                    if let Ok(members) = r.members(RoomMemberships::ACTIVE).await {
+                                        for member in members {
+                                            if let Err(e) = channel
+                                                .send(Ok(ClientMessage::MemberEvent(
+                                                    room_id.clone(),
+                                                    member.event().as_sync().expect("Member event is not a StateSyncEvent").to_owned(),
+                                                    true,
+                                                    None,
+                                                )))
+                                                .await
+                                            {
+                                                error!("Failed to send room member {}", e);
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    }
+
+                    LoopCtrl::Continue
+                })
+                .await;
+
+            if let Err(err) = ret {
+                error!("Matrix sync failed: {err}");
+            } else {
+                break;
+            }
+        }
+    }
+
     /// Fetch historical messages for the given room.
     pub async fn room_messages(
         &self,
@@ -231,7 +402,7 @@ impl Connection {
             .await
     }
 
-    fn save_device_id(
+    pub fn save_device_id(
         user_name: &str,
         mut server_path: PathBuf,
         response: &LoginResponse,
@@ -241,7 +412,7 @@ impl Connection {
         std::fs::write(&server_path, &response.device_id)
     }
 
-    fn load_device_id(
+    pub fn load_device_id(
         user_name: &str,
         mut server_path: PathBuf,
     ) -> std::io::Result<Option<String>> {
@@ -284,6 +455,7 @@ impl Connection {
             match message {
                 Ok(message) => match message {
                     ClientMessage::LoginMessage(r) => server.receive_login(r),
+                    ClientMessage::SsoLoginUrl(url) => server.receive_sso_url(url),
                     ClientMessage::SyncEvent(r, e) => {
                         server.receive_joined_timeline_event(&r, e).await
                     }
@@ -337,6 +509,7 @@ impl Connection {
         channel: Sender<Result<ClientMessage, String>>,
         username: String,
         password: String,
+        force_sso: bool,
         server_name: String,
         server_path: PathBuf,
     ) {
@@ -346,8 +519,6 @@ impl Connection {
 
             let device_id = match device_id {
                 Err(e) => {
-                    // TODO: do we want to do something with channel.send()
-                    // errors?
                     let _ = channel
                         .send(Err(format!(
                         "Error while reading the device id for server {}: {:?}",
@@ -361,43 +532,111 @@ impl Connection {
 
             let first_login = device_id.is_none();
 
-            let mut builder = client
-                .matrix_auth()
-                .login_username(&username, &password)
-                .initial_device_display_name("WeeChat-Matrix-rs");
-
-            if let Some(device_id) = device_id.as_ref() {
-                builder = builder.device_id(device_id);
-            };
-
-            match builder.send().await {
-                Ok(response) => {
-                    if let Err(e) = Connection::save_device_id(
-                        &username,
-                        server_path.clone(),
-                        &response,
-                    ) {
-                        let _ = channel
-                            .send(Err(format!(
-                            "Error while writing the device id for server {}: {:?}",
-                            server_name, e
-                        ))).await;
-                        return;
-                    }
-
-                    if channel
-                        .send(Ok(ClientMessage::LoginMessage(response)))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
+            // Check available login flows
+            let login_types = match client.matrix_auth().get_login_types().await {
+                Ok(types) => types,
                 Err(e) => {
                     let _ = channel
-                        .send(Err(format!("Failed to log in: {:?}", e)))
+                        .send(Err(format!(
+                            "Failed to get login types for server {}: {:?}",
+                            server_name, e
+                        )))
                         .await;
                     return;
+                }
+            };
+
+            // Check if SSO is available and username/password are empty
+            let has_sso = login_types
+                .flows
+                .iter()
+                .any(|flow| matches!(flow, LoginType::Sso(_)));
+            
+            let use_sso = has_sso && (force_sso || username.is_empty() || password.is_empty());
+
+            if use_sso {
+                // Generate SSO login URL with localhost redirect
+                // Browser will fail to connect but token will be visible in URL bar
+                let redirect_url = "http://localhost:0/sso";
+                let sso_url = match client
+                    .matrix_auth()
+                    .get_sso_login_url(redirect_url, None)
+                    .await
+                {
+                    Ok(url) => url,
+                    Err(e) => {
+                        let _ = channel
+                            .send(Err(format!(
+                                "Failed to get SSO login URL for server {}: {:?}",
+                                server_name, e
+                            )))
+                            .await;
+                        return;
+                    }
+                };
+
+                // Send SSO URL to be displayed
+                if channel
+                    .send(Ok(ClientMessage::SsoLoginUrl(sso_url)))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+
+                // Return and wait for the user to complete SSO via /matrix sso-complete command
+                return;
+            } else {
+                // Fall back to password login if SSO not available or credentials provided
+                if username.is_empty() || password.is_empty() {
+                    let _ = channel
+                        .send(Err(format!(
+                            "No username/password provided and SSO is not available for server {}",
+                            server_name
+                        )))
+                        .await;
+                    return;
+                }
+
+                let mut builder = client
+                    .matrix_auth()
+                    .login_username(&username, &password)
+                    .initial_device_display_name("WeeChat-Matrix-rs");
+
+                if let Some(device_id) = device_id.as_ref() {
+                    builder = builder.device_id(device_id);
+                };
+
+                match builder.send().await {
+                    Ok(response) => {
+                        if let Err(e) = Connection::save_device_id(
+                            &username,
+                            server_path.clone(),
+                            &response,
+                        ) {
+                            let _ = channel
+                                .send(Err(format!(
+                                    "Error while writing the device id for server {}: {:?}",
+                                    server_name, e
+                                )))
+                                .await;
+                            return;
+                        }
+
+                        if channel
+                            .send(Ok(ClientMessage::LoginMessage(response)))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        let _ = channel
+                            .send(Err(format!("Failed to log in: {:?}", e)))
+                            .await;
+                        return;
+                    }
                 }
             }
 
