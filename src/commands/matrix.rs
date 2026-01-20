@@ -32,6 +32,7 @@ impl MatrixCommand {
             .add_argument("server add <server-name> <hostname>[:<port>]")
             .add_argument("server delete|list|listfull <server-name>")
             .add_argument("connect <server-name>")
+            .add_argument("join <server-name> <room-id-or-alias>")
             .add_argument("devices delete|list|set-name")
             .add_argument("keys import|export <file> <passphrase>")
             .add_argument("disconnect <server-name>")
@@ -42,6 +43,7 @@ impl MatrixCommand {
      connect: Connect to Matrix servers.
   disconnect: Disconnect from one or all Matrix servers.
    reconnect: Reconnect to server(s).
+        join: Join a Matrix room by ID or alias (e.g. #room:matrix.org).
      devices: {}
         keys: {}
 verification: {}
@@ -61,8 +63,9 @@ Use /matrix [command] help to find out more.\n",
             .add_completion("connect %(matrix_servers)")
             .add_completion("disconnect %(matrix_servers)")
             .add_completion("reconnect %(matrix_servers)")
+            .add_completion("join %(matrix_servers)")
             .add_completion(
-                "help server|connect|disconnect|reconnect|keys|devices",
+                "help server|connect|disconnect|reconnect|join|keys|devices",
             );
 
         Command::new(
@@ -219,10 +222,31 @@ Use /matrix [command] help to find out more.\n",
         }
     }
 
+    fn join_command(&self, args: &ArgMatches) {
+        let server_name = args
+            .value_of("server")
+            .expect("Server name not set but was required");
+        let room_id_or_alias = args
+            .value_of("room")
+            .expect("Room not set but was required")
+            .to_string();
+
+        if let Some(s) = self.servers.get(server_name) {
+            let server = s.clone();
+            Weechat::spawn(async move {
+                server.join_room(room_id_or_alias).await;
+            })
+            .detach();
+        } else {
+            self.server_not_found(server_name)
+        }
+    }
+
     fn run(&self, buffer: &Buffer, args: &ArgMatches) {
         match args.subcommand() {
             ("connect", Some(subargs)) => self.connect_command(subargs),
             ("disconnect", Some(subargs)) => self.disconnect_command(subargs),
+            ("join", Some(subargs)) => self.join_command(subargs),
             ("server", Some(subargs)) => self.server_command(subargs),
             ("devices", Some(subargs)) => {
                 DevicesCommand::run(buffer, &self.servers, subargs)
@@ -322,6 +346,22 @@ impl CommandCallback for MatrixCommand {
                         Arg::with_name("name")
                             .value_name("server-name")
                             .required(true),
+                    ),
+            )
+            .subcommand(
+                SubCommand::with_name("join")
+                    .about("Join a Matrix room by ID or alias.")
+                    .arg(
+                        Arg::with_name("server")
+                            .value_name("server-name")
+                            .required(true)
+                            .index(1),
+                    )
+                    .arg(
+                        Arg::with_name("room")
+                            .value_name("room-id-or-alias")
+                            .required(true)
+                            .index(2),
                     ),
             );
 
