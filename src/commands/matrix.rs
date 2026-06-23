@@ -316,6 +316,7 @@ impl CommandCallback for MatrixCommand {
             .subcommand(
                 SubCommand::with_name("verification")
                     .about(VerificationCommand::DESCRIPTION)
+                    .settings(VerificationCommand::SETTINGS)
                     .subcommands(VerificationCommand::subcommands()),
             )
             .subcommand(
