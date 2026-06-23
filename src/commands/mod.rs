@@ -15,6 +15,7 @@ mod matrix;
 mod me;
 mod media;
 mod page_up;
+mod part;
 mod verification;
 
 use buffer_clear::BufferClearCommand;
@@ -25,6 +26,7 @@ use matrix::MatrixCommand;
 use me::MeCommand;
 use media::MediaCommand;
 use page_up::PageUpCommand;
+use part::PartCommand;
 
 pub struct Commands {
     _matrix: Command,
@@ -35,6 +37,7 @@ pub struct Commands {
     _buffer_clear: CommandRun,
     _join: CommandRun,
     _me: CommandRun,
+    _part: CommandRun,
 }
 
 impl Commands {
@@ -51,6 +54,7 @@ impl Commands {
             _buffer_clear: BufferClearCommand::create(servers)?,
             _join: JoinCommand::create(servers)?,
             _me: MeCommand::create(servers)?,
+            _part: PartCommand::create(servers)?,
         })
     }
 }
