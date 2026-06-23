@@ -302,6 +302,9 @@ impl RoomHandle {
 
         buffer.set_localvar("server", server_name);
         buffer.set_localvar("nick", &own_nick);
+        buffer
+            .run_command("/buffer set highlight_words $nick")
+            .expect("Can't set room buffer highlight words");
         buffer.set_localvar(
             "domain",
             room.room_id()
