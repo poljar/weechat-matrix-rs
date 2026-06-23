@@ -71,6 +71,9 @@ extension enabled before it loads the plugin:
 
     /set weechat.plugin.extension ".so,.dll,.dylib"
 
+Rename `target/release/libmatrix.dylib` to `matrix.dylib` before copying it to
+your WeeChat plugin directory.
+
 # Loading the plugin
 
 Restart WeeChat after installing the plugin, or load it manually:
