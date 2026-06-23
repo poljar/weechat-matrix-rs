@@ -15,7 +15,7 @@ use matrix_sdk::{
             },
             SyncStateEvent,
         },
-        uint, Int, OwnedUserId, UserId,
+        uint, Int, MilliSecondsSinceUnixEpoch, OwnedUserId, UserId,
     },
 };
 
@@ -32,6 +32,7 @@ pub struct Members {
     pub(super) runtime: Handle,
     ambiguity_map: Rc<DashMap<OwnedUserId, bool>>,
     nicks: Rc<DashMap<OwnedUserId, String>>,
+    last_active: Rc<DashMap<OwnedUserId, MilliSecondsSinceUnixEpoch>>,
     buffer: RoomBuffer,
 }
 
@@ -55,6 +56,7 @@ impl Members {
             runtime,
             nicks: DashMap::new().into(),
             ambiguity_map: DashMap::new().into(),
+            last_active: DashMap::new().into(),
             buffer,
         }
     }
@@ -244,6 +246,35 @@ impl Members {
         &self.room
     }
 
+    pub fn mark_active(
+        &self,
+        user_id: &UserId,
+        timestamp: MilliSecondsSinceUnixEpoch,
+    ) {
+        if self
+            .last_active
+            .get(user_id)
+            .map(|last_active| last_active.0 >= timestamp.0)
+            .unwrap_or(false)
+        {
+            return;
+        }
+
+        self.last_active.insert(user_id.to_owned(), timestamp);
+    }
+
+    fn should_smart_filter(
+        &self,
+        user_id: &UserId,
+        timestamp: MilliSecondsSinceUnixEpoch,
+    ) -> bool {
+        let Some(last_active) = self.last_active.get(user_id) else {
+            return true;
+        };
+
+        timestamp.0.saturating_sub(last_active.0) > uint!(300000)
+    }
+
     pub async fn handle_membership_event(
         &self,
         event: &SyncStateEvent<RoomMemberEventContent>,
@@ -311,7 +342,7 @@ impl Members {
             let target = self.get(&target_id).await;
 
             // Display the event message
-            let message = match (&sender, &target) {
+            let line = match (&sender, &target) {
                 (Some(sender), Some(target)) => {
                     render_membership(event, sender, target)
                 }
@@ -329,13 +360,23 @@ impl Members {
                             target_id);
                     }
 
-                    "ERROR: cannot render event since sender or target are not a room member".into()
+                    crate::render::RenderedLine {
+                        tags: vec!["matrix_membership".to_owned()],
+                        message: "ERROR: cannot render event since sender or target are not a room member".into(),
+                    }
                 }
             };
 
             let timestamp: i64 =
                 (event.origin_server_ts.0 / uint!(1000)).into();
-            buffer.print_date_tags(timestamp as isize, &[], &message);
+            let mut tags = line.tags;
+
+            if self.should_smart_filter(&target_id, event.origin_server_ts) {
+                tags.push("matrix_smart_filter".to_owned());
+            }
+
+            let tags: Vec<&str> = tags.iter().map(|t| t.as_str()).collect();
+            buffer.print_date_tags(timestamp as isize, &tags, &line.message);
         }
     }
 }

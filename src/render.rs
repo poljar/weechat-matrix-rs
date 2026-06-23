@@ -825,8 +825,7 @@ pub fn render_membership(
     event: &OriginalSyncStateEvent<RoomMemberEventContent>,
     sender: &WeechatRoomMember,
     target: &WeechatRoomMember,
-) -> String {
-    const _TAGS: &[&str] = &["matrix_membership"];
+) -> RenderedLine {
     use MembershipChange::*;
     let change_op = event.membership_change();
 
@@ -893,8 +892,7 @@ pub fn render_membership(
         color_reset = Weechat::color("reset")
     );
 
-    // TODO: we should return the tags as well.
-    match change_op {
+    let message = match change_op {
         ProfileChanged {
             displayname_change,
             avatar_url_change,
@@ -970,6 +968,11 @@ pub fn render_membership(
             target = target_name,
             op = operation
         ),
+    };
+
+    RenderedLine {
+        tags: vec!["matrix_membership".to_owned()],
+        message,
     }
 }
 
