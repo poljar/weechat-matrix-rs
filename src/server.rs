@@ -963,6 +963,15 @@ impl InnerServer {
         path
     }
 
+    fn get_server_cache_path(&self) -> PathBuf {
+        let mut path = Weechat::home_dir();
+        let server_name: &str = &self.server_name;
+        path.push("matrix-rust");
+        path.push(format!("{}-cache", server_name));
+
+        path
+    }
+
     pub fn connection(&self) -> Option<Connection> {
         self.connection.borrow().clone()
     }
@@ -987,7 +996,11 @@ impl InnerServer {
 
         let mut client_builder = Client::builder()
             .homeserver_url(homeserver)
-            .sqlite_store(self.get_server_path(), Some("DEFAULT_PASSPHRASE"));
+            .sqlite_store_with_cache_path(
+                self.get_server_path(),
+                self.get_server_cache_path(),
+                Some("DEFAULT_PASSPHRASE"),
+            );
 
         if let Some(proxy) = settings.proxy.as_ref() {
             client_builder = client_builder.proxy(proxy);
