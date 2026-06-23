@@ -71,9 +71,26 @@ extension enabled before it loads the plugin:
 
     /set weechat.plugin.extension ".so,.dll,.dylib"
 
+# Loading the plugin
+
+Restart WeeChat after installing the plugin, or load it manually:
+
+    /plugin load matrix
+
+Check that it is loaded with:
+
+    /plugin list
+
+If WeeChat cannot find the plugin, check that the file is named `matrix.so`
+(`matrix.dylib` on macOS), that it is in a directory from WeeChat's plugin
+search path, and that `.so`/`.dylib` is enabled in
+`weechat.plugin.extension`.
+
 # Configuration
 
-Configuration is completed primarily through the Weechat interface. First start Weechat, and then issue the following commands _(replace the placeholders in brackets [] with your own details)_:
+Configuration is completed primarily through the Weechat interface. First start
+WeeChat, make sure the plugin is loaded, and then issue the following commands
+_(replace the placeholders in brackets [] with your own details)_:
 
 1. Add a server _(make sure the url includes the scheme e.g. 'https://matrix.org')_:
 
@@ -101,4 +118,7 @@ Configuration is completed primarily through the Weechat interface. First start 
 
 `/help matrix` will print information about the `/matrix` command.
 
-`/matrix help [command]` will print information for subcommands, such as `/matrix help server`
+`/matrix help [command]` will print information for subcommands, such as `/matrix help server`.
+
+Room buffers accept normal message input after `/matrix connect [server-name]`
+has completed.
