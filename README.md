@@ -148,6 +148,15 @@ The inactivity delay defaults to five minutes and can be changed with:
 
        /set matrix-rust.look.smart_filter_delay 300000
 
+# Storage
+
+The plugin keeps Matrix state and encryption data in
+`$WEECHAT_HOME/matrix-rust/<server>/`. It keeps the Matrix SDK event cache in
+`$WEECHAT_HOME/matrix-rust/<server>-cache/`.
+
+If the cache grows or causes too much disk I/O, disconnect WeeChat and remove
+only the `-cache` directory. Do not remove the main server directory unless you
+want to reset stored Matrix state.
 
 # Helpful Commands
 
