@@ -10,6 +10,7 @@ use matrix_sdk::{
         UserId,
     },
 };
+use weechat::Weechat;
 
 use crate::{
     connection::Connection,
@@ -222,5 +223,7 @@ impl Verification {
             }
             _ => {}
         }
+
+        Weechat::bar_item_update("buffer_modes");
     }
 }
