@@ -3239,6 +3239,7 @@ checksum = "6124d74847ea788601477c89a44485894432a806824cae93885c5825a8ae9dbc"
 dependencies = [
  "as_variant",
  "html5ever",
+ "ruma-common",
  "tracing",
  "wildmatch",
 ]
@@ -4640,6 +4641,7 @@ dependencies = [
  "matrix-sdk",
  "mime_guess",
  "qrcode",
+ "ruma-html",
  "serde_json",
  "strum",
  "tokio",
