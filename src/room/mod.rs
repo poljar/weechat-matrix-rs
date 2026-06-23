@@ -924,6 +924,17 @@ impl MatrixRoom {
         Weechat::bar_item_update("matrix_modes");
     }
 
+    pub async fn get_messages_if_empty(&self) {
+        let buffer_handle = self.buffer_handle();
+        let Ok(buffer) = buffer_handle.upgrade() else {
+            return;
+        };
+
+        if buffer.num_lines() == 0 {
+            self.get_messages().await;
+        }
+    }
+
     async fn handle_outgoing_message(
         &self,
         transaction_id: &TransactionId,
