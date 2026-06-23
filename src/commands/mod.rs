@@ -16,6 +16,7 @@ mod me;
 mod media;
 mod page_up;
 mod part;
+mod redact;
 mod upload;
 mod verification;
 
@@ -28,6 +29,7 @@ use me::MeCommand;
 use media::MediaCommand;
 use page_up::PageUpCommand;
 use part::PartCommand;
+use redact::RedactCommand;
 use upload::UploadCommand;
 
 pub struct Commands {
@@ -35,6 +37,7 @@ pub struct Commands {
     _keys: Command,
     _devices: Command,
     _page_up: CommandRun,
+    _redact: Command,
     _verification: Command,
     _buffer_clear: CommandRun,
     _join: CommandRun,
@@ -53,6 +56,7 @@ impl Commands {
             _devices: DevicesCommand::create(servers)?,
             _keys: KeysCommand::create(servers)?,
             _page_up: PageUpCommand::create(servers)?,
+            _redact: RedactCommand::create(servers)?,
             _verification: VerificationCommand::create(servers)?,
             _buffer_clear: BufferClearCommand::create(servers)?,
             _join: JoinCommand::create(servers)?,
