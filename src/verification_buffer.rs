@@ -103,7 +103,15 @@ struct InnerVerificationBuffer {
 }
 
 impl InnerVerificationBuffer {
-    fn print_done(&self, _buffer: BufferHandle) {}
+    fn print_message(buffer: BufferHandle, message: &str) {
+        if let Ok(buffer) = buffer.upgrade() {
+            buffer.print(message);
+        }
+    }
+
+    fn print_done(&self, buffer: BufferHandle) {
+        Self::print_message(buffer, "Verification done");
+    }
 
     pub async fn accept(&self, buffer: BufferHandle) -> Result<(), Error> {
         if let Some(c) = self.connection.borrow().clone() {
@@ -320,9 +328,10 @@ impl VerificationBuffer {
                 }
             }
             AnyToDeviceEvent::KeyVerificationCancel(_) => {
-                // let message =
-                //     format!("The verification flow has been canceled");
-                // self.print(&message);
+                InnerVerificationBuffer::print_message(
+                    self.buffer.clone(),
+                    "Verification canceled",
+                );
             }
             AnyToDeviceEvent::KeyVerificationKey(e) => {
                 self.print_sas(&e.content);
@@ -336,7 +345,9 @@ impl VerificationBuffer {
                     }
                 }
             }
-            AnyToDeviceEvent::KeyVerificationDone(_) => {}
+            AnyToDeviceEvent::KeyVerificationDone(_) => {
+                self.inner.print_done(self.buffer.clone());
+            }
             _ => {}
         }
     }

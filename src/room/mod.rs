@@ -484,7 +484,8 @@ impl MatrixRoom {
     }
 
     pub fn cancel_verification(&self) {
-        todo!()
+        let verification = self.verification.clone();
+        Weechat::spawn(async move { verification.cancel().await }).detach();
     }
 
     async fn redact_event(&self, event: &SyncRoomRedactionEvent) {
