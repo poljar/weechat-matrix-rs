@@ -225,6 +225,26 @@ impl MessageQueue {
     }
 }
 
+enum TransactionEventHandling {
+    RenderNormally,
+    LocalEcho {
+        echo: bool,
+        content: RoomMessageEventContent,
+    },
+}
+
+fn take_transaction_event(
+    queue: &MessageQueue,
+    transaction_id: Option<&TransactionId>,
+) -> TransactionEventHandling {
+    match transaction_id.and_then(|id| queue.remove(id)) {
+        Some((echo, content)) => {
+            TransactionEventHandling::LocalEcho { echo, content }
+        }
+        None => TransactionEventHandling::RenderNormally,
+    }
+}
+
 impl RoomHandle {
     pub fn new(
         server_name: &str,
@@ -755,8 +775,21 @@ impl MatrixRoom {
                 .await
             {
                 Ok(r) => {
-                    self.handle_outgoing_message(&transaction_id, &r.event_id)
+                    if let TransactionEventHandling::LocalEcho {
+                        echo,
+                        content,
+                    } = take_transaction_event(
+                        &self.outgoing_messages,
+                        Some(&transaction_id),
+                    ) {
+                        self.handle_outgoing_message(
+                            &transaction_id,
+                            &r.event_id,
+                            echo,
+                            content,
+                        )
                         .await;
+                    }
                 }
                 Err(_e) => {
                     // TODO: print out an error, remember to modify the local
@@ -960,32 +993,30 @@ impl MatrixRoom {
         &self,
         transaction_id: &TransactionId,
         event_id: &EventId,
+        echo: bool,
+        content: RoomMessageEventContent,
     ) {
-        if let Some((echo, content)) =
-            self.outgoing_messages.remove(transaction_id)
-        {
-            let event = OriginalSyncMessageLikeEvent {
-                sender: (*self.own_user_id).to_owned(),
-                origin_server_ts: MilliSecondsSinceUnixEpoch::now(),
-                event_id: event_id.to_owned(),
-                content,
-                unsigned: Default::default(),
-            };
+        let event = OriginalSyncMessageLikeEvent {
+            sender: (*self.own_user_id).to_owned(),
+            origin_server_ts: MilliSecondsSinceUnixEpoch::now(),
+            event_id: event_id.to_owned(),
+            content,
+            unsigned: Default::default(),
+        };
 
-            let event = AnySyncMessageLikeEvent::RoomMessage(
-                SyncMessageLikeEvent::Original(event),
-            );
+        let event = AnySyncMessageLikeEvent::RoomMessage(
+            SyncMessageLikeEvent::Original(event),
+        );
 
-            let rendered = self
-                .render_sync_message(&event)
-                .await
-                .expect("Sent out an event that we don't know how to render");
+        let rendered = self
+            .render_sync_message(&event)
+            .await
+            .expect("Sent out an event that we don't know how to render");
 
-            if echo {
-                self.buffer.replace_local_echo(transaction_id, rendered);
-            } else {
-                self.buffer.print_rendered_event(rendered);
-            }
+        if echo {
+            self.buffer.replace_local_echo(transaction_id, rendered);
+        } else {
+            self.buffer.print_rendered_event(rendered);
         }
     }
 
@@ -1031,8 +1062,18 @@ impl MatrixRoom {
             .mark_active(event.sender(), event.origin_server_ts());
 
         if let Some(id) = event.transaction_id() {
-            self.handle_outgoing_message(id, event.event_id()).await;
-            return;
+            if let TransactionEventHandling::LocalEcho { echo, content } =
+                take_transaction_event(&self.outgoing_messages, Some(id))
+            {
+                self.handle_outgoing_message(
+                    id,
+                    event.event_id(),
+                    echo,
+                    content,
+                )
+                .await;
+                return;
+            }
         }
 
         if let AnySyncMessageLikeEvent::RoomRedaction(r) = event {
@@ -1184,5 +1225,64 @@ impl MatrixRoom {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_content(body: &str) -> RoomMessageEventContent {
+        RoomMessageEventContent::text_plain(body)
+    }
+
+    #[test]
+    fn transaction_event_without_id_renders_normally() {
+        let queue = MessageQueue::new();
+
+        assert!(matches!(
+            take_transaction_event(&queue, None),
+            TransactionEventHandling::RenderNormally
+        ));
+    }
+
+    #[test]
+    fn unmatched_transaction_event_renders_normally() {
+        let queue = MessageQueue::new();
+        let queued_id = TransactionId::new();
+        let other_id = TransactionId::new();
+
+        queue.add(queued_id.clone(), text_content("queued message"));
+
+        assert!(matches!(
+            take_transaction_event(&queue, Some(&other_id)),
+            TransactionEventHandling::RenderNormally
+        ));
+        assert!(matches!(
+            take_transaction_event(&queue, Some(&queued_id)),
+            TransactionEventHandling::LocalEcho { .. }
+        ));
+    }
+
+    #[test]
+    fn matched_transaction_event_is_consumed_once() {
+        let queue = MessageQueue::new();
+        let transaction_id = TransactionId::new();
+
+        queue.add_with_echo(transaction_id.clone(), text_content("local echo"));
+
+        match take_transaction_event(&queue, Some(&transaction_id)) {
+            TransactionEventHandling::LocalEcho { echo, .. } => {
+                assert!(echo);
+            }
+            TransactionEventHandling::RenderNormally => {
+                panic!("expected the queued local echo to be consumed");
+            }
+        }
+
+        assert!(matches!(
+            take_transaction_event(&queue, Some(&transaction_id)),
+            TransactionEventHandling::RenderNormally
+        ));
     }
 }
