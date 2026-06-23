@@ -37,6 +37,11 @@ path to that header:
 
     export WEECHAT_PLUGIN_FILE=/usr/include/weechat/weechat-plugin.h
 
+If `bindgen` reports that `stddef.h`, `libclang`, or `libLLVM` is missing, check
+that the `clang` command-line tools, C/C++ compiler headers, and matching
+`libclang` package are installed. On minimal distributions the library package
+alone may not provide the compiler include paths that `bindgen` needs.
+
 After the dependencies are installed the plugin can be compiled with:
 
     cargo build --release
