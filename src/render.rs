@@ -39,6 +39,10 @@ use matrix_sdk::{
         TransactionId, UserId,
     },
 };
+use ruma_html::{
+    matrix::{AnchorUri, MatrixElement},
+    Html, NodeData, NodeRef,
+};
 
 use weechat::{Prefix, Weechat};
 
@@ -232,16 +236,11 @@ impl Render for TextMessageEventContent {
     type RenderContext = ();
 
     fn render(&self, _: &Self::RenderContext) -> RenderedContent {
-        let lines = self
-            .body
-            .lines()
-            .map(|l| RenderedLine {
-                message: l.to_owned(),
-                tags: self.tags(),
-            })
-            .collect();
-        // TODO: parse and render using the formatted body.
-        RenderedContent { lines }
+        if let Some(body) = self.formatted_body() {
+            render_formatted_message_body(body, self.tags())
+        } else {
+            render_plain_message_body(self.body(), self.tags())
+        }
     }
 }
 
@@ -254,9 +253,13 @@ impl Render for EmoteMessageEventContent {
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
-        // TODO: parse and render using the formatted body.
-        // TODO: handle multiple lines in the body.
-        let message = format!("{} {}", sender.nick(), self.body);
+        let message = format!(
+            "{} {}",
+            sender.nick(),
+            self.formatted_body()
+                .map(formatted_body_to_plain_text)
+                .unwrap_or_else(|| self.body().to_owned())
+        );
 
         let line = RenderedLine {
             message,
@@ -304,12 +307,13 @@ impl Render for NoticeMessageEventContent {
     }
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
-        // TODO: parse and render using the formatted body.
         let message = format!(
             "{color_notice}Notice\
             {color_delim}({color_reset}{}{color_delim}){color_reset}: {}",
             sender.nick(),
-            self.body,
+            self.formatted_body()
+                .map(formatted_body_to_plain_text)
+                .unwrap_or_else(|| self.body().to_owned()),
             color_notice = Weechat::color("irc.color.notice"),
             color_delim = Weechat::color("chat_delimiters"),
             color_reset = Weechat::color("reset"),
@@ -787,6 +791,275 @@ macro_rules! render_key_content {
 render_key_content!(KeyVerificationKeyEventContent);
 render_key_content!(ToDeviceKeyVerificationKeyEventContent);
 
+fn render_formatted_message_body(
+    body: &str,
+    tags: Vec<String>,
+) -> RenderedContent {
+    render_plain_message_body(&formatted_body_to_plain_text(body), tags)
+}
+
+fn render_plain_message_body(body: &str, tags: Vec<String>) -> RenderedContent {
+    let lines = body
+        .lines()
+        .map(|l| RenderedLine {
+            message: l.to_owned(),
+            tags: tags.clone(),
+        })
+        .collect();
+
+    RenderedContent { lines }
+}
+
+fn formatted_body_to_plain_text(body: &str) -> String {
+    let html = Html::parse(body);
+    html.sanitize();
+
+    let mut output = String::new();
+    let mut context = HtmlRenderContext::default();
+
+    for node in html.children() {
+        render_html_node(&node, &mut output, &mut context);
+    }
+
+    trim_newlines(output)
+}
+
+#[derive(Clone, Default)]
+struct HtmlRenderContext {
+    lists: Vec<ListContext>,
+    in_pre: bool,
+}
+
+#[derive(Clone)]
+enum ListContext {
+    Unordered,
+    Ordered { next: i64 },
+}
+
+fn render_html_node(
+    node: &NodeRef,
+    output: &mut String,
+    context: &mut HtmlRenderContext,
+) {
+    match node.data() {
+        NodeData::Text(text) => output.push_str(&text.borrow()),
+        NodeData::Element(element) => match element.to_matrix().element {
+            MatrixElement::Br => push_newline(output),
+            MatrixElement::Hr => {
+                push_newline(output);
+                output.push_str("---");
+                push_newline(output);
+            }
+            MatrixElement::P
+            | MatrixElement::Div(_)
+            | MatrixElement::Details
+            | MatrixElement::Summary
+            | MatrixElement::Table
+            | MatrixElement::Thead
+            | MatrixElement::Tbody
+            | MatrixElement::Tr
+            | MatrixElement::Caption
+            | MatrixElement::H(_) => {
+                push_newline(output);
+                render_html_children(node, output, context);
+                push_newline(output);
+            }
+            MatrixElement::Blockquote => {
+                let mut quote = String::new();
+                let mut quote_context = context.clone();
+
+                render_html_children(node, &mut quote, &mut quote_context);
+
+                push_newline(output);
+                output.push_str(&prefix_lines(trim_newlines(quote), "> "));
+                push_newline(output);
+            }
+            MatrixElement::Ul => {
+                context.lists.push(ListContext::Unordered);
+                push_newline(output);
+                render_html_children(node, output, context);
+                context.lists.pop();
+                push_newline(output);
+            }
+            MatrixElement::Ol(ordered) => {
+                context.lists.push(ListContext::Ordered {
+                    next: ordered.start.unwrap_or(1),
+                });
+                push_newline(output);
+                render_html_children(node, output, context);
+                context.lists.pop();
+                push_newline(output);
+            }
+            MatrixElement::Th | MatrixElement::Td => {
+                render_html_children(node, output, context);
+                output.push('\t');
+            }
+            MatrixElement::Li => {
+                push_newline(output);
+                output.push_str(
+                    &"  ".repeat(context.lists.len().saturating_sub(1)),
+                );
+                output.push_str(&list_marker(context));
+                render_html_children(node, output, context);
+            }
+            MatrixElement::A(anchor) => {
+                let start = output.len();
+                render_html_children(node, output, context);
+                if let Some(href) =
+                    anchor.href.and_then(|href| anchor_uri_to_string(&href))
+                {
+                    if output[start..].trim() != href {
+                        output.push_str(" <");
+                        output.push_str(&href);
+                        output.push('>');
+                    }
+                }
+            }
+            MatrixElement::B | MatrixElement::Strong => {
+                render_wrapped_html_children(node, output, context, "*");
+            }
+            MatrixElement::I | MatrixElement::Em => {
+                render_wrapped_html_children(node, output, context, "_");
+            }
+            MatrixElement::S | MatrixElement::Del => {
+                render_wrapped_html_children(node, output, context, "~");
+            }
+            MatrixElement::Code(_) if !context.in_pre => {
+                render_wrapped_html_children(node, output, context, "`");
+            }
+            MatrixElement::Pre => {
+                let was_in_pre = context.in_pre;
+                context.in_pre = true;
+
+                let mut code = String::new();
+                render_html_children(node, &mut code, context);
+
+                context.in_pre = was_in_pre;
+
+                push_newline(output);
+                output.push_str("```");
+                push_newline(output);
+                output.push_str(&trim_newlines(code));
+                push_newline(output);
+                output.push_str("```");
+                push_newline(output);
+            }
+            MatrixElement::Img(image) => {
+                if let Some(alt) = image.alt {
+                    output.push_str(&alt);
+                } else if let Some(src) = image.src {
+                    output.push_str(src.as_str());
+                }
+            }
+            MatrixElement::MatrixReply => {}
+            MatrixElement::Other(_) => {
+                render_html_children(node, output, context)
+            }
+            _ => render_html_children(node, output, context),
+        },
+        NodeData::Document | NodeData::Other => {
+            render_html_children(node, output, context)
+        }
+    }
+}
+
+fn render_html_children(
+    node: &NodeRef,
+    output: &mut String,
+    context: &mut HtmlRenderContext,
+) {
+    for child in node.children() {
+        render_html_node(&child, output, context);
+    }
+}
+
+fn render_wrapped_html_children(
+    node: &NodeRef,
+    output: &mut String,
+    context: &mut HtmlRenderContext,
+    wrapper: &str,
+) {
+    output.push_str(wrapper);
+    render_html_children(node, output, context);
+    output.push_str(wrapper);
+}
+
+fn list_marker(context: &mut HtmlRenderContext) -> String {
+    match context.lists.last_mut() {
+        Some(ListContext::Ordered { next }) => {
+            let marker = format!("{}. ", next);
+            *next += 1;
+            marker
+        }
+        _ => "- ".to_owned(),
+    }
+}
+
+fn anchor_uri_to_string(uri: &AnchorUri) -> Option<String> {
+    match uri {
+        AnchorUri::Matrix(uri) => Some(uri.to_string()),
+        AnchorUri::MatrixTo(uri) => Some(uri.to_string()),
+        AnchorUri::Other(uri) => Some(uri.to_string()),
+        _ => None,
+    }
+}
+
+fn prefix_lines(text: String, prefix: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if line.is_empty() {
+                prefix.trim_end().to_owned()
+            } else {
+                format!("{prefix}{line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn push_newline(output: &mut String) {
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+}
+
+fn trim_newlines(mut output: String) -> String {
+    while output.starts_with('\n') {
+        output.remove(0);
+    }
+
+    while output.ends_with('\n') {
+        output.pop();
+    }
+
+    output
+}
+
+/// Trait for message event types that contain an optional formatted body.
+trait HasFormattedBody {
+    fn body(&self) -> &str;
+    fn formatted_body(&self) -> Option<&str>;
+}
+
+// Repeating this for each event type would get boring fast so lets use a simple
+// macro to implement the trait for a struct that has a `body` and
+// `formatted_body` field
+macro_rules! has_formatted_body {
+    ($content: ident) => {
+        impl HasFormattedBody for $content {
+            #[inline]
+            fn body(&self) -> &str {
+                &self.body
+            }
+
+            #[inline]
+            fn formatted_body(&self) -> Option<&str> {
+                self.formatted.as_ref().map(|f| f.body.as_ref())
+            }
+        }
+    };
+}
+
 /// This trait is implemented for message types that can contain either an URL
 /// or an encrypted file. One of these _must_ be present.
 pub trait HasUrlOrFile {
@@ -1073,6 +1346,18 @@ mod tests {
     }
 
     #[test]
+    fn formatted_body_plain_text_decodes_matrix_html() {
+        let body = "<p>Hello <b>world</b> &amp; \
+            <a href=\"https://example.org\">link</a></p>\
+            <ul><li>one</li><li>two</li></ul>";
+
+        assert_eq!(
+            "Hello *world* & link <https://example.org>\n- one\n- two",
+            formatted_body_to_plain_text(body)
+        );
+    }
+
+    #[test]
     fn test_encrypted_media_has_no_plain_download_command() {
         use std::collections::BTreeMap;
 
@@ -1146,5 +1431,55 @@ mod tests {
             .tags
             .contains(&"matrix_reply".to_owned()));
         assert_eq!("reply body", rendered.content.lines[1].message);
+    }
+
+    #[test]
+    fn formatted_body_plain_text_keeps_block_structure() {
+        let body = "<blockquote><p>quoted</p><p>text</p></blockquote>\
+            <ol start=\"3\"><li>three</li><li>four</li></ol>";
+
+        assert_eq!(
+            "> quoted\n> text\n3. three\n4. four",
+            formatted_body_to_plain_text(body)
+        );
+    }
+
+    #[test]
+    fn formatted_body_plain_text_marks_code_and_emphasis() {
+        let body = "<p><em>try</em> <code>cargo test</code></p>\
+            <pre><code class=\"language-rust\">fn main() {}</code></pre>";
+
+        assert_eq!(
+            "_try_ `cargo test`\n```\nfn main() {}\n```",
+            formatted_body_to_plain_text(body)
+        );
+    }
+
+    #[test]
+    fn formatted_body_plain_text_removes_reply_fallback() {
+        let body = "<mx-reply><blockquote>old reply</blockquote></mx-reply>\
+            <p>new message</p>";
+
+        assert_eq!("new message", formatted_body_to_plain_text(body));
+    }
+
+    #[test]
+    fn text_render_uses_formatted_body_when_available() {
+        let content =
+            TextMessageEventContent::html("fallback", "<p>Hello<br>world</p>");
+        let rendered = content.render(&());
+
+        assert_eq!(rendered.lines.len(), 2);
+        assert_eq!(rendered.lines[0].message, "Hello");
+        assert_eq!(rendered.lines[1].message, "world");
+    }
+
+    #[test]
+    fn text_render_keeps_plain_body_plain() {
+        let content = TextMessageEventContent::plain("literal <b> text");
+        let rendered = content.render(&());
+
+        assert_eq!(rendered.lines.len(), 1);
+        assert_eq!(rendered.lines[0].message, "literal <b> text");
     }
 }
