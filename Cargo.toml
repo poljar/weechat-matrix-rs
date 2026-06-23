@@ -34,6 +34,9 @@ image = { version = "*", default-features = false, features = ["jpeg"] }
 git = "https://github.com/poljar/rust-weechat"
 features = ["async", "config_macro"]
 
+[build-dependencies.weechat-sys]
+git = "https://github.com/poljar/rust-weechat"
+
 [dependencies.matrix-sdk]
 version = "0.14.0"
 # git = "https://github.com/matrix-org/matrix-rust-sdk.git"
