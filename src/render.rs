@@ -415,6 +415,15 @@ fn mxc_to_emxc(
     Ok(emxc_url.to_string())
 }
 
+fn media_download_command(source: &MediaSource) -> Option<String> {
+    match source {
+        MediaSource::Plain(url) => {
+            Some(format!("/matrix media download {} <file>", url.as_str()))
+        }
+        MediaSource::Encrypted(_) => None,
+    }
+}
+
 impl<C: HasUrlOrFile> Render for C {
     type RenderContext = Url;
     const TAGS: &'static [&'static str] = &["matrix_media"];
@@ -443,7 +452,16 @@ impl<C: HasUrlOrFile> Render for C {
             tags: self.tags(),
         };
 
-        RenderedContent { lines: vec![line] }
+        let mut lines = vec![line];
+
+        if let Some(command) = media_download_command(self.source()) {
+            lines.push(RenderedLine {
+                message: format!("authenticated download: {}", command),
+                tags: self.tags(),
+            });
+        }
+
+        RenderedContent { lines }
     }
 }
 
@@ -1021,5 +1039,46 @@ mod tests {
             expected,
             mxc_to_emxc(&mxc_url, &homeserver, &encrypt_info).unwrap()
         );
+    }
+
+    #[test]
+    fn test_plain_media_download_command() {
+        let source = MediaSource::Plain(OwnedMxcUri::from(
+            "mxc://matrix.org/some-media-id",
+        ));
+
+        assert_eq!(
+            Some(
+                "/matrix media download mxc://matrix.org/some-media-id <file>"
+                    .to_owned()
+            ),
+            media_download_command(&source)
+        );
+    }
+
+    #[test]
+    fn test_encrypted_media_has_no_plain_download_command() {
+        use std::collections::BTreeMap;
+
+        let mut hashes: BTreeMap<String, Base64> = BTreeMap::new();
+        hashes.insert("sha256".to_string(), Base64::parse("aGFzaA").unwrap());
+        let encrypt_info = EncryptedFileInit {
+            key: JsonWebKeyInit {
+                k: Base64::parse("dGVzdA").unwrap(),
+                kty: "oct".to_string(),
+                key_ops: vec![],
+                ext: true,
+                alg: "A256CTR".to_string(),
+            }
+            .into(),
+            iv: Base64::parse("aXY").unwrap(),
+            v: "v2".to_string(),
+            url: OwnedMxcUri::from("mxc://some-url"),
+            hashes,
+        }
+        .into();
+        let source = MediaSource::Encrypted(Box::new(encrypt_info));
+
+        assert_eq!(None, media_download_command(&source));
     }
 }
