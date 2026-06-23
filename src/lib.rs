@@ -174,6 +174,7 @@ impl SignalCallback for Servers {
             if let Some(room) = self.find_room(&buffer) {
                 match signal_name {
                     "buffer_switch" => {
+                        room.mark_as_read_silent();
                         Weechat::spawn(async move {
                             room.get_messages_if_empty().await
                         })
@@ -201,6 +202,8 @@ struct Matrix {
     typing_notice_signal: SignalHook,
     #[allow(dead_code)]
     history_fetch_signal: SignalHook,
+    #[allow(dead_code)]
+    read_marker_signal: SignalHook,
     #[allow(dead_code)]
     completions: Completions,
     debug_buffer: RefCell<Option<BufferHandle>>,
@@ -279,6 +282,8 @@ impl Plugin for Matrix {
             .expect("Can't create signal hook for the typing notice cb");
         let history_fetch = SignalHook::new("buffer_switch", servers.clone())
             .expect("Can't create signal hook for the history fetch cb");
+        let read_marker = SignalHook::new("buffer_switch", servers.clone())
+            .expect("Can't create signal hook for the read marker cb");
 
         let plugin = Matrix {
             global_runtime,
@@ -290,6 +295,7 @@ impl Plugin for Matrix {
             debug_buffer: RefCell::new(None),
             typing_notice_signal: typing,
             history_fetch_signal: history_fetch,
+            read_marker_signal: read_marker,
         };
 
         Weechat::spawn(async move {

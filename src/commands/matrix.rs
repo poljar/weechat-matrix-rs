@@ -42,13 +42,15 @@ impl MatrixCommand {
             .add_argument("media download <mxc-uri> [file]")
             .add_argument("disconnect <server-name>")
             .add_argument("reconnect <server-name>")
+            .add_argument("read")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
             .arguments_description(format!(
                 "      server: List, add, or remove Matrix servers.
      connect: Connect to Matrix servers.
   disconnect: Disconnect from one or all Matrix servers.
    reconnect: Reconnect to server(s).
-        join: Join a Matrix room by ID or alias.
+       join: Join a Matrix room by ID or alias.
+       read: Mark the current room as read.
      devices: {}
         keys: {}
        media: {}
@@ -72,7 +74,7 @@ Use /matrix [command] help to find out more.\n",
             .add_completion("disconnect %(matrix_servers)")
             .add_completion("reconnect %(matrix_servers)")
             .add_completion(
-                "help server|connect|disconnect|reconnect|join|keys|devices|media",
+                "help server|connect|disconnect|reconnect|join|read|keys|devices|media",
             );
 
         Command::new(
@@ -263,6 +265,11 @@ Use /matrix [command] help to find out more.\n",
             ("verification", Some(subargs)) => {
                 VerificationCommand::run(buffer, &self.servers, subargs)
             }
+            ("read", _) => {
+                if let Some(room) = self.servers.find_room(buffer) {
+                    room.mark_as_read();
+                }
+            }
             _ => unreachable!(),
         }
     }
@@ -369,6 +376,10 @@ impl CommandCallback for MatrixCommand {
                             .value_name("room-id-or-alias")
                             .required(true),
                     ),
+            )
+            .subcommand(
+                SubCommand::with_name("read")
+                    .about("Mark the current room as read."),
             );
 
         parse_and_run(argparse, arguments, |args| self.run(buffer, args));

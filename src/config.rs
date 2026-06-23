@@ -145,6 +145,13 @@ config!(
             // Default value.
             false,
         },
+
+        send_read_receipts: bool {
+            // Description
+            "Send public read receipts when marking a room as read",
+            // Default value.
+            true,
+        },
     },
 
     Section input {
