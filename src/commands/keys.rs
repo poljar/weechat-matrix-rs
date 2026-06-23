@@ -4,6 +4,7 @@ use clap::{
     App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
     SubCommand,
 };
+use matrix_sdk::ruma::{OwnedRoomId, RoomId};
 
 use weechat::{
     buffer::Buffer,
@@ -32,7 +33,7 @@ impl KeysCommand {
         let settings = CommandSettings::new("keys")
             .description(Self::DESCRIPTION)
             .add_argument("import <file> <passphrase>")
-            .add_argument("export <file> <passphrase>")
+            .add_argument("export [--room-id <room-id>] <file> <passphrase>")
             .arguments_description(
                 "file: Path to a file that is or will contain the E2EE keys export",
             )
@@ -72,9 +73,14 @@ impl KeysCommand {
         Weechat::spawn(import()).detach();
     }
 
-    fn export(server: MatrixServer, file: PathBuf, passphrase: String) {
+    fn export(
+        server: MatrixServer,
+        file: PathBuf,
+        passphrase: String,
+        room_id: Option<OwnedRoomId>,
+    ) {
         let export = || async move {
-            server.export_keys(file, passphrase).await;
+            server.export_keys(file, passphrase, room_id).await;
         };
         Weechat::spawn(export()).detach();
     }
@@ -89,10 +95,13 @@ impl KeysCommand {
                     Self::import(server, file, passphrase);
                 }
                 ("export", args) => {
-                    let (file, passphrase) = Self::upcast_args(
-                        args.expect("No args were provided to the subcommand"),
-                    );
-                    Self::export(server, file, passphrase);
+                    let args =
+                        args.expect("No args were provided to the subcommand");
+                    let (file, passphrase) = Self::upcast_args(args);
+                    let room_id = args
+                        .value_of("room-id")
+                        .map(|room_id| RoomId::parse(room_id).unwrap());
+                    Self::export(server, file, passphrase, room_id);
                 }
                 _ => unreachable!(),
             }
@@ -108,8 +117,18 @@ impl KeysCommand {
                 .arg(Arg::with_name("file").required(true))
                 .arg(Arg::with_name("passphrase").required(true)),
             SubCommand::with_name("export")
-                // TODO add the ability to export keys only for a given room.
                 .about("Export your E2EE keys to the given file.")
+                .arg(
+                    Arg::with_name("room-id")
+                        .long("room-id")
+                        .takes_value(true)
+                        .value_name("room-id")
+                        .validator(|room_id| {
+                            RoomId::parse(room_id).map(|_| ()).map_err(|_| {
+                                "The given room ID isn't valid".to_owned()
+                            })
+                        }),
+                )
                 .arg(Arg::with_name("file").required(true))
                 .arg(Arg::with_name("passphrase").required(true)),
         ]

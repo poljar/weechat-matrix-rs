@@ -951,13 +951,22 @@ impl InnerServer {
         };
     }
 
-    pub async fn export_keys(&self, file: PathBuf, passphrase: String) {
+    pub async fn export_keys(
+        &self,
+        file: PathBuf,
+        passphrase: String,
+        room_id: Option<OwnedRoomId>,
+    ) {
         let client = self.get_client().unwrap();
 
         let export = async move {
             client
                 .encryption()
-                .export_room_keys(file, &passphrase, |_| true)
+                .export_room_keys(file, &passphrase, |session| {
+                    room_id.as_ref().map_or(true, |room_id| {
+                        session.room_id().as_str() == room_id.as_str()
+                    })
+                })
                 .await
         };
 
