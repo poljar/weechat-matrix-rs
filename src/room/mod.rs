@@ -237,8 +237,12 @@ impl RoomHandle {
         own_user_id: &UserId,
     ) -> Self {
         let buffer = RoomBuffer::new(room.clone(), runtime.clone());
-        let members =
-            Members::new(room.clone(), runtime.clone(), buffer.clone());
+        let members = Members::new(
+            room.clone(),
+            runtime.clone(),
+            config.clone(),
+            buffer.clone(),
+        );
 
         let own_nick = runtime
             .block_on(room.get_member_no_sync(own_user_id))

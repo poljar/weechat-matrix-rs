@@ -207,6 +207,14 @@ The plugin keeps Matrix state and encryption data in
 If the cache grows or causes too much disk I/O, disconnect WeeChat and remove
 only the `-cache` directory. Do not remove the main server directory unless you
 want to reset stored Matrix state.
+Nick prefix colors for Matrix power levels can be changed with:
+
+       /set matrix-rust.color.nick_prefix_admin lightgreen
+       /set matrix-rust.color.nick_prefix_moderator lightmagenta
+       /set matrix-rust.color.nick_prefix_power yellow
+
+Existing nicklist entries may need a member update or plugin restart before the new colors are visible.
+
 
 # Helpful Commands
 
