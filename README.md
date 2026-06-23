@@ -122,3 +122,5 @@ _(replace the placeholders in brackets [] with your own details)_:
 
 Room buffers accept normal message input after `/matrix connect [server-name]`
 has completed.
+
+`/matrix media download <mxc-uri> <file>` downloads Matrix media through the logged-in client, including homeservers that require authenticated media. It refuses to overwrite an existing file.

@@ -12,6 +12,7 @@ mod devices;
 mod keys;
 mod matrix;
 mod me;
+mod media;
 mod page_up;
 mod verification;
 
@@ -20,6 +21,7 @@ use devices::DevicesCommand;
 use keys::KeysCommand;
 use matrix::MatrixCommand;
 use me::MeCommand;
+use media::MediaCommand;
 use page_up::PageUpCommand;
 
 pub struct Commands {
