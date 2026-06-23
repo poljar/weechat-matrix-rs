@@ -38,6 +38,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     ops::Deref,
+    path::PathBuf,
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -50,6 +51,7 @@ use url::Url;
 
 use matrix_sdk::{
     async_trait,
+    attachment::{AttachmentConfig, AttachmentInfo, BaseFileInfo},
     deserialized_responses::AmbiguityChange,
     room::Room,
     ruma::{
@@ -67,7 +69,7 @@ use matrix_sdk::{
             OriginalSyncMessageLikeEvent, SyncMessageLikeEvent, SyncStateEvent,
         },
         EventId, MilliSecondsSinceUnixEpoch, OwnedRoomAliasId,
-        OwnedTransactionId, OwnedUserId, RoomId, TransactionId, UserId,
+        OwnedTransactionId, OwnedUserId, RoomId, TransactionId, UInt, UserId,
     },
     StoreError,
 };
@@ -77,7 +79,7 @@ use weechat::{
         Buffer, BufferBuilderAsync, BufferHandle, BufferInputCallbackAsync,
         BufferLine,
     },
-    Weechat,
+    Prefix, Weechat,
 };
 
 use crate::{
@@ -722,6 +724,69 @@ impl MatrixRoom {
             }
         } else if let Ok(buffer) = self.buffer_handle().upgrade() {
             buffer.print("Error not connected");
+        }
+    }
+
+    fn print_error(&self, message: &str) {
+        if let Ok(buffer) = self.buffer_handle().upgrade() {
+            buffer.print(&format!(
+                "{}{}",
+                Weechat::prefix(Prefix::Error),
+                message
+            ));
+        }
+    }
+
+    pub async fn send_attachment(&self, path: PathBuf) {
+        let Some(filename) = path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .map(ToOwned::to_owned)
+        else {
+            self.print_error("Invalid file name");
+            return;
+        };
+
+        let data = match std::fs::read(&path) {
+            Ok(data) => data,
+            Err(e) => {
+                self.print_error(&format!(
+                    "Failed to read attachment {}: {}",
+                    path.display(),
+                    e
+                ));
+                return;
+            }
+        };
+
+        let content_type = mime_guess::from_path(&path).first_or_octet_stream();
+        let size = UInt::new(data.len() as u64);
+        let config = AttachmentConfig::new()
+            .info(AttachmentInfo::File(BaseFileInfo { size }));
+
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        match connection
+            .spawn({
+                let room = self.room().clone();
+                async move {
+                    room.send_attachment(filename, &content_type, data, config)
+                        .await
+                }
+            })
+            .await
+        {
+            Ok(_) => (),
+            Err(e) => {
+                self.print_error(&format!(
+                    "Failed to upload attachment {}: {}",
+                    path.display(),
+                    e
+                ));
+            }
         }
     }
 
