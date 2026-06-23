@@ -12,7 +12,7 @@ use weechat::{
 
 use super::{parse_and_run, verification::VerificationCommand};
 use crate::{
-    commands::{DevicesCommand, KeysCommand},
+    commands::{DevicesCommand, KeysCommand, MediaCommand},
     config::ConfigHandle,
     MatrixServer, Servers, PLUGIN_NAME,
 };
@@ -34,6 +34,7 @@ impl MatrixCommand {
             .add_argument("connect <server-name>")
             .add_argument("devices delete|list|set-name")
             .add_argument("keys import|export <file> <passphrase>")
+            .add_argument("media download <mxc-uri> <file>")
             .add_argument("disconnect <server-name>")
             .add_argument("reconnect <server-name>")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
@@ -44,16 +45,19 @@ impl MatrixCommand {
    reconnect: Reconnect to server(s).
      devices: {}
         keys: {}
+       media: {}
 verification: {}
         help: Show detailed command help.\n
 Use /matrix [command] help to find out more.\n",
                 DevicesCommand::DESCRIPTION,
                 KeysCommand::DESCRIPTION,
+                MediaCommand::DESCRIPTION,
                 VerificationCommand::DESCRIPTION,
             ))
             .add_completion("server add|delete|list|listfull")
             .add_completion("devices list|delete|set-name %(matrix-users)")
             .add_completion(format!("keys {}", KeysCommand::COMPLETION))
+            .add_completion(format!("media {}", MediaCommand::COMPLETION))
             .add_completion(format!(
                 "verification {}",
                 VerificationCommand::COMPLETION
@@ -62,7 +66,7 @@ Use /matrix [command] help to find out more.\n",
             .add_completion("disconnect %(matrix_servers)")
             .add_completion("reconnect %(matrix_servers)")
             .add_completion(
-                "help server|connect|disconnect|reconnect|keys|devices",
+                "help server|connect|disconnect|reconnect|keys|devices|media",
             );
 
         Command::new(
@@ -230,6 +234,9 @@ Use /matrix [command] help to find out more.\n",
             ("keys", Some(subargs)) => {
                 KeysCommand::run(buffer, &self.servers, subargs)
             }
+            ("media", Some(subargs)) => {
+                MediaCommand::run(buffer, &self.servers, subargs)
+            }
             ("verification", Some(subargs)) => {
                 VerificationCommand::run(buffer, &self.servers, subargs)
             }
@@ -299,6 +306,12 @@ impl CommandCallback for MatrixCommand {
                     .about(KeysCommand::DESCRIPTION)
                     .settings(KeysCommand::SETTINGS)
                     .subcommands(KeysCommand::subcommands()),
+            )
+            .subcommand(
+                SubCommand::with_name("media")
+                    .about(MediaCommand::DESCRIPTION)
+                    .settings(MediaCommand::SETTINGS)
+                    .subcommands(MediaCommand::subcommands()),
             )
             .subcommand(
                 SubCommand::with_name("verification")

@@ -157,3 +157,5 @@ The inactivity delay defaults to five minutes and can be changed with:
 
 Room buffers accept normal message input after `/matrix connect [server-name]`
 has completed.
+
+`/matrix media download <mxc-uri> <file>` downloads Matrix media through the logged-in client, including homeservers that require authenticated media. It refuses to overwrite an existing file.

@@ -59,6 +59,7 @@ use std::{
     cell::{Ref, RefCell, RefMut},
     cmp::Reverse,
     collections::HashMap,
+    io::Write,
     path::PathBuf,
     rc::{Rc, Weak},
 };
@@ -69,15 +70,17 @@ use matrix_sdk::{
     self,
     deserialized_responses::AmbiguityChange,
     encryption::RoomKeyImportResult,
+    media::{MediaFormat, MediaRequestParameters},
     room::Room,
     ruma::{
         api::client::session::login::v3::Response as LoginResponse,
         events::{
-            room::member::RoomMemberEventContent, AnySyncStateEvent,
-            AnySyncTimelineEvent, AnyToDeviceEvent, SyncStateEvent,
+            room::{member::RoomMemberEventContent, MediaSource},
+            AnySyncStateEvent, AnySyncTimelineEvent, AnyToDeviceEvent,
+            SyncStateEvent,
         },
         DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
-        OwnedDeviceId, OwnedRoomId, OwnedUserId, RoomId, UserId,
+        OwnedDeviceId, OwnedMxcUri, OwnedRoomId, OwnedUserId, RoomId, UserId,
     },
     Client, Error,
 };
@@ -1015,6 +1018,53 @@ impl InnerServer {
                 }
             }
         };
+    }
+
+    pub async fn download_media(&self, uri: OwnedMxcUri, file: PathBuf) {
+        let connection = if let Some(c) = self.connection() {
+            c
+        } else {
+            self.print_error("You must be connected to execute this command");
+            return;
+        };
+
+        let client = connection.client().clone();
+        let request = MediaRequestParameters {
+            source: MediaSource::Plain(uri),
+            format: MediaFormat::File,
+        };
+        let display_file = file.display().to_string();
+
+        self.print_network(&format!("Downloading media to {}", display_file));
+
+        match connection
+            .spawn(async move {
+                client.media().get_media_content(&request, true).await
+            })
+            .await
+        {
+            Ok(content) => {
+                if let Err(e) = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&file)
+                    .and_then(|mut file| file.write_all(&content))
+                {
+                    self.print_error(&format!(
+                        "Error writing media to {}: {:#?}",
+                        display_file, e
+                    ));
+                } else {
+                    self.print_network(&format!(
+                        "Successfully downloaded media to {}",
+                        display_file
+                    ));
+                }
+            }
+            Err(e) => {
+                self.print_error(&format!("Error downloading media {:#?}", e));
+            }
+        }
     }
 
     async fn list_own_devices(
