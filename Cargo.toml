@@ -45,6 +45,7 @@ unicode-segmentation = "1.10.0"
 # Auto-select version from matrix-sdk
 qrcode = { version = "*", default-features = false }
 image = { version = "*", default-features = false, features = ["jpeg"] }
+mime_guess = "2.0"
 
 [dependencies.weechat]
 git = "https://github.com/poljar/rust-weechat"

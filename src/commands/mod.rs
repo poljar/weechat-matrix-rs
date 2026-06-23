@@ -14,6 +14,7 @@ mod matrix;
 mod me;
 mod media;
 mod page_up;
+mod upload;
 mod verification;
 
 use buffer_clear::BufferClearCommand;
@@ -23,6 +24,7 @@ use matrix::MatrixCommand;
 use me::MeCommand;
 use media::MediaCommand;
 use page_up::PageUpCommand;
+use upload::UploadCommand;
 
 pub struct Commands {
     _matrix: Command,
@@ -32,6 +34,7 @@ pub struct Commands {
     _verification: Command,
     _buffer_clear: CommandRun,
     _me: CommandRun,
+    _upload: CommandRun,
 }
 
 impl Commands {
@@ -47,6 +50,7 @@ impl Commands {
             _verification: VerificationCommand::create(servers)?,
             _buffer_clear: BufferClearCommand::create(servers)?,
             _me: MeCommand::create(servers)?,
+            _upload: UploadCommand::create(servers)?,
         })
     }
 }
