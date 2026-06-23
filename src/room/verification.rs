@@ -9,8 +9,9 @@ use matrix_sdk::{
         },
         UserId,
     },
+    Error,
 };
-use weechat::Weechat;
+use weechat::{Prefix, Weechat};
 
 use crate::{
     connection::Connection,
@@ -46,6 +47,15 @@ impl From<SasVerification> for ActiveVerification {
     }
 }
 
+impl ActiveVerification {
+    async fn cancel(self) -> Result<(), Error> {
+        match self {
+            ActiveVerification::Request(request) => request.cancel().await,
+            ActiveVerification::Sas(sas) => sas.cancel().await,
+        }
+    }
+}
+
 impl Verification {
     pub fn new(
         own_user_id: Rc<UserId>,
@@ -69,9 +79,28 @@ impl Verification {
             if let Some(ActiveVerification::Sas(verification)) =
                 self.inner.borrow().clone()
             {
-                let _ret =
-                    c.spawn(async move { verification.confirm().await }).await;
+                if let Err(e) =
+                    c.spawn(async move { verification.confirm().await }).await
+                {
+                    self.print(&format!("Error confirming verification: {e}"));
+                }
             }
+        }
+    }
+
+    pub async fn cancel(&self) {
+        let connection = self.connection.borrow().clone();
+        let verification = self.inner.borrow_mut().take();
+
+        if let (Some(c), Some(verification)) = (connection, verification) {
+            match c.spawn(async move { verification.cancel().await }).await {
+                Ok(()) => self.print("Verification canceled"),
+                Err(e) => {
+                    self.print(&format!("Error canceling verification: {e}"))
+                }
+            }
+        } else {
+            self.print("No active verification to cancel");
         }
     }
 
@@ -85,7 +114,7 @@ impl Verification {
             {
                 let verification_clone = verification.clone();
 
-                let _ret = c
+                if let Err(e) = c
                     .spawn(async move {
                         verification
                             .accept_with_methods(vec![
@@ -93,18 +122,41 @@ impl Verification {
                             ])
                             .await
                     })
-                    .await;
+                    .await
+                {
+                    self.print(&format!("Error accepting verification: {e}"));
+                    return;
+                }
 
                 // We automatically start SAS verification here since it's the
                 // only method we support.
-                if let Some(sas) = c
+                match c
                     .spawn(async move { verification_clone.start_sas().await })
                     .await
-                    .unwrap()
                 {
-                    *self.inner.borrow_mut() = Some(sas.into());
+                    Ok(Some(sas)) => {
+                        *self.inner.borrow_mut() = Some(sas.into());
+                    }
+                    Ok(None) => {
+                        self.print("Could not start emoji verification");
+                    }
+                    Err(e) => {
+                        self.print(&format!(
+                            "Error starting emoji verification: {e}"
+                        ));
+                    }
                 }
             }
+        }
+    }
+
+    fn print(&self, message: &str) {
+        if let Ok(buffer) = self.buffer.buffer_handle().upgrade() {
+            buffer.print(&format!(
+                "{}{}",
+                Weechat::prefix(Prefix::Network),
+                message
+            ));
         }
     }
 
@@ -159,14 +211,27 @@ impl Verification {
 
                         // We accept here automatically since the only method
                         // we're supporting is SAS verification
-                        let _ret = connection
+                        if let Err(e) = connection
                             .spawn(async move { sas.accept().await })
-                            .await;
+                            .await
+                        {
+                            self.print(&format!(
+                                "Error accepting verification: {e}"
+                            ));
+                        }
                     }
                 }
             }
-            AnySyncMessageLikeEvent::KeyVerificationCancel(_) => {
+            AnySyncMessageLikeEvent::KeyVerificationCancel(e) => {
                 self.inner.borrow_mut().take();
+                let Some(e) = e.as_original() else {
+                    self.print("Verification canceled");
+                    return;
+                };
+                self.print(&format!(
+                    "Verification canceled: {} ({})",
+                    e.content.reason, e.content.code
+                ));
             }
             AnySyncMessageLikeEvent::KeyVerificationAccept(_) => {}
             AnySyncMessageLikeEvent::KeyVerificationKey(e) => {
@@ -191,7 +256,10 @@ impl Verification {
                 }
             }
             AnySyncMessageLikeEvent::KeyVerificationMac(_) => {}
-            AnySyncMessageLikeEvent::KeyVerificationDone(_) => {}
+            AnySyncMessageLikeEvent::KeyVerificationDone(_) => {
+                self.inner.borrow_mut().take();
+                self.print("Verification done");
+            }
             AnySyncMessageLikeEvent::RoomMessage(e) => {
                 let Some(e) = e.as_original() else {
                     // Unhandled redacted event
