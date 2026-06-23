@@ -6,17 +6,17 @@ SOURCES := $(wildcard src/*.rs src/bar_items/*.rs src/commands/*.rs src/room/*.r
 
 PROFILE ?= release
 
-.PHONY: install install-dir lint all help deb
+.PHONY: install install-dir lint all help deb FORCE
 
 all: help
 
 help: ## Print this help message
 	@grep -E '^[a-zA-Z._-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
-target/debug/libmatrix.so: $(SOURCES) ## Build plugin in dev profile
+target/debug/libmatrix.so: FORCE $(SOURCES) ## Build plugin in dev profile
 	cargo build
 
-target/release/libmatrix.so: $(SOURCES) ## Build plugin release profile
+target/release/libmatrix.so: FORCE $(SOURCES) ## Build plugin release profile
 	cargo build --release
 
 install: install-dir target/$(PROFILE)/libmatrix.so ## Install plugin to weechat dir
@@ -53,3 +53,5 @@ deb: target/$(PROFILE)/libmatrix.so ## Build a .deb package with version from gi
 	@echo ""
 	@echo "Package built: target/debian/weechat-matrix_$${DEB_VERSION}*.deb"
 	@echo "Install with: sudo dpkg -i target/debian/weechat-matrix_$${DEB_VERSION}*.deb"
+
+FORCE:

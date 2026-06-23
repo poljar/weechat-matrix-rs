@@ -42,6 +42,9 @@ that the `clang` command-line tools, C/C++ compiler headers, and matching
 `libclang` package are installed. On minimal distributions the library package
 alone may not provide the compiler include paths that `bindgen` needs.
 
+`WEECHAT_PLUGIN_FILE` is only used while building. After changing it, rerun
+`cargo build` or `make install`; `make clean` is not needed.
+
 After the dependencies are installed the plugin can be compiled with:
 
     cargo build --release
