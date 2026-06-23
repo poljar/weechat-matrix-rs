@@ -16,6 +16,7 @@ mod me;
 mod media;
 mod page_up;
 mod upload;
+mod part;
 mod verification;
 
 use buffer_clear::BufferClearCommand;
@@ -27,6 +28,7 @@ use me::MeCommand;
 use media::MediaCommand;
 use page_up::PageUpCommand;
 use upload::UploadCommand;
+use part::PartCommand;
 
 pub struct Commands {
     _matrix: Command,
@@ -38,6 +40,7 @@ pub struct Commands {
     _join: CommandRun,
     _me: CommandRun,
     _upload: CommandRun,
+    _part: CommandRun,
 }
 
 impl Commands {
@@ -55,6 +58,7 @@ impl Commands {
             _join: JoinCommand::create(servers)?,
             _me: MeCommand::create(servers)?,
             _upload: UploadCommand::create(servers)?,
+            _part: PartCommand::create(servers)?,
         })
     }
 }
