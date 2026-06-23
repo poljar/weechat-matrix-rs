@@ -16,7 +16,7 @@ use matrix_sdk::{
     self,
     config::SyncSettings,
     deserialized_responses::AmbiguityChange,
-    room::{Messages, MessagesOptions, Room},
+    room::{Messages, MessagesOptions, Receipts, Room},
     ruma::{
         api::client::{
             device::{
@@ -36,7 +36,7 @@ use matrix_sdk::{
             AnySyncStateEvent, AnySyncTimelineEvent, AnyToDeviceEvent,
             SyncStateEvent,
         },
-        OwnedDeviceId, OwnedRoomId, OwnedTransactionId,
+        OwnedDeviceId, OwnedEventId, OwnedRoomId, OwnedTransactionId,
     },
     sync::State,
     Client, LoopCtrl, Result as MatrixResult, RoomMemberships,
@@ -229,6 +229,25 @@ impl Connection {
     ) -> MatrixResult<()> {
         self.spawn(async move { room.typing_notice(typing).await })
             .await
+    }
+
+    pub async fn mark_room_as_read(
+        &self,
+        room: Room,
+        event_id: OwnedEventId,
+        public_receipt: bool,
+    ) -> MatrixResult<()> {
+        self.spawn(async move {
+            let receipts = Receipts::new().fully_read_marker(event_id.clone());
+            let receipts = if public_receipt {
+                receipts.public_read_receipt(event_id)
+            } else {
+                receipts.private_read_receipt(event_id)
+            };
+
+            room.send_multiple_receipts(receipts).await
+        })
+        .await
     }
 
     fn save_device_id(

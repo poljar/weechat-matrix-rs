@@ -68,7 +68,7 @@ use matrix_sdk::{
             AnySyncStateEvent, AnySyncTimelineEvent, AnyTimelineEvent,
             OriginalSyncMessageLikeEvent, SyncMessageLikeEvent, SyncStateEvent,
         },
-        EventId, MilliSecondsSinceUnixEpoch, OwnedRoomAliasId,
+        EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomAliasId,
         OwnedTransactionId, OwnedUserId, RoomId, TransactionId, UInt, UserId,
     },
     StoreError,
@@ -184,6 +184,8 @@ pub struct MatrixRoom {
 
     messages_in_flight: IntMutex,
     prev_batch: Rc<RefCell<Option<PrevBatch>>>,
+    latest_event_id: Rc<RefCell<Option<OwnedEventId>>>,
+    latest_read_event_id: Rc<RefCell<Option<OwnedEventId>>>,
 
     outgoing_messages: MessageQueue,
 
@@ -262,6 +264,8 @@ impl RoomHandle {
             prev_batch: Rc::new(RefCell::new(
                 room.last_prev_batch().map(PrevBatch::Backwards),
             )),
+            latest_event_id: Rc::new(RefCell::new(None)),
+            latest_read_event_id: Rc::new(RefCell::new(None)),
             own_user_id: own_user_id.into(),
             members,
             buffer,
@@ -902,6 +906,69 @@ impl MatrixRoom {
         *self.prev_batch.borrow_mut() = None;
     }
 
+    fn mark_event_as_read(&self, event_id: OwnedEventId, verbose: bool) {
+        if self.latest_read_event_id.borrow().as_ref() == Some(&event_id) {
+            return;
+        }
+
+        let connection = self.connection.borrow().clone();
+        let room = self.room().clone();
+        let public_receipt =
+            self.config.borrow().network().send_read_receipts();
+        let latest_read_event_id = self.latest_read_event_id.clone();
+
+        let mark_read = async move {
+            if let Some(connection) = connection {
+                match connection
+                    .mark_room_as_read(room, event_id.clone(), public_receipt)
+                    .await
+                {
+                    Ok(()) => {
+                        *latest_read_event_id.borrow_mut() = Some(event_id);
+                    }
+                    Err(e) => {
+                        Weechat::print(&format!(
+                            "{}: Failed to mark room as read: {}",
+                            PLUGIN_NAME, e
+                        ));
+                    }
+                }
+            } else if verbose {
+                Weechat::print(&format!(
+                    "{}: Room is not connected.",
+                    PLUGIN_NAME
+                ));
+            }
+        };
+
+        Weechat::spawn(mark_read).detach();
+    }
+
+    fn mark_latest_event_as_read(&self, verbose: bool) {
+        let event_id =
+            if let Some(event_id) = self.latest_event_id.borrow().clone() {
+                event_id
+            } else if verbose {
+                Weechat::print(&format!(
+                    "{}: No event has been received for this room yet.",
+                    PLUGIN_NAME
+                ));
+                return;
+            } else {
+                return;
+            };
+
+        self.mark_event_as_read(event_id, verbose);
+    }
+
+    pub fn mark_as_read(&self) {
+        self.mark_latest_event_as_read(true);
+    }
+
+    pub fn mark_as_read_silent(&self) {
+        self.mark_latest_event_as_read(false);
+    }
+
     pub async fn get_messages(&self) {
         let messages_lock = self.messages_in_flight.clone();
 
@@ -999,6 +1066,8 @@ impl MatrixRoom {
                 self.buffer.print_rendered_event(rendered);
             }
         }
+
+        self.mark_event_as_read(event_id.to_owned(), false);
     }
 
     async fn handle_edits(&self, event: &AnySyncMessageLikeEvent) {
@@ -1118,6 +1187,13 @@ impl MatrixRoom {
 
     pub async fn handle_sync_room_event(&self, event: AnySyncTimelineEvent) {
         self.set_prev_batch();
+
+        *self.latest_event_id.borrow_mut() = Some(match &event {
+            AnySyncTimelineEvent::MessageLike(event) => {
+                event.event_id().to_owned()
+            }
+            AnySyncTimelineEvent::State(event) => event.event_id().to_owned(),
+        });
 
         match &event {
             AnySyncTimelineEvent::MessageLike(message) => {
