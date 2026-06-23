@@ -18,6 +18,12 @@ over the Matrix protocol. This is a Rust rewrite of the
 This project is a work in progress and doesn't do much yet. It can connect
 to a Matrix server and send messages.
 
+It is not an IRC relay or bridge: IRC clients connected through WeeChat's relay
+plugin cannot use Matrix rooms as IRC channels. Remote WeeChat interfaces using
+WeeChat relay protocols can access plugin buffers, but Matrix features that
+rewrite already-printed lines, such as message edits and redactions, depend on
+the remote client supporting WeeChat relay line-update events.
+
 If you are interested in helping out take a look at the issue tracker.
 
 # Build
