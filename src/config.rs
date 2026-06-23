@@ -138,6 +138,30 @@ config!(
         },
     },
 
+    Section color {
+        nick_prefix_admin: Color {
+            // Description.
+            "Color for the admin nick prefix (&)",
+            // Default value.
+            "lightgreen",
+        },
+
+        nick_prefix_moderator: Color {
+            // Description.
+            "Color for the moderator nick prefix (@)",
+            // Default value.
+            "lightmagenta",
+        },
+
+        nick_prefix_power: Color {
+            // Description.
+            "Color for the nick prefix (+) used by users with a non-default \
+             power level below moderator",
+            // Default value.
+            "yellow",
+        },
+    },
+
     Section network {
         debug_buffer: bool {
             // Description

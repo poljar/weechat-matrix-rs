@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use dashmap::DashMap;
 use tokio::runtime::Handle;
@@ -24,7 +24,9 @@ use weechat::{
     Prefix, Weechat,
 };
 
-use crate::{render::render_membership, room::buffer::RoomBuffer};
+use crate::{
+    config::Config, render::render_membership, room::buffer::RoomBuffer,
+};
 
 #[derive(Clone)]
 pub struct Members {
@@ -33,6 +35,7 @@ pub struct Members {
     ambiguity_map: Rc<DashMap<OwnedUserId, bool>>,
     nicks: Rc<DashMap<OwnedUserId, String>>,
     last_active: Rc<DashMap<OwnedUserId, MilliSecondsSinceUnixEpoch>>,
+    config: Rc<RefCell<Config>>,
     buffer: RoomBuffer,
 }
 
@@ -40,6 +43,7 @@ pub struct Members {
 pub struct WeechatRoomMember {
     inner: RoomMember,
     color: Rc<String>,
+    prefix_color: Rc<String>,
     ambiguous_nick: Rc<bool>,
 }
 
@@ -50,13 +54,19 @@ impl PartialEq for WeechatRoomMember {
 }
 
 impl Members {
-    pub fn new(room: Room, runtime: Handle, buffer: RoomBuffer) -> Self {
+    pub fn new(
+        room: Room,
+        runtime: Handle,
+        config: Rc<RefCell<Config>>,
+        buffer: RoomBuffer,
+    ) -> Self {
         Self {
             room,
             runtime,
             nicks: DashMap::new().into(),
             ambiguity_map: DashMap::new().into(),
             last_active: DashMap::new().into(),
+            config,
             buffer,
         }
     }
@@ -222,6 +232,10 @@ impl Members {
             .expect("Fetching the room member from the store panicked")
         {
             Ok(m) => m.map(|m| WeechatRoomMember {
+                prefix_color: Rc::new(Self::prefix_color_for_power_level(
+                    &self.config.borrow(),
+                    m.normalized_power_level(),
+                )),
                 color: Rc::new(color),
                 ambiguous_nick: Rc::new(
                     self.ambiguity_map
@@ -240,6 +254,25 @@ impl Members {
                 None
             }
         }
+    }
+
+    fn prefix_color_for_power_level(
+        config: &Config,
+        power_level: UserPowerLevel,
+    ) -> String {
+        let color = config.color();
+
+        match power_level {
+            UserPowerLevel::Infinite => color.nick_prefix_admin(),
+            p if p >= Int::from(100) => color.nick_prefix_admin(),
+            p if p >= Int::from(50) => color.nick_prefix_moderator(),
+            p if p > Int::from(0) => color.nick_prefix_power(),
+            _ => "default".to_owned(),
+        }
+    }
+
+    fn room(&self) -> &Room {
+        &self.room
     }
 
     pub fn mark_active(
@@ -437,12 +470,7 @@ impl WeechatRoomMember {
     }
 
     fn prefix_color(&self) -> &str {
-        match self.prefix() {
-            "&" => "lightgreen",
-            "@" => "lightmagenta",
-            "+" => "yellow",
-            _ => "default",
-        }
+        &self.prefix_color
     }
 
     pub fn nick_colored(&self) -> String {
