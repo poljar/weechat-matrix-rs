@@ -117,6 +117,11 @@ _(replace the placeholders in brackets [] with your own details)_:
 
        /save
 
+To hide join/leave noise from users who have not spoken recently, add a WeeChat
+filter for Matrix smart-filter tags:
+
+       /filter add matrix_smart * matrix_smart_filter *
+
 
 # Helpful Commands
 

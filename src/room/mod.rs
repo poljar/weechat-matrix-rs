@@ -560,6 +560,8 @@ impl MatrixRoom {
         use AnyMessageLikeEventContent::{RoomEncrypted, RoomMessage};
         use MessageType::*;
 
+        self.members.mark_active(sender.user_id(), send_time);
+
         let rendered = match content {
             RoomEncrypted(c) => {
                 c.render_with_prefix(send_time, event_id, sender, &())
