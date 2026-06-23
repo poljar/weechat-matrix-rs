@@ -1,3 +1,6 @@
+// Increase recursion limit to pre-rustc 1.94 level for macro expansion and auto-dereferencing.
+#![recursion_limit = "256"]
+
 mod bar_items;
 mod commands;
 mod completions;
