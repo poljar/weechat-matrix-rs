@@ -204,7 +204,7 @@ impl Verification {
                         send_time,
                         &e.event_id,
                         &sender.clone(),
-                        &VerificationContext::Room(sender, own_member),
+                        &VerificationContext::Room { own_member, sender },
                     );
                     self.buffer.print_rendered_event(rendered);
 

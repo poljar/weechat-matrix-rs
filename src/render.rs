@@ -1,7 +1,7 @@
 use url::Url;
 
 use matrix_sdk::{
-    encryption::verification::{SasVerification, Verification},
+    encryption::verification::{format_emojis, SasVerification, Verification},
     ruma::{
         events::{
             key::verification::{
@@ -598,8 +598,8 @@ macro_rules! render_start_content {
                         } else {
                             if sas.started_from_request() {
                                 format!(
-                                    "{} has started an interactive emoji verifiaction \
-                                        with you, accept with TODO",
+                                    "{} has started an interactive emoji verification \
+                                        with you, waiting for emojis",
                                     sas.other_device().user_id()
                                 )
                             } else {
@@ -640,7 +640,10 @@ render_start_content!(KeyVerificationStartEventContent);
 render_start_content!(ToDeviceKeyVerificationStartEventContent);
 
 pub enum VerificationContext {
-    Room(WeechatRoomMember, WeechatRoomMember),
+    Room {
+        own_member: WeechatRoomMember,
+        sender: WeechatRoomMember,
+    },
     ToDevice,
 }
 
@@ -657,7 +660,7 @@ macro_rules! render_request_content {
 
             fn render(&self, context: &Self::RenderContext) -> RenderedContent {
                 let message = match context {
-                    VerificationContext::Room(own_member, sender) => {
+                    VerificationContext::Room { own_member, sender } => {
                         if own_member == sender {
                             "You sent a verification request".to_string()
                         } else {
@@ -723,6 +726,23 @@ macro_rules! render_ready_content {
 render_ready_content!(KeyVerificationReadyEventContent);
 render_ready_content!(ToDeviceKeyVerificationReadyEventContent);
 
+fn render_sas_short_auth_string(sas: &SasVerification) -> Vec<String> {
+    if sas.supports_emoji() {
+        if let Some(emojis) = sas.emoji() {
+            return format_emojis(emojis)
+                .lines()
+                .map(ToOwned::to_owned)
+                .collect();
+        }
+    }
+
+    if let Some((first, second, third)) = sas.decimals() {
+        return vec![format!("{first:04} {second:04} {third:04}")];
+    }
+
+    vec!["Short authentication string is not ready yet".to_owned()]
+}
+
 macro_rules! render_key_content {
     ($type: ident) => {
         impl Render for $type {
@@ -735,29 +755,23 @@ macro_rules! render_key_content {
 
             fn render(&self, sas: &Self::RenderContext) -> RenderedContent {
                 let (message, short_auth_string) = if sas.supports_emoji() {
-                    (
-                        "Do the emojis match?".to_string(),
-                        format!("{:?}", sas.emoji()),
-                    )
+                    ("Do the emojis match?", render_sas_short_auth_string(sas))
                 } else {
                     (
-                        "Do the decimals match".to_string(),
-                        format!("{:?}", sas.decimals()),
+                        "Do the decimals match?",
+                        render_sas_short_auth_string(sas),
                     )
                 };
 
-                RenderedContent {
-                    lines: vec![
-                        RenderedLine {
-                            message,
-                            tags: self.tags(),
-                        },
-                        RenderedLine {
-                            message: short_auth_string,
-                            tags: self.tags(),
-                        },
-                    ],
-                }
+                let lines = std::iter::once(message.to_owned())
+                    .chain(short_auth_string)
+                    .map(|message| RenderedLine {
+                        message,
+                        tags: self.tags(),
+                    })
+                    .collect();
+
+                RenderedContent { lines }
             }
         }
     };
