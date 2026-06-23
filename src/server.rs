@@ -808,10 +808,13 @@ impl InnerServer {
             }
         };
 
+        let mut refresh_status_bar = false;
+
         match &event {
             AnyToDeviceEvent::RoomKey(_) => {}
             AnyToDeviceEvent::RoomKeyRequest(_) => {}
             AnyToDeviceEvent::KeyVerificationRequest(e) => {
+                refresh_status_bar = true;
                 if let Some(client) = self.get_client() {
                     if let Some(request) = client
                         .encryption()
@@ -836,6 +839,7 @@ impl InnerServer {
                 }
             }
             AnyToDeviceEvent::KeyVerificationStart(e) => {
+                refresh_status_bar = true;
                 if let Some(client) = self.get_client() {
                     use matrix_sdk::encryption::verification::Verification;
                     match client
@@ -892,19 +896,27 @@ impl InnerServer {
                 }
             }
             AnyToDeviceEvent::KeyVerificationCancel(e) => {
+                refresh_status_bar = true;
                 handle_event(&event, e.content.transaction_id.to_string())
                     .await;
             }
             AnyToDeviceEvent::KeyVerificationAccept(e) => {
+                refresh_status_bar = true;
                 handle_event(&event, e.content.transaction_id.to_string()).await
             }
             AnyToDeviceEvent::KeyVerificationKey(e) => {
+                refresh_status_bar = true;
                 handle_event(&event, e.content.transaction_id.to_string()).await
             }
             AnyToDeviceEvent::KeyVerificationMac(e) => {
+                refresh_status_bar = true;
                 handle_event(&event, e.content.transaction_id.to_string()).await
             }
             _ => {}
+        }
+
+        if refresh_status_bar {
+            Weechat::bar_item_update("buffer_modes");
         }
     }
 

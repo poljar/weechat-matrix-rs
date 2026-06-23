@@ -417,6 +417,10 @@ impl BufferInputCallbackAsync for MatrixRoom {
 }
 
 impl MatrixRoom {
+    fn update_status_bar(&self) {
+        Weechat::bar_item_update("buffer_modes");
+    }
+
     pub fn is_encrypted(&self) -> bool {
         self.members
             .runtime
@@ -1090,7 +1094,9 @@ impl MatrixRoom {
                 ambiguity_change,
                 smart_filter_delay_ms,
             )
-            .await
+            .await;
+
+        self.update_status_bar();
     }
 
     fn set_prev_batch(&self) {
@@ -1178,5 +1184,7 @@ impl MatrixRoom {
             }
             _ => (),
         }
+
+        self.update_status_bar();
     }
 }
