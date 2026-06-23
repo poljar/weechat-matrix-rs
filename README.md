@@ -22,21 +22,54 @@ If you are interested in helping out take a look at the issue tracker.
 
 # Build
 
-After Rust is installed the plugin can be compiled with:
+Install Rust and the native build dependencies first. On Debian or Ubuntu a
+typical build environment needs:
+
+    sudo apt install build-essential clang libclang-dev libsqlite3-dev pkg-config
+
+Other distributions use different package names, but the important native
+pieces are a C/C++ compiler, `clang`/`libclang`, and SQLite development headers.
+The `weechat-sys` dependency has a bundled WeeChat plugin header
+(`weechat-plugin.h`) fallback. If you want to build against the exact WeeChat
+API installed on your system, install the matching development package
+(`weechat-dev` on Debian/Ubuntu) or point `WEECHAT_PLUGIN_FILE` at the full
+path to that header:
+
+    export WEECHAT_PLUGIN_FILE=/usr/include/weechat/weechat-plugin.h
+
+After the dependencies are installed the plugin can be compiled with:
 
     cargo build --release
 
-If you are developing on weechat-matrix-rs, use debug builds which are faster at the expense of plugin performance:
+If you are developing on weechat-matrix-rs, use debug builds which are faster at
+the expense of plugin performance:
 
     cargo build
 
-On Linux this creates a `libmatrix.so` file in the `target/release/` (`target/debug` for dev builds) folder, this
-file needs to be renamed to `matrix.so` and copied to your Weechat plugin
-directory. A plugin directory can be created in your `$WEECHAT_HOME` folder, by
-default `.weechat/plugins/`.
+On Linux this creates a `libmatrix.so` file in the `target/release/`
+(`target/debug` for dev builds) folder. Rename it to `matrix.so` and copy it to
+your WeeChat plugin directory.
 
-Alternatively, `make install` (`make install PROFILE=debug` for dev build) will build and install the plugin in your
-`$WEECHAT_HOME` as well.
+`make install` uses WeeChat's XDG data directory by default:
+
+    make install
+
+This installs the release build to:
+
+    ${XDG_DATA_HOME:-$HOME/.local/share}/weechat/plugins/matrix.so
+
+Use `PROFILE=debug` for a debug build:
+
+    make install PROFILE=debug
+
+On older WeeChat setups the plugin directory may instead live under
+`$WEECHAT_HOME/plugins`, commonly `~/.weechat/plugins/`. Create the directory if
+needed and copy the renamed plugin there.
+
+On macOS the built library extension is usually `.dylib`. WeeChat may need this
+extension enabled before it loads the plugin:
+
+    /set weechat.plugin.extension ".so,.dll,.dylib"
 
 # Configuration
 
