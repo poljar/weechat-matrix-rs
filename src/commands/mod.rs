@@ -9,6 +9,7 @@ use crate::{config::ConfigHandle, Servers};
 
 mod buffer_clear;
 mod devices;
+mod invite;
 mod join;
 mod keys;
 mod matrix;
@@ -23,6 +24,7 @@ mod verification;
 
 use buffer_clear::BufferClearCommand;
 use devices::DevicesCommand;
+use invite::InviteCommand;
 use join::JoinCommand;
 use keys::KeysCommand;
 use matrix::MatrixCommand;
@@ -38,6 +40,7 @@ pub struct Commands {
     _matrix: Command,
     _keys: Command,
     _devices: Command,
+    _invite: Command,
     _page_up: CommandRun,
     _redact: Command,
     _verification: Command,
@@ -57,6 +60,7 @@ impl Commands {
         Ok(Commands {
             _matrix: MatrixCommand::create(servers, config)?,
             _devices: DevicesCommand::create(servers)?,
+            _invite: InviteCommand::create(servers)?,
             _keys: KeysCommand::create(servers)?,
             _page_up: PageUpCommand::create(servers)?,
             _redact: RedactCommand::create(servers)?,
