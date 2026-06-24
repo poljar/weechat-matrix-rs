@@ -27,7 +27,10 @@ use matrix_sdk::{
                 FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
             },
             message::send_message_event::v3::Response as RoomSendResponse,
-            session::login::v3::Response as LoginResponse,
+            session::{
+                get_login_types::v3::LoginType,
+                login::v3::Response as LoginResponse,
+            },
             sync::sync_events::v3::Filter,
             uiaa::{AuthData, Password, UserIdentifier},
         },
@@ -68,6 +71,7 @@ impl InteractiveAuthInfo {
 
 pub enum ClientMessage {
     LoginMessage(LoginResponse),
+    SsoLoginUrl(String),
     SyncState(OwnedRoomId, AnySyncStateEvent),
     SyncEvent(OwnedRoomId, AnySyncTimelineEvent),
     ToDeviceEvent(AnyToDeviceEvent),
@@ -303,6 +307,9 @@ impl Connection {
             match message {
                 Ok(message) => match message {
                     ClientMessage::LoginMessage(r) => server.receive_login(r),
+                    ClientMessage::SsoLoginUrl(url) => {
+                        server.receive_sso_url(&url)
+                    }
                     ClientMessage::SyncEvent(r, e) => {
                         server.receive_joined_timeline_event(&r, e).await
                     }
@@ -360,8 +367,14 @@ impl Connection {
         server_path: PathBuf,
     ) {
         if !client.matrix_auth().logged_in() {
+            let device_id_key = if username.is_empty() {
+                server_name.as_str()
+            } else {
+                username.as_str()
+            };
+
             let device_id =
-                Connection::load_device_id(&username, server_path.clone());
+                Connection::load_device_id(device_id_key, server_path.clone());
 
             let device_id = match device_id {
                 Err(e) => {
@@ -379,20 +392,71 @@ impl Connection {
             };
 
             let first_login = device_id.is_none();
+            let matrix_auth = client.matrix_auth();
 
-            let mut builder = client
-                .matrix_auth()
-                .login_username(&username, &password)
-                .initial_device_display_name("WeeChat-Matrix-rs");
+            let login_response = if password.is_empty() {
+                let login_types = match matrix_auth.get_login_types().await {
+                    Ok(response) => response,
+                    Err(e) => {
+                        let _ = channel
+                            .send(Err(format!(
+                                "Failed to get login types: {}",
+                                e
+                            )))
+                            .await;
+                        return;
+                    }
+                };
 
-            if let Some(device_id) = device_id.as_ref() {
-                builder = builder.device_id(device_id);
+                let has_sso = login_types
+                    .flows
+                    .iter()
+                    .any(|flow| matches!(flow, LoginType::Sso(_)));
+
+                if !has_sso {
+                    let _ = channel
+                        .send(Err(
+                            "No password configured and homeserver does not advertise SSO login"
+                                .to_owned(),
+                        ))
+                        .await;
+                    return;
+                }
+
+                let sso_channel = channel.clone();
+                let mut builder = matrix_auth
+                    .login_sso(move |sso_url| {
+                        let sso_channel = sso_channel.clone();
+                        async move {
+                            let _ = sso_channel
+                                .send(Ok(ClientMessage::SsoLoginUrl(sso_url)))
+                                .await;
+                            Ok(())
+                        }
+                    })
+                    .initial_device_display_name("WeeChat-Matrix-rs");
+
+                if let Some(device_id) = device_id.as_ref() {
+                    builder = builder.device_id(device_id);
+                };
+
+                builder.send().await
+            } else {
+                let mut builder = matrix_auth
+                    .login_username(&username, &password)
+                    .initial_device_display_name("WeeChat-Matrix-rs");
+
+                if let Some(device_id) = device_id.as_ref() {
+                    builder = builder.device_id(device_id);
+                };
+
+                builder.send().await
             };
 
-            match builder.send().await {
+            match login_response {
                 Ok(response) => {
                     if let Err(e) = Connection::save_device_id(
-                        &username,
+                        device_id_key,
                         server_path.clone(),
                         &response,
                     ) {

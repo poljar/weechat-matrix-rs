@@ -154,6 +154,9 @@ _(replace the placeholders in brackets [] with your own details)_:
        /set matrix-rust.server.[server-name].username [username]
        /set matrix-rust.server.[server-name].password [password]
 
+   To use single sign-on instead of password login, leave the password empty.
+   WeeChat will print a login URL when you connect.
+
 3. Now try to connect. The first connection can take a few minutes while the
    client syncs the account:
 

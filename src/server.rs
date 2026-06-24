@@ -979,6 +979,16 @@ impl InnerServer {
         *self.login_state.borrow_mut() = Some(login_state);
     }
 
+    pub fn receive_sso_url(&self, url: &str) {
+        self.print_network(&format!(
+            "Open this URL to finish SSO login for {}{}{}: {}",
+            Weechat::color("chat_server"),
+            self.name(),
+            Weechat::color("reset"),
+            url,
+        ));
+    }
+
     fn create_server_dir(&self) -> std::io::Result<()> {
         let path = self.get_server_path();
         std::fs::create_dir_all(path)
