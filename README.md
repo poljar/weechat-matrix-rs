@@ -101,7 +101,8 @@ _(replace the placeholders in brackets [] with your own details)_:
        /set matrix-rust.server.[server-name].username [username]
        /set matrix-rust.server.[server-name].password [password]
 
-3. Now try to connect:
+3. Now try to connect. The first connection can take a few minutes while the
+   client syncs the account:
 
        /matrix connect [server-name]
 
