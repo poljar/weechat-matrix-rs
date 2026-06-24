@@ -61,7 +61,7 @@ git = "https://github.com/poljar/rust-weechat"
 version = "0.14.0"
 # git = "https://github.com/matrix-org/matrix-rust-sdk.git"
 # rev = "92192c549b3f53889c23954386743867a73b31b1"
-features = ["markdown", "socks", "qrcode"]
+features = ["markdown", "socks", "qrcode", "sso-login"]
 
 [profile.dev.package]
 sha2 = { opt-level = 2 }
