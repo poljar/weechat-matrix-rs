@@ -15,6 +15,7 @@ mod keys;
 mod matrix;
 mod me;
 mod media;
+mod moderation;
 mod names;
 mod page_up;
 mod part;
@@ -31,6 +32,7 @@ use keys::KeysCommand;
 use matrix::MatrixCommand;
 use me::MeCommand;
 use media::MediaCommand;
+use moderation::ModerationCommand;
 use names::NamesCommand;
 use page_up::PageUpCommand;
 use part::PartCommand;
@@ -43,6 +45,8 @@ pub struct Commands {
     _keys: Command,
     _devices: Command,
     _invite: Command,
+    _ban: Command,
+    _kick: Command,
     _page_up: CommandRun,
     _redact: Command,
     _topic: Command,
@@ -53,6 +57,7 @@ pub struct Commands {
     _upload: CommandRun,
     _part: CommandRun,
     _names: CommandRun,
+    _unban: Command,
 }
 
 impl Commands {
@@ -64,6 +69,8 @@ impl Commands {
             _matrix: MatrixCommand::create(servers, config)?,
             _devices: DevicesCommand::create(servers)?,
             _invite: InviteCommand::create(servers)?,
+            _ban: ModerationCommand::ban(servers)?,
+            _kick: ModerationCommand::kick(servers)?,
             _keys: KeysCommand::create(servers)?,
             _page_up: PageUpCommand::create(servers)?,
             _redact: RedactCommand::create(servers)?,
@@ -75,6 +82,7 @@ impl Commands {
             _upload: UploadCommand::create(servers)?,
             _part: PartCommand::create(servers)?,
             _names: NamesCommand::create(servers)?,
+            _unban: ModerationCommand::unban(servers)?,
         })
     }
 }
