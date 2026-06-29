@@ -82,7 +82,8 @@ jobs:
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-          rustup default stable
+          # rustup isn't on PATH yet in this step, use full path
+          "$HOME/.cargo/bin/rustup" default stable
       - name: Checkout sources
         uses: actions/checkout@v4
       - name: Install cargo-deb
