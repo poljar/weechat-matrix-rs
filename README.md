@@ -74,6 +74,23 @@ extension enabled before it loads the plugin:
 Rename `target/release/libmatrix.dylib` to `matrix.dylib` before copying it to
 your WeeChat plugin directory.
 
+# Debian / Ubuntu package
+
+A `.deb` package can be built using `cargo-deb`. This requires
+[Rust installed](https://rustup.rs/) (via rustup, the recommended method).
+
+First ensure `cargo-deb` is available:
+
+    cargo install cargo-deb
+
+Then build the package with:
+
+    make deb
+
+The resulting `.deb` package is placed in `target/debian/`. Install it with:
+
+    sudo dpkg -i target/debian/weechat-matrix_*.deb
+
 # Loading the plugin
 
 Restart WeeChat after installing the plugin, or load it manually:

@@ -5,6 +5,21 @@ authors = ["Damir Jelić <poljar@termina.org.uk>"]
 edition = "2018"
 license = "ISC"
 resolver = "2"
+description = "WeeChat plugin for the Matrix protocol"
+
+[package.metadata.deb]
+maintainer = "Damir Jelić <poljar@termina.org.uk>"
+copyright = "2019-2024, Damir Jelić <poljar@termina.org.uk>"
+extended-description = """\
+WeeChat plugin for the Matrix protocol built with the Matrix Rust SDK.
+Provides native Matrix support within WeeChat, allowing you to chat
+on Matrix from your favourite IRC client."""
+section = "net"
+priority = "optional"
+depends = "$auto, weechat-plugins"
+assets = [
+    ["target/release/libmatrix.so", "usr/lib/weechat/plugins/matrix.so", "755"],
+]
 
 [lib]
 name = "matrix"

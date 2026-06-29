@@ -6,7 +6,7 @@ SOURCES := $(wildcard src/*.rs src/bar_items/*.rs src/commands/*.rs src/room/*.r
 
 PROFILE ?= release
 
-.PHONY: install install-dir lint all help
+.PHONY: install install-dir lint all help deb
 
 all: help
 
@@ -27,3 +27,9 @@ install-dir: ## Create plugins directory
 
 lint: ## Lint issues with clippy
 	cargo clippy
+
+deb: ## Build a .deb package
+	cargo deb
+	@echo ""
+	@echo "Package built: target/debian/weechat-matrix_*.deb"
+	@echo "Install with: sudo dpkg -i target/debian/weechat-matrix_*.deb"
