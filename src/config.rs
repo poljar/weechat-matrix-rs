@@ -126,6 +126,16 @@ config!(
             "The style that should be used when a message needs to be redacted",
             RedactionStyle,
         },
+
+        smart_filter_delay: Integer {
+            // Description
+            "How long a room member can be inactive, in milliseconds, before \
+             membership events from them get the matrix_smart_filter tag",
+            // Default value.
+            300000,
+            // Range: 0 ms to one day.
+            0..86400000,
+        },
     },
 
     Section network {
