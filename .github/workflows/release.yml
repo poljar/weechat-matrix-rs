@@ -62,3 +62,35 @@ jobs:
         with:
           name: 'libmatrix.so-${{ matrix.os }}'
           path: target/release/libmatrix.so
+
+  publish-deb:
+    name: Publish .deb for Debian 13 (trixie)
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates curl gnupg apt-transport-https build-essential pkg-config libssl-dev libsqlite3-dev git
+          mkdir -p /etc/apt/keyrings
+          curl --silent https://weechat.org/dev/info/debian_repository_signing_key_asc/ | tee /etc/apt/keyrings/weechat.asc
+          echo "deb [signed-by=/etc/apt/keyrings/weechat.asc] https://weechat.org/debian trixie main" | tee /etc/apt/sources.list.d/weechat.list
+          apt-get update
+          apt-get install -y weechat-curses weechat-plugins weechat-python weechat-perl weechat-dev
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          rustup default stable
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+      - name: Build .deb package
+        run: cargo deb --release
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: weechat-matrix-debian-13.deb
+          path: target/debian/*.deb
