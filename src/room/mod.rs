@@ -909,6 +909,9 @@ impl MatrixRoom {
         // If the event has a transaction id it's an event that we sent out
         // ourselves, the content will be in the outgoing message queue and it
         // may have been printed out as a local echo.
+        self.members
+            .mark_active(event.sender(), event.origin_server_ts());
+
         if let Some(id) = event.transaction_id() {
             self.handle_outgoing_message(id, event.event_id()).await;
             return;
@@ -959,8 +962,16 @@ impl MatrixRoom {
         state_event: bool,
         ambiguity_change: Option<&AmbiguityChange>,
     ) {
+        let smart_filter_delay_ms =
+            self.config.borrow().look().smart_filter_delay();
+
         self.members
-            .handle_membership_event(event, state_event, ambiguity_change)
+            .handle_membership_event(
+                event,
+                state_event,
+                ambiguity_change,
+                smart_filter_delay_ms,
+            )
             .await
     }
 
@@ -1034,6 +1045,9 @@ impl MatrixRoom {
         event: &AnySyncStateEvent,
         _state_event: bool,
     ) {
+        self.members
+            .mark_active(event.sender(), event.origin_server_ts());
+
         match event {
             AnySyncStateEvent::RoomName(_) => self.buffer.update_buffer_name(),
             AnySyncStateEvent::RoomTopic(_) => self.buffer.set_topic(),

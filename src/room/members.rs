@@ -267,12 +267,15 @@ impl Members {
         &self,
         user_id: &UserId,
         timestamp: MilliSecondsSinceUnixEpoch,
+        smart_filter_delay_ms: i64,
     ) -> bool {
         let Some(last_active) = self.last_active.get(user_id) else {
             return true;
         };
 
-        timestamp.0.saturating_sub(last_active.0) > uint!(300000)
+        let inactive_ms: i64 = timestamp.0.saturating_sub(last_active.0).into();
+
+        inactive_ms > smart_filter_delay_ms
     }
 
     pub async fn handle_membership_event(
@@ -280,6 +283,7 @@ impl Members {
         event: &SyncStateEvent<RoomMemberEventContent>,
         state_event: bool,
         ambiguity_change: Option<&AmbiguityChange>,
+        smart_filter_delay_ms: i64,
     ) {
         let buffer = self.buffer.buffer_handle();
         let buffer = if let Ok(b) = buffer.upgrade() {
@@ -371,7 +375,11 @@ impl Members {
                 (event.origin_server_ts.0 / uint!(1000)).into();
             let mut tags = line.tags;
 
-            if self.should_smart_filter(&target_id, event.origin_server_ts) {
+            if self.should_smart_filter(
+                &target_id,
+                event.origin_server_ts,
+                smart_filter_delay_ms,
+            ) {
                 tags.push("matrix_smart_filter".to_owned());
             }
 

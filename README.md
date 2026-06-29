@@ -117,10 +117,14 @@ _(replace the placeholders in brackets [] with your own details)_:
 
        /save
 
-To hide join/leave noise from users who have not spoken recently, add a WeeChat
+To hide join/leave noise from users who have not been active recently, add a WeeChat
 filter for Matrix smart-filter tags:
 
        /filter add matrix_smart * matrix_smart_filter *
+
+The inactivity delay defaults to five minutes and can be changed with:
+
+       /set matrix-rust.look.smart_filter_delay 300000
 
 
 # Helpful Commands
