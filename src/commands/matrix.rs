@@ -34,7 +34,7 @@ impl MatrixCommand {
             .add_argument("connect <server-name>")
             .add_argument("devices delete|list|set-name")
             .add_argument("keys import|export <file> <passphrase>")
-            .add_argument("media download <mxc-uri> <file>")
+            .add_argument("media download <mxc-uri> [file]")
             .add_argument("disconnect <server-name>")
             .add_argument("reconnect <server-name>")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
