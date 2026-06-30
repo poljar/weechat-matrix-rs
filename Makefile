@@ -33,10 +33,16 @@ CARGO_VERSION := $(shell grep -m1 '^version = ' Cargo.toml | sed 's/version = "\
 
 deb: target/$(PROFILE)/libmatrix.so ## Build a .deb package with version from git describe
 	DEB_VERSION=$$( \
-	  desc=$$(git describe --tags --always --dirty --match '[0-9]*' 2>/dev/null); \
-	  if [ -z "$$desc" ]; then \
+	  tag=$$(git describe --tags --abbrev=0 --match '[0-9]*' 2>/dev/null || true); \
+	  short=$$(git rev-parse --short HEAD 2>/dev/null || true); \
+	  if [ -z "$$short" ]; then \
 	    echo "$(CARGO_VERSION)+unknown"; \
+	  elif [ -z "$$tag" ]; then \
+	    count=$$(git rev-list --count HEAD 2>/dev/null || echo 0); \
+	    dirty=$$(git diff-index --quiet HEAD -- 2>/dev/null || echo ".dirty"); \
+	    echo "$(CARGO_VERSION)+git.$$count.g$$short$$dirty"; \
 	  else \
+	    desc=$$(git describe --tags --dirty --match '[0-9]*' 2>/dev/null); \
 	    case "$$desc" in \
 	      *-dirty) dirty=".dirty"; desc="$${desc%-dirty}" ;; \
 	      *) dirty="" ;; \
