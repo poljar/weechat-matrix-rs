@@ -252,7 +252,7 @@ impl MatrixServer {
                 self.print_error(&format!(
                     "Failed to join {}: {}",
                     target,
-                    format_join_error(&error)
+                    format_join_error(&error, &target)
                 ));
             }
         }
@@ -462,11 +462,21 @@ impl MatrixServer {
     }
 }
 
-fn format_join_error(error: &Error) -> String {
-    error
+fn format_join_error(error: &Error, target: &str) -> String {
+    let message = error
         .as_client_api_error()
         .map(ToString::to_string)
-        .unwrap_or_else(|| error.to_string())
+        .unwrap_or_else(|| error.to_string());
+
+    if target.starts_with('#')
+        && message.contains("Expected RoomID of the form")
+    {
+        format!(
+            "{message}; the alias may point to a room v12 ID without a server part. Update the homeserver/client stack or join from a homeserver that supports room v12."
+        )
+    } else {
+        message
+    }
 }
 
 impl Drop for MatrixServer {
