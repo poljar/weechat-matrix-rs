@@ -1622,8 +1622,6 @@ impl InnerServer {
     }
 
     pub fn shutdown(&self) {
-        let _runtime_guard = self.servers.runtime().enter();
-
         let mut connection = self.connection.borrow_mut();
         connection.take();
         drop(connection);
