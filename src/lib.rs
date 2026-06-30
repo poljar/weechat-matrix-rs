@@ -292,14 +292,14 @@ impl Drop for Matrix {
     fn drop(&mut self) {
         let servers = self.servers.borrow();
 
-        // Buffer close callbacks get called after this, so disconnect here so
-        // we don't leave all our rooms.
+        // Buffer close callbacks get called after this, so drop active
+        // connections here so we don't leave all our rooms.
         //
         // TODO set a flag on the server as well so we don't even try to leave
         // the rooms, once leaving the rooms is implemented when the buffer gets
         // closed.
         for server in servers.values() {
-            server.disconnect();
+            server.shutdown();
         }
 
         drop(servers);

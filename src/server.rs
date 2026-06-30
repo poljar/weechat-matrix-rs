@@ -506,9 +506,14 @@ impl Drop for MatrixServer {
             let config = &self.config;
             let mut config_borrow = config.borrow_mut();
 
-            let mut section = config_borrow
-                .search_section_mut("server")
-                .expect("Can't get server section");
+            let Some(mut section) = config_borrow.search_section_mut("server")
+            else {
+                error!(
+                    "Can't get server section while dropping Matrix server {}",
+                    self.server_name
+                );
+                return;
+            };
 
             for option_name in &[
                 "autoconnect",
@@ -520,9 +525,9 @@ impl Drop for MatrixServer {
             ] {
                 let option_name =
                     &format!("{}.{}", self.server_name, option_name);
-                section.free_option(option_name).unwrap_or_else(|_| {
-                    panic!("Can't free option {}", option_name)
-                });
+                if section.free_option(option_name).is_err() {
+                    error!("Can't free option {}", option_name);
+                }
             }
         }
     }
@@ -1457,6 +1462,20 @@ impl InnerServer {
             self.name(),
             Weechat::color("reset")
         ));
+    }
+
+    pub fn shutdown(&self) {
+        let _runtime_guard = self.servers.runtime().enter();
+
+        let mut connection = self.connection.borrow_mut();
+        connection.take();
+        drop(connection);
+
+        self.verification_buffers.borrow_mut().clear();
+        self.rooms.borrow_mut().clear();
+
+        let mut client = self.client.borrow_mut();
+        client.take();
     }
 
     pub fn get_info_str(&self, details: bool) -> String {
