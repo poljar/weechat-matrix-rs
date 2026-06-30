@@ -28,8 +28,28 @@ install-dir: ## Create plugins directory
 lint: ## Lint issues with clippy
 	cargo clippy
 
-deb: ## Build a .deb package
-	cargo deb
+# Get the base package version from Cargo.toml (fallback when no git tags are found)
+CARGO_VERSION := $(shell grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+
+deb: target/$(PROFILE)/libmatrix.so ## Build a .deb package with version from git describe
+	DEB_VERSION=$$( \
+	  desc=$$(git describe --tags --always --dirty --match '[0-9]*' 2>/dev/null); \
+	  if [ -z "$$desc" ]; then \
+	    echo "$(CARGO_VERSION)+unknown"; \
+	  else \
+	    case "$$desc" in \
+	      *-dirty) dirty=".dirty"; desc="$${desc%-dirty}" ;; \
+	      *) dirty="" ;; \
+	    esac; \
+	    case "$$desc" in \
+	      *.*) ;; \
+	      *) desc="$(CARGO_VERSION)+git.$$desc" ;; \
+	    esac; \
+	    desc=$$(echo "$$desc" | sed 's/-\([0-9][0-9]*\)-g\([0-9a-f][0-9a-f]*\)/+\1.\2/'); \
+	    echo "$$desc$$dirty"; \
+	  fi \
+	); \
+	cargo deb --no-build --deb-version "$$DEB_VERSION"
 	@echo ""
-	@echo "Package built: target/debian/weechat-matrix_*.deb"
-	@echo "Install with: sudo dpkg -i target/debian/weechat-matrix_*.deb"
+	@echo "Package built: target/debian/weechat-matrix_$${DEB_VERSION}*.deb"
+	@echo "Install with: sudo dpkg -i target/debian/weechat-matrix_$${DEB_VERSION}*.deb"
