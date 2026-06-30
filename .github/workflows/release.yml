@@ -88,12 +88,16 @@ jobs:
         uses: actions/checkout@v4
       - name: Install cargo-deb
         run: cargo install cargo-deb
-      - name: Build release binary
-        run: cargo build --release
       - name: Build .deb package
-        run: cargo deb --no-build
+        run: make deb
+      - name: Find .deb artifact
+        id: deb_artifact
+        run: |
+          deb_file=$(ls target/debian/weechat-matrix_*.deb)
+          echo "path=$deb_file" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$deb_file" .deb)" >> "$GITHUB_OUTPUT"
       - name: Upload .deb artifact
         uses: actions/upload-artifact@v4
         with:
-          name: weechat-matrix-debian-13.deb
-          path: target/debian/*.deb
+          name: ${{ steps.deb_artifact.outputs.name }}
+          path: ${{ steps.deb_artifact.outputs.path }}
