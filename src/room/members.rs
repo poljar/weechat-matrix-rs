@@ -259,6 +259,16 @@ impl Members {
         self.last_active.insert(user_id.to_owned(), timestamp);
     }
 
+    pub fn names(&self) -> Vec<String> {
+        let mut names: Vec<_> = self
+            .nicks
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
     fn should_smart_filter(
         &self,
         user_id: &UserId,

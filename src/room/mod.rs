@@ -455,6 +455,10 @@ impl MatrixRoom {
         &self.room_id
     }
 
+    pub fn names(&self) -> Vec<String> {
+        self.members.names()
+    }
+
     pub fn buffer_handle(&self) -> BufferHandle {
         self.buffer.buffer_handle()
     }

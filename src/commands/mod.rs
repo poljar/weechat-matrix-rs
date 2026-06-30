@@ -14,6 +14,7 @@ mod keys;
 mod matrix;
 mod me;
 mod media;
+mod names;
 mod page_up;
 mod part;
 mod redact;
@@ -27,6 +28,7 @@ use keys::KeysCommand;
 use matrix::MatrixCommand;
 use me::MeCommand;
 use media::MediaCommand;
+use names::NamesCommand;
 use page_up::PageUpCommand;
 use part::PartCommand;
 use redact::RedactCommand;
@@ -44,6 +46,7 @@ pub struct Commands {
     _me: CommandRun,
     _upload: CommandRun,
     _part: CommandRun,
+    _names: CommandRun,
 }
 
 impl Commands {
@@ -63,6 +66,7 @@ impl Commands {
             _me: MeCommand::create(servers)?,
             _upload: UploadCommand::create(servers)?,
             _part: PartCommand::create(servers)?,
+            _names: NamesCommand::create(servers)?,
         })
     }
 }
