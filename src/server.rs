@@ -80,7 +80,8 @@ use matrix_sdk::{
             SyncStateEvent,
         },
         DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
-        OwnedDeviceId, OwnedMxcUri, OwnedRoomId, OwnedUserId, RoomId, UserId,
+        OwnedDeviceId, OwnedMxcUri, OwnedRoomId, OwnedRoomOrAliasId,
+        OwnedUserId, RoomId, UserId,
     },
     Client, Error,
 };
@@ -214,59 +215,31 @@ impl MatrixServer {
         Rc::downgrade(&self.inner)
     }
 
-    /// Join a Matrix room by ID or alias
+    /// Join a Matrix room by ID or alias.
     pub async fn join_room(&self, room_id_or_alias: String) {
-        let connection = if let Some(c) = self.connection() {
-            c
-        } else {
+        let Ok(room_id_or_alias) =
+            room_id_or_alias.parse::<OwnedRoomOrAliasId>()
+        else {
+            self.print_error("Invalid room ID or alias.");
+            return;
+        };
+
+        let Some(connection) = self.connection() else {
             self.print_error("Not connected. Please connect first.");
             return;
         };
 
         self.print_network(&format!("Joining room {}...", room_id_or_alias));
 
-        // Determine if it's a room ID or alias
-        let result = if room_id_or_alias.starts_with('!') {
-            // It's a room ID
-            use matrix_sdk::ruma::OwnedRoomId;
-            match room_id_or_alias.parse::<OwnedRoomId>() {
-                Ok(room_id) => {
-                    let client = connection.client().clone();
-                    connection.spawn(async move {
-                        client.join_room_by_id(&room_id).await
-                    }).await
-                }
-                Err(e) => {
-                    self.print_error(&format!("Invalid room ID: {:?}", e));
-                    return;
-                }
-            }
-        } else {
-            // It's a room alias (starts with # or we add it)
-            use matrix_sdk::ruma::OwnedRoomOrAliasId;
-            let alias = if room_id_or_alias.starts_with('#') {
-                room_id_or_alias.clone()
-            } else {
-                format!("#{}", room_id_or_alias)
-            };
-
-            match alias.parse::<OwnedRoomOrAliasId>() {
-                Ok(room_or_alias) => {
-                    let client = connection.client().clone();
-                    connection
-                        .spawn(async move {
-                            client
-                                .join_room_by_id_or_alias(&room_or_alias, &[])
-                                .await
-                        })
-                        .await
-                }
-                Err(e) => {
-                    self.print_error(&format!("Invalid room alias: {:?}", e));
-                    return;
-                }
-            }
-        };
+        let client = connection.client().clone();
+        let target = room_id_or_alias.to_string();
+        let result = connection
+            .spawn(async move {
+                client
+                    .join_room_by_id_or_alias(&room_id_or_alias, &[])
+                    .await
+            })
+            .await;
 
         match result {
             Ok(room) => {
@@ -275,8 +248,12 @@ impl MatrixServer {
                     room.room_id()
                 ));
             }
-            Err(e) => {
-                self.print_error(&format!("Failed to join room: {:?}", e));
+            Err(error) => {
+                self.print_error(&format!(
+                    "Failed to join {}: {}",
+                    target,
+                    format_join_error(&error)
+                ));
             }
         }
     }
@@ -483,6 +460,13 @@ impl MatrixServer {
             .new_boolean_option(ssl_verify)
             .expect("Can't create autoconnect option");
     }
+}
+
+fn format_join_error(error: &Error) -> String {
+    error
+        .as_client_api_error()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| error.to_string())
 }
 
 impl Drop for MatrixServer {
