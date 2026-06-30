@@ -62,6 +62,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
+    time::Duration,
 };
 use tracing::error;
 use url::Url;
@@ -91,6 +92,8 @@ use weechat::{
     config::{BooleanOptionSettings, ConfigSection, StringOptionSettings},
     Prefix, Weechat,
 };
+
+const JOIN_ROOM_TIMEOUT: Duration = Duration::from_secs(120);
 
 use crate::{
     config::ServerBuffer,
@@ -235,27 +238,38 @@ impl MatrixServer {
         let target = room_id_or_alias.to_string();
         let result = connection
             .spawn(async move {
-                let servers =
-                    resolve_alias_servers(&client, &room_id_or_alias).await;
+                tokio::time::timeout(JOIN_ROOM_TIMEOUT, async move {
+                    let servers =
+                        resolve_alias_servers(&client, &room_id_or_alias).await;
 
-                client
-                    .join_room_by_id_or_alias(&room_id_or_alias, &servers)
-                    .await
+                    client
+                        .join_room_by_id_or_alias(&room_id_or_alias, &servers)
+                        .await
+                })
+                .await
             })
             .await;
 
         match result {
-            Ok(room) => {
+            Ok(Ok(room)) => {
                 self.print_network(&format!(
                     "Successfully joined room {}",
                     room.room_id()
                 ));
             }
-            Err(error) => {
+            Ok(Err(error)) => {
                 self.print_error(&format!(
                     "Failed to join {}: {}",
                     target,
                     format_join_error(&error, &target)
+                ));
+            }
+            Err(error) => {
+                self.print_error(&format!(
+                    "Timed out joining {} after {} seconds: {}",
+                    target,
+                    JOIN_ROOM_TIMEOUT.as_secs(),
+                    error
                 ));
             }
         }
