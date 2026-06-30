@@ -80,8 +80,8 @@ use matrix_sdk::{
             SyncStateEvent,
         },
         DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
-        OwnedDeviceId, OwnedMxcUri, OwnedRoomId, OwnedRoomOrAliasId,
-        OwnedUserId, RoomId, UserId,
+        OwnedDeviceId, OwnedMxcUri, OwnedRoomAliasId, OwnedRoomId,
+        OwnedRoomOrAliasId, OwnedServerName, OwnedUserId, RoomId, UserId,
     },
     Client, Error,
 };
@@ -235,8 +235,11 @@ impl MatrixServer {
         let target = room_id_or_alias.to_string();
         let result = connection
             .spawn(async move {
+                let servers =
+                    resolve_alias_servers(&client, &room_id_or_alias).await;
+
                 client
-                    .join_room_by_id_or_alias(&room_id_or_alias, &[])
+                    .join_room_by_id_or_alias(&room_id_or_alias, &servers)
                     .await
             })
             .await;
@@ -477,6 +480,22 @@ fn format_join_error(error: &Error, target: &str) -> String {
     } else {
         message
     }
+}
+
+async fn resolve_alias_servers(
+    client: &Client,
+    room_id_or_alias: &OwnedRoomOrAliasId,
+) -> Vec<OwnedServerName> {
+    let Ok(alias) = room_id_or_alias.as_str().parse::<OwnedRoomAliasId>()
+    else {
+        return Vec::new();
+    };
+
+    client
+        .resolve_room_alias(&alias)
+        .await
+        .map(|response| response.servers)
+        .unwrap_or_default()
 }
 
 impl Drop for MatrixServer {
