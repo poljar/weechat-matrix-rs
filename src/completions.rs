@@ -1,4 +1,6 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::BTreeSet};
+
+use matrix_sdk::ruma::MxcUri;
 
 use weechat::{
     buffer::Buffer,
@@ -14,13 +16,15 @@ use crate::Servers;
 pub struct Completions {
     servers: CompletionHook,
     users: CompletionHook,
+    media: CompletionHook,
 }
 
 impl Completions {
     pub fn hook_all(servers: Servers) -> Result<Self, ()> {
         Ok(Self {
             servers: ServersCompletion::create(servers.clone())?,
-            users: UsersCompletion::create(servers)?,
+            users: UsersCompletion::create(servers.clone())?,
+            media: MediaCompletion::create(servers)?,
         })
     }
 }
@@ -106,5 +110,98 @@ impl CompletionCallback for UsersCompletion {
         }
 
         Ok(())
+    }
+}
+
+struct MediaCompletion {
+    servers: Servers,
+}
+
+impl MediaCompletion {
+    fn create(servers: Servers) -> Result<CompletionHook, ()> {
+        let comp = MediaCompletion { servers };
+
+        CompletionHook::new(
+            "matrix-media",
+            "Completion for Matrix media URIs in the current buffer",
+            comp,
+        )
+    }
+}
+
+impl CompletionCallback for MediaCompletion {
+    fn callback(
+        &mut self,
+        _: &Weechat,
+        buffer: &Buffer,
+        _: Cow<str>,
+        completion: &Completion,
+    ) -> Result<(), ()> {
+        if self.servers.find_server(buffer).is_none() {
+            return Ok(());
+        }
+
+        let mut media = BTreeSet::new();
+
+        for line in buffer.lines().rev().take(200) {
+            let message = Weechat::remove_color(&line.message());
+            media.extend(extract_mxc_uris(&message));
+        }
+
+        for uri in media {
+            completion.add_with_options(
+                &uri,
+                false,
+                CompletionPosition::Sorted,
+            );
+        }
+
+        Ok(())
+    }
+}
+
+fn extract_mxc_uris(message: &str) -> Vec<String> {
+    message
+        .match_indices("mxc://")
+        .filter_map(|(start, _)| {
+            let uri = message[start..]
+                .split(|c: char| {
+                    c.is_whitespace()
+                        || matches!(
+                            c,
+                            '<' | '>' | '[' | ']' | '(' | ')' | '"' | '\''
+                        )
+                })
+                .next()
+                .unwrap_or_default();
+            let uri = Box::<MxcUri>::from(uri);
+
+            if uri.is_valid() {
+                Some(uri.as_str().to_owned())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_valid_mxc_uris() {
+        assert_eq!(
+            vec!["mxc://matrix.org/some-media-id".to_owned()],
+            extract_mxc_uris(
+                "authenticated download: /matrix media download \
+                 mxc://matrix.org/some-media-id [file]"
+            )
+        );
+    }
+
+    #[test]
+    fn ignores_invalid_mxc_uris() {
+        assert!(extract_mxc_uris("download mxc://").is_empty());
     }
 }
