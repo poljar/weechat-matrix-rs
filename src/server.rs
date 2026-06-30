@@ -324,21 +324,21 @@ impl MatrixServer {
         let homeserver =
             StringOptionSettings::new(format!("{}.homeserver", server_name))
                 .set_check_callback(|_, _, value| {
-                    let url = Weechat::eval_string_expression(&value)
-                        .expect("Can't evaluate homeserver");
-
-                    MatrixServer::is_url_valid(&url)
+                    Weechat::eval_string_expression(&value)
+                        .map(|value| MatrixServer::is_url_valid(&value))
+                        .unwrap_or(false)
                 })
                 .set_change_callback(move |_, option| {
                     let server_ref = server.upgrade().expect(
                         "Server got deleted while server config is alive",
                     );
 
-                    let url = Weechat::eval_string_expression(&option.value())
-                        .expect("Can't evaluate homeserver");
+                    let homeserver =
+                        Weechat::eval_string_expression(&option.value())
+                            .expect("Can't evaluate homeserver");
 
                     server_ref.settings.borrow_mut().homeserver =
-                        MatrixServer::parse_url_unchecked(&url);
+                        MatrixServer::parse_url_unchecked(&homeserver);
                 });
 
         server_section
