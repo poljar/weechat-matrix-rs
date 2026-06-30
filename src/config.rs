@@ -182,8 +182,11 @@ impl ConfigHandle {
                 |_weechat: &Weechat,
                  config: &Conf,
                  section: &mut ConfigSection| {
+                    let mut options = section.options();
+                    options.sort_by(|a, b| a.name().cmp(&b.name()));
+
                     config.write_section(section.name());
-                    for option in section.options() {
+                    for option in options {
                         config.write_option(option);
                     }
                 },
