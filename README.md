@@ -94,7 +94,7 @@ Then build the package with:
 
 The resulting `.deb` package is placed in `target/debian/`. Install it with:
 
-    sudo dpkg -i target/debian/weechat-matrix_*.deb
+    sudo dpkg -i target/debian/weechat-matrix-rs_*.deb
 
 # Loading the plugin
 

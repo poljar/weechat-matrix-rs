@@ -93,7 +93,7 @@ jobs:
       - name: Find .deb artifact
         id: deb_artifact
         run: |
-          deb_file=$(ls target/debian/weechat-matrix_*.deb)
+          deb_file=$(ls target/debian/weechat-matrix-rs_*.deb)
           echo "path=$deb_file" >> "$GITHUB_OUTPUT"
           echo "name=$(basename "$deb_file" .deb)" >> "$GITHUB_OUTPUT"
       - name: Upload .deb artifact

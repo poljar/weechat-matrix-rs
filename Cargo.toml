@@ -8,6 +8,7 @@ resolver = "2"
 description = "WeeChat plugin for the Matrix protocol"
 
 [package.metadata.deb]
+name = "weechat-matrix-rs"
 maintainer = "Damir Jelić <poljar@termina.org.uk>"
 copyright = "2019-2024, Damir Jelić <poljar@termina.org.uk>"
 extended-description = """\

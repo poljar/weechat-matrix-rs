@@ -51,5 +51,5 @@ deb: target/$(PROFILE)/libmatrix.so ## Build a .deb package with version from gi
 	); \
 	cargo deb --no-build --deb-version "$$DEB_VERSION"
 	@echo ""
-	@echo "Package built: target/debian/weechat-matrix_$${DEB_VERSION}*.deb"
-	@echo "Install with: sudo dpkg -i target/debian/weechat-matrix_$${DEB_VERSION}*.deb"
+	@echo "Package built: target/debian/weechat-matrix-rs_$${DEB_VERSION}*.deb"
+	@echo "Install with: sudo dpkg -i target/debian/weechat-matrix-rs_$${DEB_VERSION}*.deb"
