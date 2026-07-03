@@ -7,7 +7,7 @@ use clap::{
 use matrix_sdk::ruma::MxcUri;
 use weechat::{buffer::Buffer, Weechat};
 
-use crate::Servers;
+use crate::{BufferOwner, Servers};
 
 pub struct MediaCommand;
 
@@ -16,9 +16,18 @@ impl MediaCommand {
     pub const COMPLETION: &'static str = "download %(matrix-media)";
 
     pub fn run(buffer: &Buffer, servers: &Servers, args: &ArgMatches) {
-        let server = match servers.find_server(buffer) {
-            Some(server) => server,
-            None => {
+        let (server, output_buffer) = match servers.buffer_owner(buffer) {
+            BufferOwner::Room(server, room) => {
+                (server, Some(room.buffer_handle()))
+            }
+            BufferOwner::Server(server) => {
+                let output_buffer = server.server_buffer().as_ref().cloned();
+                (server, output_buffer)
+            }
+            BufferOwner::Verification(server, verification) => {
+                (server, Some(verification.buffer()))
+            }
+            BufferOwner::None => {
                 Weechat::print("Must be executed on Matrix buffer");
                 return;
             }
@@ -51,7 +60,9 @@ impl MediaCommand {
                 };
 
                 Weechat::spawn(async move {
-                    server.download_media(uri.into(), file).await;
+                    server
+                        .download_media(uri.into(), file, output_buffer)
+                        .await;
                 })
                 .detach();
             }

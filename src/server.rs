@@ -60,7 +60,7 @@ use std::{
     cmp::Reverse,
     collections::HashMap,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::{Rc, Weak},
 };
 use tracing::error;
@@ -669,6 +669,21 @@ impl InnerServer {
         self.print(&format!("{}{}: {}", prefix, PLUGIN_NAME, message));
     }
 
+    /// Print a message to a Matrix buffer, falling back to the server buffer if
+    /// the original command buffer disappeared.
+    fn print_with_prefix_to(
+        &self,
+        buffer: Option<&BufferHandle>,
+        prefix: &str,
+        message: &str,
+    ) {
+        if let Some(Ok(buffer)) = buffer.map(|buffer| buffer.upgrade()) {
+            buffer.print(&format!("{}{}: {}", prefix, PLUGIN_NAME, message));
+        } else {
+            self.print_with_prefix(prefix, message);
+        }
+    }
+
     /// Print an network message to the server buffer.
     pub fn print_network(&self, message: &str) {
         self.print_with_prefix(&Weechat::prefix(Prefix::Network), message);
@@ -1020,11 +1035,20 @@ impl InnerServer {
         };
     }
 
-    pub async fn download_media(&self, uri: OwnedMxcUri, file: PathBuf) {
+    pub async fn download_media(
+        &self,
+        uri: OwnedMxcUri,
+        file: PathBuf,
+        output_buffer: Option<BufferHandle>,
+    ) {
         let connection = if let Some(c) = self.connection() {
             c
         } else {
-            self.print_error("You must be connected to execute this command");
+            self.print_with_prefix_to(
+                output_buffer.as_ref(),
+                &Weechat::prefix(Prefix::Error),
+                "You must be connected to execute this command",
+            );
             return;
         };
 
@@ -1033,9 +1057,14 @@ impl InnerServer {
             source: MediaSource::Plain(uri),
             format: MediaFormat::File,
         };
-        let display_file = file.display().to_string();
+        let display_file =
+            Self::display_download_path(&file).display().to_string();
 
-        self.print_network(&format!("Downloading media to {}", display_file));
+        self.print_with_prefix_to(
+            output_buffer.as_ref(),
+            &Weechat::prefix(Prefix::Network),
+            &format!("Downloading media to {}", display_file),
+        );
 
         match connection
             .spawn(async move {
@@ -1050,20 +1079,42 @@ impl InnerServer {
                     .open(&file)
                     .and_then(|mut file| file.write_all(&content))
                 {
-                    self.print_error(&format!(
-                        "Error writing media to {}: {:#?}",
-                        display_file, e
-                    ));
+                    self.print_with_prefix_to(
+                        output_buffer.as_ref(),
+                        &Weechat::prefix(Prefix::Error),
+                        &format!(
+                            "Error writing media to {}: {:#?}",
+                            display_file, e
+                        ),
+                    );
                 } else {
-                    self.print_network(&format!(
-                        "Successfully downloaded media to {}",
-                        display_file
-                    ));
+                    self.print_with_prefix_to(
+                        output_buffer.as_ref(),
+                        &Weechat::prefix(Prefix::Network),
+                        &format!(
+                            "Successfully downloaded media to {}",
+                            display_file
+                        ),
+                    );
                 }
             }
             Err(e) => {
-                self.print_error(&format!("Error downloading media {:#?}", e));
+                self.print_with_prefix_to(
+                    output_buffer.as_ref(),
+                    &Weechat::prefix(Prefix::Error),
+                    &format!("Error downloading media {:#?}", e),
+                );
             }
+        }
+    }
+
+    fn display_download_path(file: &Path) -> PathBuf {
+        if file.is_absolute() {
+            file.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(file))
+                .unwrap_or_else(|_| file.to_path_buf())
         }
     }
 
@@ -1414,5 +1465,35 @@ impl InnerServer {
             indent = 8
         ));
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InnerServer;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn keeps_absolute_download_path_for_display() {
+        let path = Path::new("/tmp/matrix-media");
+
+        assert_eq!(InnerServer::display_download_path(path), path);
+    }
+
+    #[test]
+    fn expands_relative_download_path_for_display() {
+        let path = Path::new("matrix-media");
+        let expected = std::env::current_dir()
+            .expect("current working directory")
+            .join(path);
+
+        assert_eq!(InnerServer::display_download_path(path), expected);
+    }
+
+    #[test]
+    fn preserves_absolute_pathbuf_for_display() {
+        let path = PathBuf::from("/tmp/matrix-media");
+
+        assert_eq!(InnerServer::display_download_path(&path), path);
     }
 }
