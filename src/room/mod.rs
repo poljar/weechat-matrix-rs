@@ -1051,7 +1051,10 @@ impl MatrixRoom {
         match event {
             AnySyncStateEvent::RoomName(_) => self.buffer.update_buffer_name(),
             AnySyncStateEvent::RoomTopic(_) => self.buffer.set_topic(),
-            AnySyncStateEvent::RoomCanonicalAlias(_) => self.buffer.set_alias(),
+            AnySyncStateEvent::RoomCanonicalAlias(_) => {
+                self.buffer.set_alias();
+                self.buffer.update_buffer_name();
+            }
             _ => (),
         }
     }
