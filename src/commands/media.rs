@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{ffi::OsString, path::PathBuf};
 
 use clap::{
     App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
@@ -45,10 +45,13 @@ impl MediaCommand {
                     return;
                 }
 
+                let download_prefix =
+                    server.config().borrow().media().download_prefix();
+
                 let file = args
                     .value_of("file")
                     .map(|file| PathBuf::from(Weechat::expand_home(file)))
-                    .or_else(|| default_download_file(&uri));
+                    .or_else(|| default_download_file(&uri, &download_prefix));
                 let file = match file {
                     Some(file) => file,
                     None => {
@@ -93,13 +96,76 @@ impl MediaCommand {
     ];
 }
 
-fn default_download_file(uri: &MxcUri) -> Option<PathBuf> {
+fn default_download_file(uri: &MxcUri, prefix: &str) -> Option<PathBuf> {
     uri.as_str()
         .trim_end_matches('/')
         .rsplit('/')
         .next()
         .filter(|name| !name.is_empty())
+        .map(|name| prefixed_download_path(prefix, name))
+}
+
+fn prefixed_download_path(prefix: &str, name: &str) -> PathBuf {
+    let prefix = expand_download_prefix(
+        prefix,
+        std::env::var_os("XDG_STATE_HOME"),
+        std::env::var_os("HOME"),
+    );
+    PathBuf::from(format!("{}{}", prefix, name))
+}
+
+fn expand_download_prefix(
+    prefix: &str,
+    xdg_state_home: Option<OsString>,
+    home: Option<OsString>,
+) -> String {
+    let prefix = expand_home_prefix(prefix, home.clone());
+
+    if prefix.starts_with("${XDG_STATE_HOME}") {
+        return format!(
+            "{}{}",
+            xdg_state_home_path(xdg_state_home, home).display(),
+            &prefix["${XDG_STATE_HOME}".len()..]
+        );
+    }
+
+    if prefix == "$XDG_STATE_HOME" || prefix.starts_with("$XDG_STATE_HOME/") {
+        return format!(
+            "{}{}",
+            xdg_state_home_path(xdg_state_home, home).display(),
+            &prefix["$XDG_STATE_HOME".len()..]
+        );
+    }
+
+    prefix
+}
+
+fn expand_home_prefix(prefix: &str, home: Option<OsString>) -> String {
+    if prefix == "~" || prefix.starts_with("~/") {
+        if let Some(home) = home.filter(|home| !home.is_empty()) {
+            return format!(
+                "{}{}",
+                PathBuf::from(home).display(),
+                &prefix["~".len()..]
+            );
+        }
+    }
+
+    prefix.to_owned()
+}
+
+fn xdg_state_home_path(
+    xdg_state_home: Option<OsString>,
+    home: Option<OsString>,
+) -> PathBuf {
+    xdg_state_home
+        .filter(|path| !path.is_empty())
         .map(PathBuf::from)
+        .or_else(|| {
+            home.filter(|home| !home.is_empty())
+                .map(|home| PathBuf::from(home).join(".local/state"))
+        })
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[cfg(test)]
@@ -111,8 +177,63 @@ mod tests {
         let uri = Box::<MxcUri>::from("mxc://matrix.org/some-media-id");
 
         assert_eq!(
-            Some(PathBuf::from("some-media-id")),
-            default_download_file(&uri)
+            Some(PathBuf::from("matrix-media-some-media-id")),
+            default_download_file(&uri, "matrix-media-")
+        );
+    }
+
+    #[test]
+    fn default_download_prefix_can_include_directory() {
+        let uri = Box::<MxcUri>::from("mxc://matrix.org/some-media-id");
+
+        assert_eq!(
+            Some(PathBuf::from("/tmp/matrix/matrix-media-some-media-id")),
+            default_download_file(&uri, "/tmp/matrix/matrix-media-")
+        );
+    }
+
+    #[test]
+    fn expands_xdg_state_home_in_download_prefix() {
+        assert_eq!(
+            "/tmp/state/weechat-matrix/matrix-media-",
+            expand_download_prefix(
+                "$XDG_STATE_HOME/weechat-matrix/matrix-media-",
+                Some("/tmp/state".into()),
+                Some("/home/user".into())
+            )
+        );
+
+        assert_eq!(
+            "/tmp/state/weechat-matrix/matrix-media-",
+            expand_download_prefix(
+                "${XDG_STATE_HOME}/weechat-matrix/matrix-media-",
+                Some("/tmp/state".into()),
+                Some("/home/user".into())
+            )
+        );
+    }
+
+    #[test]
+    fn expands_xdg_state_home_fallback() {
+        assert_eq!(
+            "/home/user/.local/state/weechat-matrix/matrix-media-",
+            expand_download_prefix(
+                "$XDG_STATE_HOME/weechat-matrix/matrix-media-",
+                None,
+                Some("/home/user".into())
+            )
+        );
+    }
+
+    #[test]
+    fn expands_home_in_download_prefix() {
+        assert_eq!(
+            "/home/user/media/matrix-media-",
+            expand_download_prefix(
+                "~/media/matrix-media-",
+                Some("/tmp/state".into()),
+                Some("/home/user".into())
+            )
         );
     }
 }
