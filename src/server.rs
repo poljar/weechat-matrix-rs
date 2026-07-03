@@ -1073,6 +1073,23 @@ impl InnerServer {
             .await
         {
             Ok(content) => {
+                if let Some(parent) = file.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            self.print_with_prefix_to(
+                                output_buffer.as_ref(),
+                                &Weechat::prefix(Prefix::Error),
+                                &format!(
+                                    "Error creating media directory {}: {:#?}",
+                                    parent.display(),
+                                    e
+                                ),
+                            );
+                            return;
+                        }
+                    }
+                }
+
                 if let Err(e) = std::fs::OpenOptions::new()
                     .write(true)
                     .create_new(true)
