@@ -55,9 +55,26 @@ On Linux this creates a `libmatrix.so` file in the `target/release/`
 (`target/debug` for dev builds) folder. Rename it to `matrix.so` and copy it to
 your WeeChat plugin directory.
 
-`make install` uses WeeChat's XDG data directory by default:
+`make install` installs the plugin systemwide:
 
-    make install
+    sudo make install
+
+On Debian-like multiarch systems this installs the release build to:
+
+    /usr/lib/${DEB_HOST_MULTIARCH}/weechat/plugins/matrix.so
+
+On other systems it defaults to:
+
+    /usr/lib/weechat/plugins/matrix.so
+
+Set `WEECHAT_PLUGIN_DIR` if your distribution uses another system plugin
+directory:
+
+    sudo make install WEECHAT_PLUGIN_DIR=/path/to/weechat/plugins
+
+To install only for the current user, use:
+
+    make install-user
 
 This installs the release build to:
 
@@ -65,7 +82,12 @@ This installs the release build to:
 
 Use `PROFILE=debug` for a debug build:
 
-    make install PROFILE=debug
+    make install-user PROFILE=debug
+
+The matching uninstall targets are:
+
+    sudo make uninstall
+    make uninstall-user
 
 On older WeeChat setups the plugin directory may instead live under
 `$WEECHAT_HOME/plugins`, commonly `~/.weechat/plugins/`. Create the directory if
