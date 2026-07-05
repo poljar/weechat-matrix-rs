@@ -19,7 +19,9 @@ section = "net"
 priority = "optional"
 depends = "$auto, weechat-plugins"
 assets = [
-    ["target/release/libmatrix.so", "usr/lib/weechat/plugins/matrix.so", "755"],
+    ["target/release/libmatrix.so",
+     "/usr/lib/x86_64-linux-gnu/weechat/plugins/matrix-rs.so",
+     "755"],
 ]
 
 [lib]
