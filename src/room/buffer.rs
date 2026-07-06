@@ -199,26 +199,36 @@ impl RoomBuffer {
 
     pub fn calculate_buffer_name(&self) -> String {
         let room = self.room.clone();
-        let room_name = room
-            .name()
-            .and_then(|name| {
-                let name = name.trim();
-
-                if name.is_empty() {
-                    None
-                } else {
-                    Some(name.to_owned())
-                }
-            })
-            .or_else(|| {
-                room.canonical_alias()
-                    .map(|alias| alias.alias().trim().to_owned())
-            })
-            .unwrap_or_else(|| room.room_id().to_string());
         let is_direct =
             self.runtime.block_on(room.is_direct()).unwrap_or(false);
 
+        let room_name = room
+            .name()
+            .as_deref()
+            .and_then(non_empty_room_name)
+            .or_else(|| {
+                room.canonical_alias()
+                    .and_then(|alias| non_empty_room_name(alias.alias()))
+            })
+            .or_else(|| {
+                is_direct
+                    .then(|| self.runtime.block_on(room.display_name()).ok())
+                    .flatten()
+                    .and_then(|name| non_empty_room_name(&name.to_string()))
+            })
+            .unwrap_or_else(|| room.room_id().to_string());
+
         format_buffer_name(&room_name, is_direct)
+    }
+}
+
+fn non_empty_room_name(name: &str) -> Option<String> {
+    let name = name.trim();
+
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_owned())
     }
 }
 
