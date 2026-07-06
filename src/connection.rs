@@ -99,13 +99,15 @@ pub enum ClientMessage {
 pub struct Connection {
     #[allow(dead_code)]
     receiver_task: Rc<Task<()>>,
-    client: Client,
+    client: Option<Client>,
     pub runtime: Rc<Runtime>,
 }
 
 impl Connection {
     pub fn client(&self) -> &Client {
-        &self.client
+        self.client
+            .as_ref()
+            .expect("Connection client was already dropped")
     }
 
     pub async fn spawn<F>(&self, future: F) -> F::Output
@@ -141,7 +143,7 @@ impl Connection {
         ));
 
         Self {
-            client: client.clone(),
+            client: Some(client.clone()),
             runtime: runtime.into(),
             receiver_task: receiver_task.into(),
         }
@@ -180,7 +182,7 @@ impl Connection {
         devices: Vec<OwnedDeviceId>,
         auth_info: Option<InteractiveAuthInfo>,
     ) -> MatrixResult<DeleteDevicesResponse> {
-        let client = self.client.clone();
+        let client = self.client().clone();
         Ok(self
             .spawn(async move {
                 if let Some(info) = auth_info {
@@ -216,7 +218,7 @@ impl Connection {
 
     /// Get the list of our own devices.
     pub async fn devices(&self) -> MatrixResult<DevicesResponse> {
-        let client = self.client.clone();
+        let client = self.client().clone();
         Ok(self.spawn(async move { client.devices().await }).await?)
     }
 
@@ -657,6 +659,15 @@ impl Connection {
             } else {
                 break;
             }
+        }
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        if let Some(client) = self.client.take() {
+            let _guard = self.runtime.enter();
+            drop(client);
         }
     }
 }
