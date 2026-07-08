@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use dashmap::DashMap;
 use tokio::runtime::Handle;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use matrix_sdk::{
     deserialized_responses::AmbiguityChange,
@@ -76,8 +76,8 @@ impl Members {
         info!("Inserting nick {} for room {}", nick, buffer.short_name());
 
         if group.add_nick(nick_settings).is_err() {
-            error!(
-                "Error adding nick {} ({}) to room {}, already added.",
+            debug!(
+                "Nick {} ({}) is already present in room {}, skipping duplicate insert.",
                 nick,
                 member.user_id(),
                 buffer.short_name()
@@ -240,10 +240,6 @@ impl Members {
                 None
             }
         }
-    }
-
-    fn room(&self) -> &Room {
-        &self.room
     }
 
     pub fn mark_active(
