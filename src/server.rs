@@ -727,7 +727,7 @@ impl InnerServer {
     }
 
     /// Borrow the server buffer handle.
-    pub fn server_buffer(&self) -> Ref<Option<BufferHandle>> {
+    pub fn server_buffer(&self) -> Ref<'_, Option<BufferHandle>> {
         self.server_buffer.borrow()
     }
 
@@ -849,7 +849,7 @@ impl InnerServer {
                                     .cloned();
 
                                 if let Some(mut buffer) = buffer {
-                                    buffer.update(sas).await;
+                                    let _ = buffer.update(sas).await;
                                     buffer.handle_event(&event).await;
                                 } else {
                                     let buffer = VerificationBuffer::new(
