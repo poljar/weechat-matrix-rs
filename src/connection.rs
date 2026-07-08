@@ -448,38 +448,40 @@ impl Connection {
                 }
 
                 for (room_id, room) in response.rooms.joined {
-                    if let State::Before(state) = room.state {
-                        for event in
-                            state.iter().filter_map(|e| e.deserialize().ok())
-                        {
-                            if let AnySyncStateEvent::RoomMember(m) = event {
-                                let change = room
-                                    .ambiguity_changes
-                                    .get(m.event_id())
-                                    .cloned();
+                    let state_events = match &room.state {
+                        State::Before(state) | State::After(state) => state,
+                    };
 
-                                if sync_channel
-                                    .send(Ok(ClientMessage::MemberEvent(
-                                        room_id.clone(),
-                                        m,
-                                        true,
-                                        change,
-                                    )))
-                                    .await
-                                    .is_err()
-                                {
-                                    return LoopCtrl::Break;
-                                }
-                            } else if sync_channel
-                                .send(Ok(ClientMessage::SyncState(
+                    for event in
+                        state_events.iter().filter_map(|e| e.deserialize().ok())
+                    {
+                        if let AnySyncStateEvent::RoomMember(m) = event {
+                            let change = room
+                                .ambiguity_changes
+                                .get(m.event_id())
+                                .cloned();
+
+                            if sync_channel
+                                .send(Ok(ClientMessage::MemberEvent(
                                     room_id.clone(),
-                                    event,
+                                    m,
+                                    true,
+                                    change,
                                 )))
                                 .await
                                 .is_err()
                             {
                                 return LoopCtrl::Break;
                             }
+                        } else if sync_channel
+                            .send(Ok(ClientMessage::SyncState(
+                                room_id.clone(),
+                                event,
+                            )))
+                            .await
+                            .is_err()
+                        {
+                            return LoopCtrl::Break;
                         }
                     }
 

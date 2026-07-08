@@ -62,6 +62,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
+    time::Duration,
 };
 use tracing::error;
 use url::Url;
@@ -80,7 +81,8 @@ use matrix_sdk::{
             SyncStateEvent,
         },
         DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
-        OwnedDeviceId, OwnedMxcUri, OwnedRoomId, OwnedUserId, RoomId, UserId,
+        OwnedDeviceId, OwnedMxcUri, OwnedRoomAliasId, OwnedRoomId,
+        OwnedRoomOrAliasId, OwnedServerName, OwnedUserId, RoomId, UserId,
     },
     Client, Error,
 };
@@ -90,6 +92,8 @@ use weechat::{
     config::{BooleanOptionSettings, ConfigSection, StringOptionSettings},
     Prefix, Weechat,
 };
+
+const JOIN_ROOM_TIMEOUT: Duration = Duration::from_secs(120);
 
 use crate::{
     config::ServerBuffer,
@@ -212,6 +216,63 @@ impl MatrixServer {
 
     pub fn clone_weak(&self) -> Weak<InnerServer> {
         Rc::downgrade(&self.inner)
+    }
+
+    /// Join a Matrix room by ID or alias.
+    pub async fn join_room(&self, room_id_or_alias: String) {
+        let Ok(room_id_or_alias) =
+            room_id_or_alias.parse::<OwnedRoomOrAliasId>()
+        else {
+            self.print_error("Invalid room ID or alias.");
+            return;
+        };
+
+        let Some(connection) = self.connection() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        self.print_network(&format!("Joining room {}...", room_id_or_alias));
+
+        let client = connection.client().clone();
+        let target = room_id_or_alias.to_string();
+        let result = connection
+            .spawn(async move {
+                tokio::time::timeout(JOIN_ROOM_TIMEOUT, async move {
+                    let servers =
+                        resolve_alias_servers(&client, &room_id_or_alias).await;
+
+                    client
+                        .join_room_by_id_or_alias(&room_id_or_alias, &servers)
+                        .await
+                })
+                .await
+            })
+            .await;
+
+        match result {
+            Ok(Ok(room)) => {
+                self.print_network(&format!(
+                    "Successfully joined room {}",
+                    room.room_id()
+                ));
+            }
+            Ok(Err(error)) => {
+                self.print_error(&format!(
+                    "Failed to join {}: {}",
+                    target,
+                    format_join_error(&error, &target)
+                ));
+            }
+            Err(error) => {
+                self.print_error(&format!(
+                    "Timed out joining {} after {} seconds: {}",
+                    target,
+                    JOIN_ROOM_TIMEOUT.as_secs(),
+                    error
+                ));
+            }
+        }
     }
 
     pub fn connect(&self) -> Result<(), ServerError> {
@@ -416,6 +477,39 @@ impl MatrixServer {
             .new_boolean_option(ssl_verify)
             .expect("Can't create autoconnect option");
     }
+}
+
+fn format_join_error(error: &Error, target: &str) -> String {
+    let message = error
+        .as_client_api_error()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| error.to_string());
+
+    if target.starts_with('#')
+        && message.contains("Expected RoomID of the form")
+    {
+        format!(
+            "{message}; the alias may point to a room v12 ID without a server part. Update the homeserver/client stack or join from a homeserver that supports room v12."
+        )
+    } else {
+        message
+    }
+}
+
+async fn resolve_alias_servers(
+    client: &Client,
+    room_id_or_alias: &OwnedRoomOrAliasId,
+) -> Vec<OwnedServerName> {
+    let Ok(alias) = room_id_or_alias.as_str().parse::<OwnedRoomAliasId>()
+    else {
+        return Vec::new();
+    };
+
+    client
+        .resolve_room_alias(&alias)
+        .await
+        .map(|response| response.servers)
+        .unwrap_or_default()
 }
 
 impl Drop for MatrixServer {
@@ -869,6 +963,15 @@ impl InnerServer {
         path
     }
 
+    fn get_server_cache_path(&self) -> PathBuf {
+        let mut path = Weechat::home_dir();
+        let server_name: &str = &self.server_name;
+        path.push("matrix-rust");
+        path.push(format!("{}-cache", server_name));
+
+        path
+    }
+
     pub fn connection(&self) -> Option<Connection> {
         self.connection.borrow().clone()
     }
@@ -893,7 +996,11 @@ impl InnerServer {
 
         let mut client_builder = Client::builder()
             .homeserver_url(homeserver)
-            .sqlite_store(self.get_server_path(), Some("DEFAULT_PASSPHRASE"));
+            .sqlite_store_with_cache_path(
+                self.get_server_path(),
+                self.get_server_cache_path(),
+                Some("DEFAULT_PASSPHRASE"),
+            );
 
         if let Some(proxy) = settings.proxy.as_ref() {
             client_builder = client_builder.proxy(proxy);

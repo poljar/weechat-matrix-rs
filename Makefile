@@ -1,12 +1,18 @@
 # See https://weechat.org/files/doc/weechat/stable/weechat_user.en.html#xdg_directories
 XDG_DATA_HOME ?= $(HOME)/.local/share
 WEECHAT_DATA_DIR ?= $(XDG_DATA_HOME)/weechat
+DEB_HOST_MULTIARCH ?= $(shell dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null)
+ifeq ($(DEB_HOST_MULTIARCH),)
+WEECHAT_PLUGIN_DIR ?= /usr/lib/weechat/plugins
+else
+WEECHAT_PLUGIN_DIR ?= /usr/lib/$(DEB_HOST_MULTIARCH)/weechat/plugins
+endif
 
 SOURCES := $(wildcard src/*.rs src/bar_items/*.rs src/commands/*.rs src/room/*.rs Cargo.lock)
 
 PROFILE ?= release
 
-.PHONY: install install-dir lint all help deb
+.PHONY: install install-user uninstall uninstall-user install-dir install-user-dir lint all help deb
 
 all: help
 
@@ -19,10 +25,22 @@ target/debug/libmatrix.so: $(SOURCES) ## Build plugin in dev profile
 target/release/libmatrix.so: $(SOURCES) ## Build plugin release profile
 	cargo build --release
 
-install: install-dir target/$(PROFILE)/libmatrix.so ## Install plugin to weechat dir
+install: install-dir target/$(PROFILE)/libmatrix.so ## Install plugin systemwide
+	install -m644  target/$(PROFILE)/libmatrix.so $(DESTDIR)$(WEECHAT_PLUGIN_DIR)/matrix.so
+
+install-user: install-user-dir target/$(PROFILE)/libmatrix.so ## Install plugin to user WeeChat dir
 	install -m644  target/$(PROFILE)/libmatrix.so $(DESTDIR)$(WEECHAT_DATA_DIR)/plugins/matrix.so
 
-install-dir: ## Create plugins directory
+uninstall: ## Remove systemwide plugin
+	rm -f $(DESTDIR)$(WEECHAT_PLUGIN_DIR)/matrix.so
+
+uninstall-user: ## Remove plugin from user WeeChat dir
+	rm -f $(DESTDIR)$(WEECHAT_DATA_DIR)/plugins/matrix.so
+
+install-dir:
+	install -d $(DESTDIR)$(WEECHAT_PLUGIN_DIR)
+
+install-user-dir:
 	install -d $(DESTDIR)$(WEECHAT_DATA_DIR)/plugins
 
 lint: ## Lint issues with clippy
@@ -51,5 +69,5 @@ deb: target/$(PROFILE)/libmatrix.so ## Build a .deb package with version from gi
 	); \
 	cargo deb --no-build --deb-version "$$DEB_VERSION"
 	@echo ""
-	@echo "Package built: target/debian/weechat-matrix_$${DEB_VERSION}*.deb"
-	@echo "Install with: sudo dpkg -i target/debian/weechat-matrix_$${DEB_VERSION}*.deb"
+	@echo "Package built: target/debian/weechat-matrix-rs_$${DEB_VERSION}*.deb"
+	@echo "Install with: sudo dpkg -i target/debian/weechat-matrix-rs_$${DEB_VERSION}*.deb"
