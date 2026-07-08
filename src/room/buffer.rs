@@ -2,13 +2,10 @@ use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
 use matrix_sdk::{
     ruma::{EventId, OwnedRoomAliasId, TransactionId, UserId},
-    Room, StoreError,
+    Room,
 };
 use tokio::runtime::Handle;
-use weechat::{
-    buffer::{Buffer, BufferHandle, BufferLine, LineData},
-    Prefix, Weechat,
-};
+use weechat::buffer::{Buffer, BufferHandle, BufferLine, LineData};
 
 use crate::{render::RenderedEvent, utils::ToTag};
 
@@ -200,23 +197,57 @@ impl RoomBuffer {
         self.room.canonical_alias()
     }
 
-    pub fn calculate_buffer_name(&self) -> Result<String, StoreError> {
+    pub fn calculate_buffer_name(&self) -> String {
         let room = self.room.clone();
-        let room_name = self.runtime.block_on(room.display_name())?.to_string();
+        let is_direct =
+            self.runtime.block_on(room.is_direct()).unwrap_or(false);
 
-        let room_name = if room_name == "#" {
-            "##".to_owned()
-        } else if room_name.starts_with('#')
-            || self.runtime.block_on(room.is_direct()).unwrap_or(false)
-        {
-            room_name
-        } else {
-            format!("#{}", room_name)
-        };
+        let room_name = room
+            .name()
+            .as_deref()
+            .and_then(non_empty_room_name)
+            .or_else(|| {
+                room.canonical_alias()
+                    .and_then(|alias| non_empty_room_name(alias.alias()))
+            })
+            .or_else(|| {
+                is_direct
+                    .then(|| self.runtime.block_on(room.display_name()).ok())
+                    .flatten()
+                    .and_then(|name| non_empty_room_name(&name.to_string()))
+            })
+            .unwrap_or_else(|| room.room_id().to_string());
 
-        Ok(room_name.to_string())
+        format_buffer_name(&room_name, is_direct)
     }
+}
 
+fn non_empty_room_name(name: &str) -> Option<String> {
+    let name = name.trim();
+
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_owned())
+    }
+}
+
+fn format_buffer_name(room_name: &str, is_direct: bool) -> String {
+    let room_name = if room_name == "#" {
+        "##".to_owned()
+    } else if room_name.starts_with('#')
+        || room_name.starts_with('!')
+        || is_direct
+    {
+        room_name.to_owned()
+    } else {
+        format!("#{}", room_name)
+    };
+
+    room_name
+}
+
+impl RoomBuffer {
     pub fn update_buffer_name(&self) {
         let buffer = self.buffer_handle();
 
@@ -226,16 +257,7 @@ impl RoomBuffer {
             return;
         };
 
-        match self.calculate_buffer_name() {
-            Ok(name) => buffer.set_short_name(&name),
-            Err(e) => {
-                Weechat::print(&format!(
-                    "{}: Error fetching the room name from the store: {}",
-                    Weechat::prefix(Prefix::Error),
-                    e.to_string(),
-                ));
-            }
-        }
+        buffer.set_short_name(&self.calculate_buffer_name());
     }
 
     pub fn replace_verification_event(
@@ -270,5 +292,34 @@ impl RoomBuffer {
                 )
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_buffer_name;
+
+    #[test]
+    fn preserves_named_channel_prefix() {
+        assert_eq!(format_buffer_name("OSGeo", false), "#OSGeo");
+    }
+
+    #[test]
+    fn preserves_direct_room_names() {
+        assert_eq!(format_buffer_name("Alice", true), "Alice");
+    }
+
+    #[test]
+    fn preserves_alias_like_names() {
+        assert_eq!(format_buffer_name("#lounge", false), "#lounge");
+        assert_eq!(format_buffer_name("#", false), "##");
+    }
+
+    #[test]
+    fn preserves_room_id_fallbacks() {
+        assert_eq!(
+            format_buffer_name("!roomid:matrix.osgeo.org", false),
+            "!roomid:matrix.osgeo.org"
+        );
     }
 }

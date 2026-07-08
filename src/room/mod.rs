@@ -38,6 +38,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     ops::Deref,
+    path::PathBuf,
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -50,6 +51,7 @@ use url::Url;
 
 use matrix_sdk::{
     async_trait,
+    attachment::{AttachmentConfig, AttachmentInfo, BaseFileInfo},
     deserialized_responses::AmbiguityChange,
     room::Room,
     ruma::{
@@ -67,7 +69,7 @@ use matrix_sdk::{
             OriginalSyncMessageLikeEvent, SyncMessageLikeEvent, SyncStateEvent,
         },
         EventId, MilliSecondsSinceUnixEpoch, OwnedRoomAliasId,
-        OwnedTransactionId, OwnedUserId, RoomId, TransactionId, UserId,
+        OwnedTransactionId, OwnedUserId, RoomId, TransactionId, UInt, UserId,
     },
     StoreError,
 };
@@ -77,7 +79,7 @@ use weechat::{
         Buffer, BufferBuilderAsync, BufferHandle, BufferInputCallbackAsync,
         BufferLine,
     },
-    Weechat,
+    Prefix, Weechat,
 };
 
 use crate::{
@@ -93,10 +95,32 @@ pub struct RoomHandle {
     inner: MatrixRoom,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum PrevBatch {
     Forward(String),
     Backwards(String),
+}
+
+fn restored_prev_batch(prev_batch: Option<String>) -> Option<PrevBatch> {
+    prev_batch.map(PrevBatch::Backwards)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{restored_prev_batch, PrevBatch};
+
+    #[test]
+    fn restored_rooms_fetch_history_backwards_from_prev_batch() {
+        assert_eq!(
+            restored_prev_batch(Some("token".to_owned())),
+            Some(PrevBatch::Backwards("token".to_owned()))
+        );
+    }
+
+    #[test]
+    fn restored_rooms_without_prev_batch_have_no_history_request() {
+        assert_eq!(restored_prev_batch(None), None);
+    }
 }
 
 impl Deref for RoomHandle {
@@ -364,8 +388,7 @@ impl RoomHandle {
             room_buffer.members.restore_member(user_id).await;
         }
 
-        *room_buffer.prev_batch.borrow_mut() =
-            prev_batch.map(PrevBatch::Forward);
+        *room_buffer.prev_batch.borrow_mut() = restored_prev_batch(prev_batch);
 
         room_buffer.buffer.update_buffer_name();
         room_buffer.buffer.set_topic();
@@ -729,6 +752,69 @@ impl MatrixRoom {
         }
     }
 
+    fn print_error(&self, message: &str) {
+        if let Ok(buffer) = self.buffer_handle().upgrade() {
+            buffer.print(&format!(
+                "{}{}",
+                Weechat::prefix(Prefix::Error),
+                message
+            ));
+        }
+    }
+
+    pub async fn send_attachment(&self, path: PathBuf) {
+        let Some(filename) = path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .map(ToOwned::to_owned)
+        else {
+            self.print_error("Invalid file name");
+            return;
+        };
+
+        let data = match std::fs::read(&path) {
+            Ok(data) => data,
+            Err(e) => {
+                self.print_error(&format!(
+                    "Failed to read attachment {}: {}",
+                    path.display(),
+                    e
+                ));
+                return;
+            }
+        };
+
+        let content_type = mime_guess::from_path(&path).first_or_octet_stream();
+        let size = UInt::new(data.len() as u64);
+        let config = AttachmentConfig::new()
+            .info(AttachmentInfo::File(BaseFileInfo { size }));
+
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        match connection
+            .spawn({
+                let room = self.room().clone();
+                async move {
+                    room.send_attachment(filename, &content_type, data, config)
+                        .await
+                }
+            })
+            .await
+        {
+            Ok(_) => (),
+            Err(e) => {
+                self.print_error(&format!(
+                    "Failed to upload attachment {}: {}",
+                    path.display(),
+                    e
+                ));
+            }
+        }
+    }
+
     /// Send out a typing notice.
     ///
     /// This will send out a typing notice or reset the one in progress, if
@@ -840,6 +926,17 @@ impl MatrixRoom {
 
         Weechat::bar_item_update("buffer_modes");
         Weechat::bar_item_update("matrix_modes");
+    }
+
+    pub async fn get_messages_if_empty(&self) {
+        let buffer_handle = self.buffer_handle();
+        let Ok(buffer) = buffer_handle.upgrade() else {
+            return;
+        };
+
+        if buffer.num_lines() == 0 {
+            self.get_messages().await;
+        }
     }
 
     async fn handle_outgoing_message(
@@ -1057,7 +1154,10 @@ impl MatrixRoom {
         match event {
             AnySyncStateEvent::RoomName(_) => self.buffer.update_buffer_name(),
             AnySyncStateEvent::RoomTopic(_) => self.buffer.set_topic(),
-            AnySyncStateEvent::RoomCanonicalAlias(_) => self.buffer.set_alias(),
+            AnySyncStateEvent::RoomCanonicalAlias(_) => {
+                self.buffer.set_alias();
+                self.buffer.update_buffer_name();
+            }
             _ => (),
         }
 
