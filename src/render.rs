@@ -74,6 +74,26 @@ impl RenderedEvent {
 
         self
     }
+
+    pub fn add_reply_context(mut self, event_id: &EventId) -> Self {
+        let mut tags = self
+            .content
+            .lines
+            .first()
+            .map(|line| line.tags.clone())
+            .unwrap_or_default();
+        tags.push("matrix_reply".to_owned());
+
+        self.content.lines.insert(
+            0,
+            RenderedLine {
+                tags,
+                message: format!("Reply to {}", event_id),
+            },
+        );
+
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -1087,5 +1107,32 @@ mod tests {
         let source = MediaSource::Encrypted(Box::new(encrypt_info));
 
         assert_eq!(None, media_download_command(&source));
+    }
+
+    #[test]
+    fn reply_context_is_rendered_as_visible_line() {
+        let event_id =
+            matrix_sdk::ruma::owned_event_id!("$replyevent:example.org");
+        let rendered = RenderedEvent {
+            message_timestamp: 0,
+            prefix: "alice\t".to_owned(),
+            content: RenderedContent {
+                lines: vec![RenderedLine {
+                    tags: vec!["matrix_text".to_owned()],
+                    message: "reply body".to_owned(),
+                }],
+            },
+        }
+        .add_reply_context(&event_id);
+
+        assert_eq!(2, rendered.content.lines.len());
+        assert_eq!(
+            "Reply to $replyevent:example.org",
+            rendered.content.lines[0].message
+        );
+        assert!(rendered.content.lines[0]
+            .tags
+            .contains(&"matrix_reply".to_owned()));
+        assert_eq!("reply body", rendered.content.lines[1].message);
     }
 }
