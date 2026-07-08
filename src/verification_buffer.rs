@@ -111,7 +111,7 @@ struct InnerVerificationBuffer {
 }
 
 impl InnerVerificationBuffer {
-    fn print_done(&self, buffer: BufferHandle) {}
+    fn print_done(&self, _buffer: BufferHandle) {}
 
     pub async fn accept(&self, buffer: BufferHandle) -> Result<(), Error> {
         if let Some(c) = self.connection.borrow().clone() {
@@ -227,7 +227,7 @@ impl BufferCloseCallback for InnerVerificationBuffer {
 impl VerificationBuffer {
     pub fn new(
         server_name: &str,
-        sender: &UserId,
+        _sender: &UserId,
         verification: impl Into<Verification>,
         connection: Rc<RefCell<Option<Connection>>>,
     ) -> Self {

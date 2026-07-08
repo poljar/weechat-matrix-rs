@@ -727,7 +727,7 @@ impl InnerServer {
     }
 
     /// Borrow the server buffer handle.
-    pub fn server_buffer(&self) -> Ref<Option<BufferHandle>> {
+    pub fn server_buffer(&self) -> Ref<'_, Option<BufferHandle>> {
         self.server_buffer.borrow()
     }
 
