@@ -1623,7 +1623,7 @@ impl InnerServer {
 
     pub fn shutdown(&self) {
         let connection = self.connection.borrow_mut().take();
-        let runtime = connection.as_ref().map(|c| c.runtime.clone());
+        let runtime = connection.as_ref().map(|c| c.runtime());
 
         if let Some(runtime) = runtime {
             let _guard = runtime.enter();

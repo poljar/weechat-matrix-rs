@@ -71,6 +71,10 @@ impl Verification {
         }
     }
 
+    pub fn release_sdk_state(&self) {
+        self.inner.borrow_mut().take();
+    }
+
     pub async fn confirm(&self) {
         let connection = self.connection.borrow().clone();
 
