@@ -100,10 +100,17 @@ pub struct Connection {
     #[allow(dead_code)]
     receiver_task: Rc<Task<()>>,
     client: Option<Client>,
-    pub runtime: Rc<Runtime>,
+    runtime: Option<Rc<Runtime>>,
 }
 
 impl Connection {
+    pub fn runtime(&self) -> Rc<Runtime> {
+        self.runtime
+            .as_ref()
+            .expect("Connection runtime was already dropped")
+            .clone()
+    }
+
     pub fn client(&self) -> &Client {
         self.client
             .as_ref()
@@ -115,7 +122,7 @@ impl Connection {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        self.runtime
+        self.runtime()
             .spawn(future)
             .await
             .expect("Tokio error while sending a message")
@@ -144,7 +151,7 @@ impl Connection {
 
         Self {
             client: Some(client.clone()),
-            runtime: runtime.into(),
+            runtime: Some(runtime.into()),
             receiver_task: receiver_task.into(),
         }
     }
@@ -665,9 +672,24 @@ impl Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        if let Some(client) = self.client.take() {
-            let _guard = self.runtime.enter();
-            drop(client);
+        {
+            let runtime = self.runtime();
+
+            if let Some(client) = self.client.take() {
+                let _guard = runtime.enter();
+                drop(client);
+            }
+        }
+
+        let Some(runtime) = self.runtime.as_ref() else {
+            return;
+        };
+
+        if Rc::strong_count(runtime) == 1 {
+            let runtime = self.runtime.take().expect("runtime disappeared");
+            let handle = runtime.handle().clone();
+            let _guard = handle.enter();
+            drop(runtime);
         }
     }
 }

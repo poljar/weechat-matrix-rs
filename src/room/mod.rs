@@ -523,6 +523,7 @@ impl MatrixRoom {
     }
 
     pub fn release_sdk_state(&self) {
+        self.verification.release_sdk_state();
         self.room.borrow_mut().take();
     }
 
