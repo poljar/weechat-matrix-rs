@@ -418,7 +418,7 @@ fn mxc_to_emxc(
 fn media_download_command(source: &MediaSource) -> Option<String> {
     match source {
         MediaSource::Plain(url) => {
-            Some(format!("/matrix media download {} <file>", url.as_str()))
+            Some(format!("/matrix media download {} [file]", url.as_str()))
         }
         MediaSource::Encrypted(_) => None,
     }
@@ -456,7 +456,11 @@ impl<C: HasUrlOrFile> Render for C {
 
         if let Some(command) = media_download_command(self.source()) {
             lines.push(RenderedLine {
-                message: format!("authenticated download: {}", command),
+                message: format!(
+                    "{}authenticated download: {}",
+                    Weechat::prefix(Prefix::Network),
+                    command
+                ),
                 tags: self.tags(),
             });
         }
@@ -1052,7 +1056,7 @@ mod tests {
 
         assert_eq!(
             Some(
-                "/matrix media download mxc://matrix.org/some-media-id <file>"
+                "/matrix media download mxc://matrix.org/some-media-id [file]"
                     .to_owned()
             ),
             media_download_command(&source)

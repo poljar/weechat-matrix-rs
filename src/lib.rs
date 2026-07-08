@@ -167,12 +167,21 @@ impl SignalCallback for Servers {
     fn callback(
         &mut self,
         _: &Weechat,
-        _signal_name: &str,
+        signal_name: &str,
         data: Option<SignalData>,
     ) -> ReturnCode {
         if let Some(SignalData::Buffer(buffer)) = data {
             if let Some(room) = self.find_room(&buffer) {
-                room.update_typing_notice();
+                match signal_name {
+                    "buffer_switch" => {
+                        Weechat::spawn(async move {
+                            room.get_messages_if_empty().await
+                        })
+                        .detach();
+                    }
+                    "input_text_changed" => room.update_typing_notice(),
+                    _ => (),
+                }
             }
         }
         ReturnCode::Ok
@@ -190,6 +199,8 @@ struct Matrix {
     bar_items: BarItems,
     #[allow(dead_code)]
     typing_notice_signal: SignalHook,
+    #[allow(dead_code)]
+    history_fetch_signal: SignalHook,
     #[allow(dead_code)]
     completions: Completions,
     debug_buffer: RefCell<Option<BufferHandle>>,
@@ -266,6 +277,8 @@ impl Plugin for Matrix {
 
         let typing = SignalHook::new("input_text_changed", servers.clone())
             .expect("Can't create signal hook for the typing notice cb");
+        let history_fetch = SignalHook::new("buffer_switch", servers.clone())
+            .expect("Can't create signal hook for the history fetch cb");
 
         let plugin = Matrix {
             global_runtime,
@@ -276,6 +289,7 @@ impl Plugin for Matrix {
             completions,
             debug_buffer: RefCell::new(None),
             typing_notice_signal: typing,
+            history_fetch_signal: history_fetch,
         };
 
         Weechat::spawn(async move {

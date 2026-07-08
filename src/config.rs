@@ -154,7 +154,18 @@ config!(
             // Default value.
             true,
         },
-    }
+    },
+
+    Section media {
+        download_prefix: String {
+            // Description.
+            "Prefix prepended to default media download filenames. The value \
+             may include a directory, and supports ~, $XDG_STATE_HOME, and \
+             ${XDG_STATE_HOME}",
+            // Default value.
+            "matrix-media-",
+        },
+    },
 );
 
 /// A wrapper for our config struct that can be cloned around.
