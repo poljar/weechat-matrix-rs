@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use dashmap::DashMap;
 use tokio::runtime::Handle;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use matrix_sdk::{
     deserialized_responses::AmbiguityChange,
