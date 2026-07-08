@@ -1,9 +1,7 @@
 use url::Url;
 
 use matrix_sdk::{
-    encryption::verification::{
-        SasVerification, Verification, VerificationRequest,
-    },
+    encryption::verification::{SasVerification, Verification},
     ruma::{
         events::{
             key::verification::{
@@ -624,7 +622,7 @@ render_start_content!(ToDeviceKeyVerificationStartEventContent);
 
 pub enum VerificationContext {
     Room(WeechatRoomMember, WeechatRoomMember),
-    ToDevice(VerificationRequest),
+    ToDevice,
 }
 
 macro_rules! render_request_content {
@@ -650,7 +648,7 @@ macro_rules! render_request_content {
                             )
                         }
                     }
-                    VerificationContext::ToDevice(_) => {
+                    VerificationContext::ToDevice => {
                         format!("You have requested this device to be verified")
                     }
                 };
@@ -749,42 +747,9 @@ macro_rules! render_key_content {
 render_key_content!(KeyVerificationKeyEventContent);
 render_key_content!(ToDeviceKeyVerificationKeyEventContent);
 
-/// Trait for message event types that contain an optional formatted body.
-/// `resolve_body` will return the formatted body if present, else fallback to
-/// the regular body.
-trait HasFormattedBody {
-    fn body(&self) -> &str;
-    fn formatted_body(&self) -> Option<&str>;
-    #[inline]
-    fn resolve_body(&self) -> &str {
-        self.formatted_body().unwrap_or_else(|| self.body())
-    }
-}
-
-// Repeating this for each event type would get boring fast so lets use a simple
-// macro to implement the trait for a struct that has a `body` and
-// `formatted_body` field
-macro_rules! has_formatted_body {
-    ($content: ident) => {
-        impl HasFormattedBody for $content {
-            #[inline]
-            fn body(&self) -> &str {
-                &self.body
-            }
-
-            #[inline]
-            fn formatted_body(&self) -> Option<&str> {
-                self.formatted.as_ref().map(|f| f.body.as_ref())
-            }
-        }
-    };
-}
-
 /// This trait is implemented for message types that can contain either an URL
 /// or an encrypted file. One of these _must_ be present.
 pub trait HasUrlOrFile {
-    fn url(&self) -> Option<&MxcUri>;
-
     fn body(&self) -> &str;
 
     #[inline]
@@ -809,14 +774,6 @@ macro_rules! has_url_or_file {
                 &self.body
             }
 
-            #[inline]
-            fn url(&self) -> Option<&MxcUri> {
-                match &self.source {
-                    MediaSource::Plain(url) => Some(url),
-                    _ => None,
-                }
-            }
-
             fn source(&self) -> &MediaSource {
                 &self.source
             }
@@ -830,11 +787,6 @@ macro_rules! has_url_or_file {
         }
     };
 }
-
-// this actually implements the trait for different event types
-has_formatted_body!(EmoteMessageEventContent);
-has_formatted_body!(NoticeMessageEventContent);
-has_formatted_body!(TextMessageEventContent);
 
 has_url_or_file!(AudioMessageEventContent);
 has_url_or_file!(FileMessageEventContent);
