@@ -17,16 +17,18 @@ use weechat::{
 
 use crate::{render::RenderedEvent, utils::ToTag};
 
+use super::{active_room, SharedRoom};
+
 #[derive(Clone)]
 pub struct RoomBuffer {
-    room: Room,
+    room: SharedRoom,
     runtime: Handle,
     pub(super) inner: Rc<RefCell<Option<BufferHandle>>>,
     thread_buffers: Rc<RefCell<HashMap<OwnedEventId, BufferHandle>>>,
 }
 
 impl RoomBuffer {
-    pub fn new(room: Room, runtime: Handle) -> Self {
+    pub fn new(room: SharedRoom, runtime: Handle) -> Self {
         Self {
             room,
             runtime,
@@ -280,7 +282,9 @@ impl RoomBuffer {
 
     pub fn set_topic(&self) {
         if let Ok(buffer) = self.buffer_handle().upgrade() {
-            buffer.set_title(&self.room.topic().unwrap_or_default());
+            buffer.set_title(
+                &active_room(&self.room).topic().unwrap_or_default(),
+            );
         }
     }
 
@@ -293,7 +297,9 @@ impl RoomBuffer {
     }
 
     pub fn update_parent_spaces(&self) {
-        let spaces = self.runtime.block_on(parent_spaces(self.room.clone()));
+        let spaces = self
+            .runtime
+            .block_on(parent_spaces(active_room(&self.room)));
 
         if let Ok(buffer) = self.buffer_handle().upgrade() {
             match spaces {
@@ -332,11 +338,12 @@ impl RoomBuffer {
     }
 
     fn alias(&self) -> Option<OwnedRoomAliasId> {
-        self.room.canonical_alias()
+        active_room(&self.room).canonical_alias()
     }
 
     pub fn calculate_buffer_name(&self) -> String {
         let room = self.room.clone();
+        let room = active_room(&self.room);
         let is_direct =
             self.runtime.block_on(room.is_direct()).unwrap_or(false);
 

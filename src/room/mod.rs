@@ -96,6 +96,15 @@ pub struct RoomHandle {
     inner: MatrixRoom,
 }
 
+pub(super) type SharedRoom = Rc<RefCell<Option<Room>>>;
+
+pub(super) fn active_room(room: &SharedRoom) -> Room {
+    room.borrow()
+        .as_ref()
+        .expect("Matrix room was already shut down")
+        .clone()
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum PrevBatch {
     Forward(String),
@@ -159,7 +168,7 @@ pub struct MatrixRoom {
     homeserver: Rc<Url>,
     room_id: Rc<RoomId>,
     own_user_id: Rc<UserId>,
-    room: Room,
+    room: SharedRoom,
     buffer: RoomBuffer,
 
     config: Rc<RefCell<Config>>,
@@ -315,6 +324,8 @@ impl RoomHandle {
         room_id: &RoomId,
         own_user_id: &UserId,
     ) -> Self {
+        let room = Rc::new(RefCell::new(Some(room)));
+        let sdk_room = active_room(&room);
         let buffer = RoomBuffer::new(room.clone(), runtime.clone());
         let members = Members::new(
             room.clone(),
@@ -324,7 +335,7 @@ impl RoomHandle {
         );
 
         let own_nick = runtime
-            .block_on(room.get_member_no_sync(own_user_id))
+            .block_on(sdk_room.get_member_no_sync(own_user_id))
             .ok()
             .flatten()
             .map(|m| m.name().to_owned())
@@ -343,7 +354,7 @@ impl RoomHandle {
             connection: connection.clone(),
             config,
             prev_batch: Rc::new(RefCell::new(
-                room.last_prev_batch().map(PrevBatch::Backwards),
+                sdk_room.last_prev_batch().map(PrevBatch::Backwards),
             )),
             latest_event_id: Rc::new(RefCell::new(None)),
             latest_read_event_id: Rc::new(RefCell::new(None)),
@@ -511,10 +522,14 @@ impl MatrixRoom {
         self.buffer.owns_buffer(buffer)
     }
 
+    pub fn release_sdk_state(&self) {
+        self.room.borrow_mut().take();
+    }
+
     pub fn is_encrypted(&self) -> bool {
         self.members
             .runtime
-            .block_on(self.room.latest_encryption_state())
+            .block_on(self.room().latest_encryption_state())
             .map(|s| s.is_encrypted())
             .unwrap_or_default()
     }
@@ -522,23 +537,23 @@ impl MatrixRoom {
     pub fn contains_only_verified_devices(&self) -> bool {
         self.members
             .runtime
-            .block_on(self.room.contains_only_verified_devices())
+            .block_on(self.room().contains_only_verified_devices())
             .unwrap_or_default()
     }
 
     pub fn is_public(&self) -> bool {
-        self.room.is_public().unwrap_or_default()
+        self.room().is_public().unwrap_or_default()
     }
 
     pub fn is_direct(&self) -> bool {
         self.members
             .runtime
-            .block_on(self.room.is_direct())
+            .block_on(self.room().is_direct())
             .unwrap_or_default()
     }
 
     pub fn alias(&self) -> Option<OwnedRoomAliasId> {
-        self.room.canonical_alias()
+        self.room().canonical_alias()
     }
 
     pub fn room_id(&self) -> &RoomId {
@@ -950,7 +965,7 @@ impl MatrixRoom {
             self.queue_outgoing_message(&transaction_id, &content).await;
             match c
                 .send_message(
-                    self.room().clone(),
+                    self.room(),
                     AnyMessageLikeEventContent::RoomMessage(content),
                     Some(transaction_id.clone()),
                 )
@@ -1087,7 +1102,7 @@ impl MatrixRoom {
 
         match connection
             .spawn({
-                let room = self.room().clone();
+                let room = self.room();
                 async move {
                     room.send_attachment(filename, &content_type, data, config)
                         .await
@@ -1133,7 +1148,7 @@ impl MatrixRoom {
         }
 
         let connection = self.connection.clone();
-        let room = self.room().clone();
+        let room = self.room();
 
         let send = |typing: bool| async move {
             let connection = connection.borrow().clone();
@@ -1249,7 +1264,7 @@ impl MatrixRoom {
         Weechat::bar_item_update("matrix_modes");
 
         if let Some(connection) = connection {
-            let room = self.room().clone();
+            let room = self.room();
             let room_id = room.room_id().to_owned();
 
             if let Ok(r) = connection.room_messages(room, prev_batch).await {
@@ -1488,7 +1503,7 @@ impl MatrixRoom {
         if let Ok(buffer) = self.buffer_handle().upgrade() {
             if buffer.num_lines() == 0 {
                 *self.prev_batch.borrow_mut() =
-                    self.room.last_prev_batch().map(PrevBatch::Backwards);
+                    self.room().last_prev_batch().map(PrevBatch::Backwards);
             }
         }
     }
@@ -1565,8 +1580,8 @@ impl MatrixRoom {
         }
     }
 
-    pub fn room(&self) -> &Room {
-        &self.room
+    pub fn room(&self) -> Room {
+        active_room(&self.room)
     }
 
     pub async fn handle_sync_state_event(

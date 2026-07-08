@@ -1622,11 +1622,26 @@ impl InnerServer {
     }
 
     pub fn shutdown(&self) {
-        let mut connection = self.connection.borrow_mut();
-        connection.take();
-        drop(connection);
+        let connection = self.connection.borrow_mut().take();
+        let runtime = connection.as_ref().map(|c| c.runtime.clone());
 
+        if let Some(runtime) = runtime {
+            let _guard = runtime.enter();
+            self.shutdown_sdk_state();
+            drop(connection);
+        } else {
+            let runtime = self.servers.runtime().to_owned();
+            let _guard = runtime.enter();
+            self.shutdown_sdk_state();
+        }
+    }
+
+    fn shutdown_sdk_state(&self) {
         self.verification_buffers.borrow_mut().clear();
+
+        for room in self.rooms.borrow().values() {
+            room.release_sdk_state();
+        }
         self.rooms.borrow_mut().clear();
 
         let mut client = self.client.borrow_mut();
