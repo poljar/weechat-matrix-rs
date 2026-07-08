@@ -59,7 +59,7 @@ use matrix_sdk::{
             room::{
                 member::RoomMemberEventContent,
                 message::{
-                    MessageType, RoomMessageEventContent,
+                    MessageType, Relation, RoomMessageEventContent,
                     TextMessageEventContent,
                 },
                 redaction::SyncRoomRedactionEvent,
@@ -593,48 +593,63 @@ impl MatrixRoom {
             RoomEncrypted(c) => {
                 c.render_with_prefix(send_time, event_id, sender, &())
             }
-            RoomMessage(c) => match &c.msgtype {
-                Text(c) => {
-                    c.render_with_prefix(send_time, event_id, sender, &())
+            RoomMessage(c) => {
+                let reply_to = match c.relates_to.as_ref() {
+                    Some(Relation::Reply { in_reply_to }) => {
+                        Some(&in_reply_to.event_id)
+                    }
+                    _ => None,
+                };
+
+                let rendered = match &c.msgtype {
+                    Text(c) => {
+                        c.render_with_prefix(send_time, event_id, sender, &())
+                    }
+                    Emote(c) => c.render_with_prefix(
+                        send_time, event_id, sender, sender,
+                    ),
+                    Notice(c) => c.render_with_prefix(
+                        send_time, event_id, sender, sender,
+                    ),
+                    ServerNotice(c) => c.render_with_prefix(
+                        send_time, event_id, sender, sender,
+                    ),
+                    Location(c) => c.render_with_prefix(
+                        send_time, event_id, sender, sender,
+                    ),
+                    Audio(c) => c.render_with_prefix(
+                        send_time,
+                        event_id,
+                        sender,
+                        &self.homeserver,
+                    ),
+                    Video(c) => c.render_with_prefix(
+                        send_time,
+                        event_id,
+                        sender,
+                        &self.homeserver,
+                    ),
+                    File(c) => c.render_with_prefix(
+                        send_time,
+                        event_id,
+                        sender,
+                        &self.homeserver,
+                    ),
+                    Image(c) => c.render_with_prefix(
+                        send_time,
+                        event_id,
+                        sender,
+                        &self.homeserver,
+                    ),
+                    _ => return None,
+                };
+
+                if let Some(event_id) = reply_to {
+                    rendered.add_reply_context(event_id)
+                } else {
+                    rendered
                 }
-                Emote(c) => {
-                    c.render_with_prefix(send_time, event_id, sender, sender)
-                }
-                Notice(c) => {
-                    c.render_with_prefix(send_time, event_id, sender, sender)
-                }
-                ServerNotice(c) => {
-                    c.render_with_prefix(send_time, event_id, sender, sender)
-                }
-                Location(c) => {
-                    c.render_with_prefix(send_time, event_id, sender, sender)
-                }
-                Audio(c) => c.render_with_prefix(
-                    send_time,
-                    event_id,
-                    sender,
-                    &self.homeserver,
-                ),
-                Video(c) => c.render_with_prefix(
-                    send_time,
-                    event_id,
-                    sender,
-                    &self.homeserver,
-                ),
-                File(c) => c.render_with_prefix(
-                    send_time,
-                    event_id,
-                    sender,
-                    &self.homeserver,
-                ),
-                Image(c) => c.render_with_prefix(
-                    send_time,
-                    event_id,
-                    sender,
-                    &self.homeserver,
-                ),
-                _ => return None,
-            },
+            }
             _ => return None,
         };
 

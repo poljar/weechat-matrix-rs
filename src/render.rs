@@ -1,9 +1,7 @@
 use url::Url;
 
 use matrix_sdk::{
-    encryption::verification::{
-        SasVerification, Verification, VerificationRequest,
-    },
+    encryption::verification::{SasVerification, Verification},
     ruma::{
         events::{
             key::verification::{
@@ -71,6 +69,26 @@ impl RenderedEvent {
         for line in &mut self.content.lines {
             line.tags.extend(tags.iter().map(|tag| tag.to_string()))
         }
+
+        self
+    }
+
+    pub fn add_reply_context(mut self, event_id: &EventId) -> Self {
+        let mut tags = self
+            .content
+            .lines
+            .first()
+            .map(|line| line.tags.clone())
+            .unwrap_or_default();
+        tags.push("matrix_reply".to_owned());
+
+        self.content.lines.insert(
+            0,
+            RenderedLine {
+                tags,
+                message: format!("Reply to {}", event_id),
+            },
+        );
 
         self
     }
@@ -624,7 +642,7 @@ render_start_content!(ToDeviceKeyVerificationStartEventContent);
 
 pub enum VerificationContext {
     Room(WeechatRoomMember, WeechatRoomMember),
-    ToDevice(VerificationRequest),
+    ToDevice,
 }
 
 macro_rules! render_request_content {
@@ -650,7 +668,7 @@ macro_rules! render_request_content {
                             )
                         }
                     }
-                    VerificationContext::ToDevice(_) => {
+                    VerificationContext::ToDevice => {
                         format!("You have requested this device to be verified")
                     }
                 };
@@ -749,42 +767,9 @@ macro_rules! render_key_content {
 render_key_content!(KeyVerificationKeyEventContent);
 render_key_content!(ToDeviceKeyVerificationKeyEventContent);
 
-/// Trait for message event types that contain an optional formatted body.
-/// `resolve_body` will return the formatted body if present, else fallback to
-/// the regular body.
-trait HasFormattedBody {
-    fn body(&self) -> &str;
-    fn formatted_body(&self) -> Option<&str>;
-    #[inline]
-    fn resolve_body(&self) -> &str {
-        self.formatted_body().unwrap_or_else(|| self.body())
-    }
-}
-
-// Repeating this for each event type would get boring fast so lets use a simple
-// macro to implement the trait for a struct that has a `body` and
-// `formatted_body` field
-macro_rules! has_formatted_body {
-    ($content: ident) => {
-        impl HasFormattedBody for $content {
-            #[inline]
-            fn body(&self) -> &str {
-                &self.body
-            }
-
-            #[inline]
-            fn formatted_body(&self) -> Option<&str> {
-                self.formatted.as_ref().map(|f| f.body.as_ref())
-            }
-        }
-    };
-}
-
 /// This trait is implemented for message types that can contain either an URL
 /// or an encrypted file. One of these _must_ be present.
 pub trait HasUrlOrFile {
-    fn url(&self) -> Option<&MxcUri>;
-
     fn body(&self) -> &str;
 
     #[inline]
@@ -809,14 +794,6 @@ macro_rules! has_url_or_file {
                 &self.body
             }
 
-            #[inline]
-            fn url(&self) -> Option<&MxcUri> {
-                match &self.source {
-                    MediaSource::Plain(url) => Some(url),
-                    _ => None,
-                }
-            }
-
             fn source(&self) -> &MediaSource {
                 &self.source
             }
@@ -830,11 +807,6 @@ macro_rules! has_url_or_file {
         }
     };
 }
-
-// this actually implements the trait for different event types
-has_formatted_body!(EmoteMessageEventContent);
-has_formatted_body!(NoticeMessageEventContent);
-has_formatted_body!(TextMessageEventContent);
 
 has_url_or_file!(AudioMessageEventContent);
 has_url_or_file!(FileMessageEventContent);
@@ -1087,5 +1059,32 @@ mod tests {
         let source = MediaSource::Encrypted(Box::new(encrypt_info));
 
         assert_eq!(None, media_download_command(&source));
+    }
+
+    #[test]
+    fn reply_context_is_rendered_as_visible_line() {
+        let event_id =
+            matrix_sdk::ruma::owned_event_id!("$replyevent:example.org");
+        let rendered = RenderedEvent {
+            message_timestamp: 0,
+            prefix: "alice\t".to_owned(),
+            content: RenderedContent {
+                lines: vec![RenderedLine {
+                    tags: vec!["matrix_text".to_owned()],
+                    message: "reply body".to_owned(),
+                }],
+            },
+        }
+        .add_reply_context(&event_id);
+
+        assert_eq!(2, rendered.content.lines.len());
+        assert_eq!(
+            "Reply to $replyevent:example.org",
+            rendered.content.lines[0].message
+        );
+        assert!(rendered.content.lines[0]
+            .tags
+            .contains(&"matrix_reply".to_owned()));
+        assert_eq!("reply body", rendered.content.lines[1].message);
     }
 }

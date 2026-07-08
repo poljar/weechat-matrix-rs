@@ -69,7 +69,7 @@ impl Verification {
             if let Some(ActiveVerification::Sas(verification)) =
                 self.inner.borrow().clone()
             {
-                let ret =
+                let _ret =
                     c.spawn(async move { verification.confirm().await }).await;
             }
         }
@@ -85,7 +85,7 @@ impl Verification {
             {
                 let verification_clone = verification.clone();
 
-                let ret = c
+                let _ret = c
                     .spawn(async move {
                         verification
                             .accept_with_methods(vec![
@@ -159,7 +159,7 @@ impl Verification {
 
                         // We accept here automatically since the only method
                         // we're supporting is SAS verification
-                        let ret = connection
+                        let _ret = connection
                             .spawn(async move { sas.accept().await })
                             .await;
                     }
