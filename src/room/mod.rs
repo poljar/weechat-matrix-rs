@@ -105,24 +105,6 @@ fn restored_prev_batch(prev_batch: Option<String>) -> Option<PrevBatch> {
     prev_batch.map(PrevBatch::Backwards)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{restored_prev_batch, PrevBatch};
-
-    #[test]
-    fn restored_rooms_fetch_history_backwards_from_prev_batch() {
-        assert_eq!(
-            restored_prev_batch(Some("token".to_owned())),
-            Some(PrevBatch::Backwards("token".to_owned()))
-        );
-    }
-
-    #[test]
-    fn restored_rooms_without_prev_batch_have_no_history_request() {
-        assert_eq!(restored_prev_batch(None), None);
-    }
-}
-
 impl Deref for RoomHandle {
     type Target = MatrixRoom;
 
@@ -1382,6 +1364,19 @@ mod tests {
 
     fn text_content(body: &str) -> RoomMessageEventContent {
         RoomMessageEventContent::text_plain(body)
+    }
+
+    #[test]
+    fn restored_rooms_fetch_history_backwards_from_prev_batch() {
+        assert_eq!(
+            restored_prev_batch(Some("token".to_owned())),
+            Some(PrevBatch::Backwards("token".to_owned()))
+        );
+    }
+
+    #[test]
+    fn restored_rooms_without_prev_batch_have_no_history_request() {
+        assert_eq!(restored_prev_batch(None), None);
     }
 
     #[test]
