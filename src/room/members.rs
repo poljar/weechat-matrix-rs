@@ -25,12 +25,14 @@ use weechat::{
 };
 
 use crate::{
-    config::Config, render::render_membership, room::buffer::RoomBuffer,
+    config::Config,
+    render::render_membership,
+    room::{active_room, buffer::RoomBuffer, SharedRoom},
 };
 
 #[derive(Clone)]
 pub struct Members {
-    room: Room,
+    room: SharedRoom,
     pub(super) runtime: Handle,
     ambiguity_map: Rc<DashMap<OwnedUserId, bool>>,
     nicks: Rc<DashMap<OwnedUserId, String>>,
@@ -55,7 +57,7 @@ impl PartialEq for WeechatRoomMember {
 
 impl Members {
     pub fn new(
-        room: Room,
+        room: SharedRoom,
         runtime: Handle,
         config: Rc<RefCell<Config>>,
         buffer: RoomBuffer,
@@ -98,7 +100,7 @@ impl Members {
     }
 
     pub async fn restore_member(&self, user_id: OwnedUserId) {
-        let room = self.room.clone();
+        let room = active_room(&self.room);
         let user = user_id.to_owned();
 
         match self
@@ -215,14 +217,15 @@ impl Members {
 
     /// Retrieve a reference to a Weechat room member by user ID.
     pub async fn get(&self, user_id: &UserId) -> Option<WeechatRoomMember> {
-        let color = if self.room.own_user_id() == user_id {
+        let sdk_room = active_room(&self.room);
+        let color = if sdk_room.own_user_id() == user_id {
             "weechat.color.chat_nick_self".into()
         } else {
             Weechat::info_get("nick_color_name", user_id.as_str())
                 .expect("Couldn't get the nick color name")
         };
 
-        let room = self.room.clone();
+        let room = sdk_room.clone();
         let user = user_id.to_owned();
 
         match self
@@ -269,6 +272,10 @@ impl Members {
             p if p > Int::from(0) => color.nick_prefix_power(),
             _ => "default".to_owned(),
         }
+    }
+
+    fn room(&self) -> Room {
+        active_room(&self.room)
     }
 
     pub fn mark_active(
