@@ -60,8 +60,9 @@ use std::{
     cmp::Reverse,
     collections::HashMap,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::{Rc, Weak},
+    time::Duration,
 };
 use tracing::error;
 use url::Url;
@@ -80,7 +81,8 @@ use matrix_sdk::{
             SyncStateEvent,
         },
         DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
-        OwnedDeviceId, OwnedMxcUri, OwnedRoomId, OwnedUserId, RoomId, UserId,
+        OwnedDeviceId, OwnedMxcUri, OwnedRoomAliasId, OwnedRoomId,
+        OwnedRoomOrAliasId, OwnedServerName, OwnedUserId, RoomId, UserId,
     },
     Client, Error,
 };
@@ -90,6 +92,8 @@ use weechat::{
     config::{BooleanOptionSettings, ConfigSection, StringOptionSettings},
     Prefix, Weechat,
 };
+
+const JOIN_ROOM_TIMEOUT: Duration = Duration::from_secs(120);
 
 use crate::{
     config::ServerBuffer,
@@ -212,6 +216,63 @@ impl MatrixServer {
 
     pub fn clone_weak(&self) -> Weak<InnerServer> {
         Rc::downgrade(&self.inner)
+    }
+
+    /// Join a Matrix room by ID or alias.
+    pub async fn join_room(&self, room_id_or_alias: String) {
+        let Ok(room_id_or_alias) =
+            room_id_or_alias.parse::<OwnedRoomOrAliasId>()
+        else {
+            self.print_error("Invalid room ID or alias.");
+            return;
+        };
+
+        let Some(connection) = self.connection() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        self.print_network(&format!("Joining room {}...", room_id_or_alias));
+
+        let client = connection.client().clone();
+        let target = room_id_or_alias.to_string();
+        let result = connection
+            .spawn(async move {
+                tokio::time::timeout(JOIN_ROOM_TIMEOUT, async move {
+                    let servers =
+                        resolve_alias_servers(&client, &room_id_or_alias).await;
+
+                    client
+                        .join_room_by_id_or_alias(&room_id_or_alias, &servers)
+                        .await
+                })
+                .await
+            })
+            .await;
+
+        match result {
+            Ok(Ok(room)) => {
+                self.print_network(&format!(
+                    "Successfully joined room {}",
+                    room.room_id()
+                ));
+            }
+            Ok(Err(error)) => {
+                self.print_error(&format!(
+                    "Failed to join {}: {}",
+                    target,
+                    format_join_error(&error, &target)
+                ));
+            }
+            Err(error) => {
+                self.print_error(&format!(
+                    "Timed out joining {} after {} seconds: {}",
+                    target,
+                    JOIN_ROOM_TIMEOUT.as_secs(),
+                    error
+                ));
+            }
+        }
     }
 
     pub fn connect(&self) -> Result<(), ServerError> {
@@ -416,6 +477,39 @@ impl MatrixServer {
             .new_boolean_option(ssl_verify)
             .expect("Can't create autoconnect option");
     }
+}
+
+fn format_join_error(error: &Error, target: &str) -> String {
+    let message = error
+        .as_client_api_error()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| error.to_string());
+
+    if target.starts_with('#')
+        && message.contains("Expected RoomID of the form")
+    {
+        format!(
+            "{message}; the alias may point to a room v12 ID without a server part. Update the homeserver/client stack or join from a homeserver that supports room v12."
+        )
+    } else {
+        message
+    }
+}
+
+async fn resolve_alias_servers(
+    client: &Client,
+    room_id_or_alias: &OwnedRoomOrAliasId,
+) -> Vec<OwnedServerName> {
+    let Ok(alias) = room_id_or_alias.as_str().parse::<OwnedRoomAliasId>()
+    else {
+        return Vec::new();
+    };
+
+    client
+        .resolve_room_alias(&alias)
+        .await
+        .map(|response| response.servers)
+        .unwrap_or_default()
 }
 
 impl Drop for MatrixServer {
@@ -669,6 +763,21 @@ impl InnerServer {
         self.print(&format!("{}{}: {}", prefix, PLUGIN_NAME, message));
     }
 
+    /// Print a message to a Matrix buffer, falling back to the server buffer if
+    /// the original command buffer disappeared.
+    fn print_with_prefix_to(
+        &self,
+        buffer: Option<&BufferHandle>,
+        prefix: &str,
+        message: &str,
+    ) {
+        if let Some(Ok(buffer)) = buffer.map(|buffer| buffer.upgrade()) {
+            buffer.print(&format!("{}{}: {}", prefix, PLUGIN_NAME, message));
+        } else {
+            self.print_with_prefix(prefix, message);
+        }
+    }
+
     /// Print an network message to the server buffer.
     pub fn print_network(&self, message: &str) {
         self.print_with_prefix(&Weechat::prefix(Prefix::Network), message);
@@ -854,6 +963,15 @@ impl InnerServer {
         path
     }
 
+    fn get_server_cache_path(&self) -> PathBuf {
+        let mut path = Weechat::home_dir();
+        let server_name: &str = &self.server_name;
+        path.push("matrix-rust");
+        path.push(format!("{}-cache", server_name));
+
+        path
+    }
+
     pub fn connection(&self) -> Option<Connection> {
         self.connection.borrow().clone()
     }
@@ -878,7 +996,11 @@ impl InnerServer {
 
         let mut client_builder = Client::builder()
             .homeserver_url(homeserver)
-            .sqlite_store(self.get_server_path(), Some("DEFAULT_PASSPHRASE"));
+            .sqlite_store_with_cache_path(
+                self.get_server_path(),
+                self.get_server_cache_path(),
+                Some("DEFAULT_PASSPHRASE"),
+            );
 
         if let Some(proxy) = settings.proxy.as_ref() {
             client_builder = client_builder.proxy(proxy);
@@ -1029,11 +1151,20 @@ impl InnerServer {
         };
     }
 
-    pub async fn download_media(&self, uri: OwnedMxcUri, file: PathBuf) {
+    pub async fn download_media(
+        &self,
+        uri: OwnedMxcUri,
+        file: PathBuf,
+        output_buffer: Option<BufferHandle>,
+    ) {
         let connection = if let Some(c) = self.connection() {
             c
         } else {
-            self.print_error("You must be connected to execute this command");
+            self.print_with_prefix_to(
+                output_buffer.as_ref(),
+                &Weechat::prefix(Prefix::Error),
+                "You must be connected to execute this command",
+            );
             return;
         };
 
@@ -1042,9 +1173,14 @@ impl InnerServer {
             source: MediaSource::Plain(uri),
             format: MediaFormat::File,
         };
-        let display_file = file.display().to_string();
+        let display_file =
+            Self::display_download_path(&file).display().to_string();
 
-        self.print_network(&format!("Downloading media to {}", display_file));
+        self.print_with_prefix_to(
+            output_buffer.as_ref(),
+            &Weechat::prefix(Prefix::Network),
+            &format!("Downloading media to {}", display_file),
+        );
 
         match connection
             .spawn(async move {
@@ -1053,26 +1189,65 @@ impl InnerServer {
             .await
         {
             Ok(content) => {
+                if let Some(parent) = file.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            self.print_with_prefix_to(
+                                output_buffer.as_ref(),
+                                &Weechat::prefix(Prefix::Error),
+                                &format!(
+                                    "Error creating media directory {}: {:#?}",
+                                    parent.display(),
+                                    e
+                                ),
+                            );
+                            return;
+                        }
+                    }
+                }
+
                 if let Err(e) = std::fs::OpenOptions::new()
                     .write(true)
                     .create_new(true)
                     .open(&file)
                     .and_then(|mut file| file.write_all(&content))
                 {
-                    self.print_error(&format!(
-                        "Error writing media to {}: {:#?}",
-                        display_file, e
-                    ));
+                    self.print_with_prefix_to(
+                        output_buffer.as_ref(),
+                        &Weechat::prefix(Prefix::Error),
+                        &format!(
+                            "Error writing media to {}: {:#?}",
+                            display_file, e
+                        ),
+                    );
                 } else {
-                    self.print_network(&format!(
-                        "Successfully downloaded media to {}",
-                        display_file
-                    ));
+                    self.print_with_prefix_to(
+                        output_buffer.as_ref(),
+                        &Weechat::prefix(Prefix::Network),
+                        &format!(
+                            "Successfully downloaded media to {}",
+                            display_file
+                        ),
+                    );
                 }
             }
             Err(e) => {
-                self.print_error(&format!("Error downloading media {:#?}", e));
+                self.print_with_prefix_to(
+                    output_buffer.as_ref(),
+                    &Weechat::prefix(Prefix::Error),
+                    &format!("Error downloading media {:#?}", e),
+                );
             }
+        }
+    }
+
+    fn display_download_path(file: &Path) -> PathBuf {
+        if file.is_absolute() {
+            file.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(file))
+                .unwrap_or_else(|_| file.to_path_buf())
         }
     }
 
@@ -1423,5 +1598,35 @@ impl InnerServer {
             indent = 8
         ));
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::InnerServer;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn keeps_absolute_download_path_for_display() {
+        let path = Path::new("/tmp/matrix-media");
+
+        assert_eq!(InnerServer::display_download_path(path), path);
+    }
+
+    #[test]
+    fn expands_relative_download_path_for_display() {
+        let path = Path::new("matrix-media");
+        let expected = std::env::current_dir()
+            .expect("current working directory")
+            .join(path);
+
+        assert_eq!(InnerServer::display_download_path(path), expected);
+    }
+
+    #[test]
+    fn preserves_absolute_pathbuf_for_display() {
+        let path = PathBuf::from("/tmp/matrix-media");
+
+        assert_eq!(InnerServer::display_download_path(&path), path);
     }
 }
