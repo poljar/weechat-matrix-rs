@@ -928,8 +928,16 @@ impl InnerServer {
         room_id: &RoomId,
         event: AnySyncStateEvent,
     ) {
+        let refresh_parent_spaces =
+            matches!(&event, AnySyncStateEvent::RoomName(_));
         let room = self.get_or_create_room(room_id);
-        room.handle_sync_state_event(&event, true).await
+        room.handle_sync_state_event(&event, true).await;
+
+        if refresh_parent_spaces {
+            for room in self.rooms() {
+                room.update_parent_spaces();
+            }
+        }
     }
 
     pub async fn receive_joined_timeline_event(

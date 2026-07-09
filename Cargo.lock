@@ -4635,6 +4635,7 @@ dependencies = [
  "chrono",
  "clap",
  "dashmap",
+ "futures-util",
  "image",
  "matrix-sdk",
  "mime_guess",

@@ -170,6 +170,28 @@ The inactivity delay defaults to five minutes and can be changed with:
 
        /set matrix-rust.look.smart_filter_delay 300000
 
+# Matrix Spaces
+
+Room buffers expose Matrix parent Spaces as WeeChat local variables. Switch to a
+room buffer that belongs to a Space and run:
+
+       /buffer listvar
+
+Look for `space`, `space_id`, `spaces`, and `space_ids`. The singular variables
+hold the first parent Space name and room id; the plural variables contain all
+known parent Spaces as comma-separated lists.
+
+The buflist plugin will not reorganize Matrix rooms under Spaces by itself.
+These variables are available to scripts and custom buflist formats. For
+example, to prefix Matrix room names with their first parent Space:
+
+       /set buflist.format.name "${if:${space}?${space}/${name}:${name}}"
+       /buflist refresh
+
+Remove that prefix again with:
+
+       /unset buflist.format.name
+
 # Storage
 
 The plugin keeps Matrix state and encryption data in
