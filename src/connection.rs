@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     future::Future,
     path::PathBuf,
     rc::{Rc, Weak},
@@ -8,6 +9,7 @@ use std::{
 use tokio::{
     runtime::Runtime,
     sync::mpsc::{channel, Receiver, Sender},
+    task::JoinHandle,
 };
 
 use tracing::error;
@@ -83,7 +85,7 @@ pub enum ClientMessage {
         bool,
         Option<AmbiguityChange>,
     ),
-    RestoredRoom(Room),
+    RestoredRoom(OwnedRoomId),
 }
 
 /// Struct representing an active connection to the homeserver.
@@ -97,8 +99,8 @@ pub enum ClientMessage {
 /// loop drop the object.
 #[derive(Debug, Clone)]
 pub struct Connection {
-    #[allow(dead_code)]
-    receiver_task: Rc<Task<()>>,
+    receiver_task: Rc<RefCell<Option<Task<()>>>>,
+    sync_task: Rc<RefCell<Option<JoinHandle<()>>>>,
     client: Option<Client>,
     runtime: Option<Rc<Runtime>>,
 }
@@ -128,6 +130,31 @@ impl Connection {
             .expect("Tokio error while sending a message")
     }
 
+    pub fn shutdown(&self) {
+        let runtime = self.runtime();
+
+        self.stop_sync_task(&runtime);
+        self.stop_receiver_task(&runtime);
+    }
+
+    fn stop_sync_task(&self, runtime: &Runtime) {
+        let Some(task) = self.sync_task.borrow_mut().take() else {
+            return;
+        };
+
+        task.abort();
+        let _ = runtime.block_on(async { task.await });
+    }
+
+    fn stop_receiver_task(&self, runtime: &Runtime) {
+        let Some(task) = self.receiver_task.borrow_mut().take() else {
+            return;
+        };
+
+        let _guard = runtime.enter();
+        drop(task);
+    }
+
     pub fn new(server: &MatrixServer, client: &Client) -> Self {
         let (tx, rx) = channel(10_000);
 
@@ -140,7 +167,7 @@ impl Connection {
 
         let runtime = Runtime::new().unwrap();
 
-        runtime.spawn(Connection::sync_loop(
+        let sync_task = runtime.spawn(Connection::sync_loop(
             client.clone(),
             tx,
             server.user_name(),
@@ -150,9 +177,10 @@ impl Connection {
         ));
 
         Self {
+            receiver_task: Rc::new(RefCell::new(Some(receiver_task))),
+            sync_task: Rc::new(RefCell::new(Some(sync_task))),
             client: Some(client.clone()),
             runtime: Some(runtime.into()),
-            receiver_task: receiver_task.into(),
         }
     }
 
@@ -327,8 +355,8 @@ impl Connection {
                     ClientMessage::SyncState(r, e) => {
                         server.receive_joined_state_event(&r, e).await
                     }
-                    ClientMessage::RestoredRoom(room) => {
-                        server.restore_room(room).await
+                    ClientMessage::RestoredRoom(room_id) => {
+                        server.restore_room_by_id(room_id).await
                     }
                     ClientMessage::ToDeviceEvent(e) => {
                         server.receive_to_device_event(e).await
@@ -504,7 +532,9 @@ impl Connection {
             if !first_login {
                 for room in client.joined_rooms() {
                     if channel
-                        .send(Ok(ClientMessage::RestoredRoom(room)))
+                        .send(Ok(ClientMessage::RestoredRoom(
+                            room.room_id().to_owned(),
+                        )))
                         .await
                         .is_err()
                     {
@@ -672,20 +702,21 @@ impl Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        {
-            let runtime = self.runtime();
-
-            if let Some(client) = self.client.take() {
-                let _guard = runtime.enter();
-                drop(client);
-            }
-        }
-
-        let Some(runtime) = self.runtime.as_ref() else {
+        let Some(runtime) = self.runtime.as_ref().cloned() else {
             return;
         };
 
-        if Rc::strong_count(runtime) == 1 {
+        if Rc::strong_count(&runtime) == 1 {
+            self.stop_sync_task(&runtime);
+            self.stop_receiver_task(&runtime);
+        }
+
+        if let Some(client) = self.client.take() {
+            let _guard = runtime.enter();
+            drop(client);
+        }
+
+        if Rc::strong_count(&runtime) == 1 {
             let runtime = self.runtime.take().expect("runtime disappeared");
             let handle = runtime.handle().clone();
             let _guard = handle.enter();

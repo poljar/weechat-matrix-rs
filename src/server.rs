@@ -622,6 +622,23 @@ impl InnerServer {
         self.settings.borrow().password.clone()
     }
 
+    pub async fn restore_room_by_id(&self, room_id: OwnedRoomId) {
+        if self.rooms.borrow().contains_key(&room_id) {
+            return;
+        }
+
+        let Some(client) = self.get_client() else {
+            return;
+        };
+
+        let Some(room) = client.get_room(&room_id) else {
+            error!("Can't restore room {}, room not found", room_id);
+            return;
+        };
+
+        self.restore_room(room).await;
+    }
+
     pub async fn restore_room(&self, room: Room) {
         let homeserver = self
             .settings
@@ -1609,8 +1626,11 @@ impl InnerServer {
         }
 
         {
-            let mut connection = self.connection.borrow_mut();
-            connection.take();
+            let connection = self.connection.borrow_mut().take();
+            if let Some(connection) = connection.as_ref() {
+                connection.shutdown();
+            }
+            drop(connection);
         }
 
         self.print_network(&format!(
@@ -1623,7 +1643,10 @@ impl InnerServer {
 
     pub fn shutdown(&self) {
         let connection = self.connection.borrow_mut().take();
-        let runtime = connection.as_ref().map(|c| c.runtime());
+        let runtime = connection.as_ref().map(|c| {
+            c.shutdown();
+            c.runtime()
+        });
 
         if let Some(runtime) = runtime {
             let _guard = runtime.enter();
