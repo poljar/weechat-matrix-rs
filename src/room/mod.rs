@@ -789,6 +789,16 @@ impl MatrixRoom {
         }
     }
 
+    fn print_network(&self, message: &str) {
+        if let Ok(buffer) = self.buffer_handle().upgrade() {
+            buffer.print(&format!(
+                "{}{}",
+                Weechat::prefix(Prefix::Network),
+                message
+            ));
+        }
+    }
+
     fn print_error(&self, message: &str) {
         if let Ok(buffer) = self.buffer_handle().upgrade() {
             buffer.print(&format!(
@@ -796,6 +806,30 @@ impl MatrixRoom {
                 Weechat::prefix(Prefix::Error),
                 message
             ));
+        }
+    }
+
+    pub async fn invite_user(&self, user_id: OwnedUserId) {
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        let invited_user = user_id.clone();
+        let room = self.room().clone();
+
+        match connection
+            .spawn(async move { room.invite_user_by_id(&user_id).await })
+            .await
+        {
+            Ok(()) => self.print_network(&format!(
+                "Invited {} to the room.",
+                invited_user
+            )),
+            Err(error) => self.print_error(&format!(
+                "Failed to invite {}: {}",
+                invited_user, error
+            )),
         }
     }
 
