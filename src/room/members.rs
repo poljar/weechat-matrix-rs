@@ -6,7 +6,7 @@ use tracing::{debug, error, info};
 
 use matrix_sdk::{
     deserialized_responses::AmbiguityChange,
-    room::{Room, RoomMember},
+    room::RoomMember,
     ruma::{
         events::{
             room::{
