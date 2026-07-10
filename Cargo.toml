@@ -43,6 +43,7 @@ tracing = "0.1.36"
 tracing-subscriber = { version = "0.3.15", features = ["env-filter"] }
 uuid = { version = "1.1.2", features = ["v4"] }
 unicode-segmentation = "1.10.0"
+futures-util = "0.3"
 
 # Auto-select version from matrix-sdk
 qrcode = { version = "*", default-features = false }

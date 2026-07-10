@@ -385,15 +385,21 @@ impl MatrixServer {
         let homeserver =
             StringOptionSettings::new(format!("{}.homeserver", server_name))
                 .set_check_callback(|_, _, value| {
-                    MatrixServer::is_url_valid(&value)
+                    Weechat::eval_string_expression(&value)
+                        .map(|value| MatrixServer::is_url_valid(&value))
+                        .unwrap_or(false)
                 })
                 .set_change_callback(move |_, option| {
                     let server_ref = server.upgrade().expect(
                         "Server got deleted while server config is alive",
                     );
 
+                    let homeserver =
+                        Weechat::eval_string_expression(&option.value())
+                            .expect("Can't evaluate homeserver");
+
                     server_ref.settings.borrow_mut().homeserver =
-                        MatrixServer::parse_url_unchecked(&option.value());
+                        MatrixServer::parse_url_unchecked(&homeserver);
                 });
 
         server_section
@@ -928,8 +934,16 @@ impl InnerServer {
         room_id: &RoomId,
         event: AnySyncStateEvent,
     ) {
+        let refresh_parent_spaces =
+            matches!(&event, AnySyncStateEvent::RoomName(_));
         let room = self.get_or_create_room(room_id);
-        room.handle_sync_state_event(&event, true).await
+        room.handle_sync_state_event(&event, true).await;
+
+        if refresh_parent_spaces {
+            for room in self.rooms() {
+                room.update_parent_spaces();
+            }
+        }
     }
 
     pub async fn receive_joined_timeline_event(

@@ -1,11 +1,16 @@
 use std::{borrow::Cow, cell::RefCell, rc::Rc};
 
+use futures_util::StreamExt;
 use matrix_sdk::{
+    room::ParentSpace,
     ruma::{EventId, OwnedRoomAliasId, TransactionId, UserId},
-    Room,
+    Error, Room,
 };
 use tokio::runtime::Handle;
-use weechat::buffer::{Buffer, BufferHandle, BufferLine, LineData};
+use weechat::{
+    buffer::{Buffer, BufferHandle, BufferLine, LineData},
+    Prefix, Weechat,
+};
 
 use crate::{render::RenderedEvent, utils::ToTag};
 
@@ -193,6 +198,45 @@ impl RoomBuffer {
         }
     }
 
+    pub fn update_parent_spaces(&self) {
+        let spaces = self.runtime.block_on(parent_spaces(self.room.clone()));
+
+        if let Ok(buffer) = self.buffer_handle().upgrade() {
+            match spaces {
+                Ok(spaces) => {
+                    let ids = spaces
+                        .iter()
+                        .map(|s| s.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let names = spaces
+                        .iter()
+                        .map(|s| s.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",");
+
+                    buffer.set_localvar("space_ids", &ids);
+                    buffer.set_localvar("spaces", &names);
+
+                    if let Some(space) = spaces.first() {
+                        buffer.set_localvar("space_id", space.id.as_str());
+                        buffer.set_localvar("space", &space.name);
+                    } else {
+                        buffer.set_localvar("space_id", "");
+                        buffer.set_localvar("space", "");
+                    }
+                }
+                Err(e) => {
+                    Weechat::print(&format!(
+                        "{}: Error fetching parent spaces from the store: {}",
+                        Weechat::prefix(Prefix::Error),
+                        e,
+                    ));
+                }
+            }
+        }
+    }
+
     fn alias(&self) -> Option<OwnedRoomAliasId> {
         self.room.canonical_alias()
     }
@@ -322,4 +366,40 @@ mod tests {
             "!roomid:matrix.osgeo.org"
         );
     }
+}
+
+struct ParentSpaceInfo {
+    id: String,
+    name: String,
+}
+
+async fn parent_spaces(room: Room) -> Result<Vec<ParentSpaceInfo>, Error> {
+    let mut stream = room.parent_spaces().await?;
+    let mut spaces = Vec::new();
+
+    while let Some(parent) = stream.next().await {
+        match parent? {
+            ParentSpace::Reciprocal(room)
+            | ParentSpace::WithPowerlevel(room)
+            | ParentSpace::Illegitimate(room) => {
+                let id = room.room_id().to_string();
+                let name = room
+                    .display_name()
+                    .await
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|_| id.clone());
+
+                spaces.push(ParentSpaceInfo { id, name });
+            }
+            ParentSpace::Unverifiable(room_id) => {
+                let id = room_id.to_string();
+                spaces.push(ParentSpaceInfo {
+                    id: id.clone(),
+                    name: id,
+                });
+            }
+        }
+    }
+
+    Ok(spaces)
 }

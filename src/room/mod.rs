@@ -348,6 +348,7 @@ impl RoomHandle {
         }
 
         *room.buffer.inner.borrow_mut() = Some(buffer_handle.clone());
+        room.buffer.update_parent_spaces();
 
         Self { inner: room }
     }
@@ -392,6 +393,7 @@ impl RoomHandle {
 
         room_buffer.buffer.update_buffer_name();
         room_buffer.buffer.set_topic();
+        room_buffer.buffer.update_parent_spaces();
 
         Ok(room_buffer)
     }
@@ -451,6 +453,10 @@ impl MatrixRoom {
 
     pub fn buffer_handle(&self) -> BufferHandle {
         self.buffer.buffer_handle()
+    }
+
+    pub fn update_parent_spaces(&self) {
+        self.buffer.update_parent_spaces();
     }
 
     pub fn accept_verification(&self) {
@@ -1166,6 +1172,9 @@ impl MatrixRoom {
             AnySyncStateEvent::RoomCanonicalAlias(_) => {
                 self.buffer.set_alias();
                 self.buffer.update_buffer_name();
+            }
+            AnySyncStateEvent::SpaceParent(_) => {
+                self.buffer.update_parent_spaces()
             }
             _ => (),
         }
