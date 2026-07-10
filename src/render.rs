@@ -26,8 +26,8 @@ use matrix_sdk::{
                     AudioMessageEventContent, EmoteMessageEventContent,
                     FileMessageEventContent, ImageMessageEventContent,
                     KeyVerificationRequestEventContent,
-                    LocationMessageEventContent, NoticeMessageEventContent,
-                    RedactedRoomMessageEventContent,
+                    LocationMessageEventContent, MessageFormat,
+                    NoticeMessageEventContent, RedactedRoomMessageEventContent,
                     ServerNoticeMessageEventContent, TextMessageEventContent,
                     VideoMessageEventContent,
                 },
@@ -1054,7 +1054,10 @@ macro_rules! has_formatted_body {
 
             #[inline]
             fn formatted_body(&self) -> Option<&str> {
-                self.formatted.as_ref().map(|f| f.body.as_ref())
+                self.formatted
+                    .as_ref()
+                    .filter(|f| f.format == MessageFormat::Html)
+                    .map(|f| f.body.as_ref())
             }
         }
     };
