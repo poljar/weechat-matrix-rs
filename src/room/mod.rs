@@ -417,10 +417,6 @@ impl BufferInputCallbackAsync for MatrixRoom {
 }
 
 impl MatrixRoom {
-    fn update_status_bar(&self) {
-        Weechat::bar_item_update("buffer_modes");
-    }
-
     pub fn is_encrypted(&self) -> bool {
         self.members
             .runtime
@@ -1096,7 +1092,7 @@ impl MatrixRoom {
             )
             .await;
 
-        self.update_status_bar();
+        Weechat::bar_item_update("buffer_modes");
     }
 
     fn set_prev_batch(&self) {
@@ -1182,9 +1178,11 @@ impl MatrixRoom {
             AnySyncStateEvent::SpaceParent(_) => {
                 self.buffer.update_parent_spaces()
             }
-            _ => (),
+            AnySyncStateEvent::RoomEncryption(_)
+            | AnySyncStateEvent::RoomJoinRules(_) => {
+                Weechat::bar_item_update("buffer_modes");
+            }
+            _ => {}
         }
-
-        self.update_status_bar();
     }
 }
