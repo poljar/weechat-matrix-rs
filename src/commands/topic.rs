@@ -33,14 +33,16 @@ impl TopicCommand {
         if let Some(room) = self.servers.find_room(buffer) {
             let room = room.room().clone();
 
-            match self.servers.runtime().block_on(room.set_room_topic(&topic)) {
-                Ok(_) => (),
-                Err(error) => Weechat::print(&format!(
-                    "{}Failed to set room topic: {}",
-                    Weechat::prefix(Prefix::Error),
-                    error
-                )),
-            }
+            Weechat::spawn(async move {
+                if let Err(error) = room.set_room_topic(&topic).await {
+                    Weechat::print(&format!(
+                        "{}Failed to set room topic: {}",
+                        Weechat::prefix(Prefix::Error),
+                        error
+                    ));
+                }
+            })
+            .detach();
         } else {
             Weechat::print(
                 "The /topic command needs to be run in a Matrix room buffer.",
