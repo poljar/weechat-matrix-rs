@@ -423,14 +423,15 @@ impl Connection {
                     return;
                 }
 
-                let sso_channel = channel.clone();
+                let url_sender = channel.clone();
                 let mut builder = matrix_auth
                     .login_sso(move |sso_url| {
-                        let sso_channel = sso_channel.clone();
                         async move {
-                            let _ = sso_channel
+                            let _ = url_sender
                                 .send(Ok(ClientMessage::SsoLoginUrl(sso_url)))
                                 .await;
+                            // Handing the URL to WeeChat successfully completes
+                            // our callback; returning an error would abort SSO.
                             Ok(())
                         }
                     })
