@@ -986,10 +986,19 @@ impl MatrixRoom {
                 for event in
                     r.chunk.iter().filter_map(|e| e.raw().deserialize().ok())
                 {
-                    self.handle_room_event(
-                        &event.into_full_event(room_id.clone()),
-                    )
-                    .await;
+                    let event = event.into_full_event(room_id.clone());
+                    if self.latest_event_id.borrow().is_none() {
+                        let event_id = match &event {
+                            AnyTimelineEvent::MessageLike(event) => {
+                                event.event_id().to_owned()
+                            }
+                            AnyTimelineEvent::State(event) => {
+                                event.event_id().to_owned()
+                            }
+                        };
+                        *self.latest_event_id.borrow_mut() = Some(event_id);
+                    }
+                    self.handle_room_event(&event).await;
                 }
 
                 let mut prev_batch = self.prev_batch.borrow_mut();
@@ -1190,6 +1199,19 @@ impl MatrixRoom {
             AnySyncTimelineEvent::State(event) => {
                 self.handle_sync_state_event(event, false).await
             }
+        }
+
+        let is_current = self
+            .buffer_handle()
+            .upgrade()
+            .map(|buffer| {
+                // Sync callbacks run on WeeChat's main thread, so the global
+                // context is valid for this immediate buffer comparison.
+                buffer == unsafe { Weechat::weechat() }.current_buffer()
+            })
+            .unwrap_or(false);
+        if is_current {
+            self.mark_as_read_silent();
         }
     }
 
