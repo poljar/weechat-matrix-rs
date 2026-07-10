@@ -157,6 +157,12 @@ _(replace the placeholders in brackets [] with your own details)_:
    If the homeserver advertises single sign-on, leave the password empty to use
    it. WeeChat will print a login URL when you connect.
 
+   The SSO callback listens on `127.0.0.1:29325` on the WeeChat host. When
+   WeeChat runs on another machine, create an SSH tunnel before connecting so
+   the browser's localhost callback reaches it:
+
+       ssh -L 29325:127.0.0.1:29325 user@weechat-host
+
 3. Now try to connect. The first connection can take a few minutes while the
    client syncs the account:
 

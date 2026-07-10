@@ -42,6 +42,7 @@ use matrix_sdk::{
         OwnedDeviceId, OwnedRoomId, OwnedTransactionId,
     },
     sync::State,
+    utils::local_server::LocalServerBuilder,
     Client, LoopCtrl, Result as MatrixResult, RoomMemberships,
 };
 
@@ -53,6 +54,7 @@ use crate::{
 };
 
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
+const SSO_CALLBACK_PORT: u16 = 29_325;
 
 pub struct InteractiveAuthInfo {
     pub user: String,
@@ -416,7 +418,12 @@ impl Connection {
                             Ok(())
                         }
                     })
-                    .initial_device_display_name("WeeChat-Matrix-rs");
+                    .initial_device_display_name("WeeChat-Matrix-rs")
+                    .server_builder(
+                        LocalServerBuilder::new().port_range(
+                            SSO_CALLBACK_PORT..SSO_CALLBACK_PORT + 1,
+                        ),
+                    );
 
                 if let Some(device_id) = device_id.as_ref() {
                     builder = builder.device_id(device_id);
