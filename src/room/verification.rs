@@ -32,7 +32,10 @@ pub struct Verification {
 #[derive(Clone, Debug)]
 enum ActiveVerification {
     Request(VerificationRequest),
-    Sas(SasVerification),
+    Sas {
+        flow_id: String,
+        verification: SasVerification,
+    },
 }
 
 impl From<VerificationRequest> for ActiveVerification {
@@ -41,17 +44,13 @@ impl From<VerificationRequest> for ActiveVerification {
     }
 }
 
-impl From<SasVerification> for ActiveVerification {
-    fn from(v: SasVerification) -> Self {
-        Self::Sas(v)
-    }
-}
-
 impl ActiveVerification {
     async fn cancel(self) -> Result<(), Error> {
         match self {
             ActiveVerification::Request(request) => request.cancel().await,
-            ActiveVerification::Sas(sas) => sas.cancel().await,
+            ActiveVerification::Sas { verification, .. } => {
+                verification.cancel().await
+            }
         }
     }
 }
@@ -76,7 +75,7 @@ impl Verification {
         let connection = self.connection.borrow().clone();
 
         if let Some(c) = connection {
-            if let Some(ActiveVerification::Sas(verification)) =
+            if let Some(ActiveVerification::Sas { verification, .. }) =
                 self.inner.borrow().clone()
             {
                 if let Err(e) =
@@ -112,6 +111,7 @@ impl Verification {
             if let Some(ActiveVerification::Request(verification)) =
                 verification
             {
+                let flow_id = verification.flow_id().to_owned();
                 let verification_clone = verification.clone();
 
                 if let Err(e) = c
@@ -135,7 +135,11 @@ impl Verification {
                     .await
                 {
                     Ok(Some(sas)) => {
-                        *self.inner.borrow_mut() = Some(sas.into());
+                        *self.inner.borrow_mut() =
+                            Some(ActiveVerification::Sas {
+                                flow_id,
+                                verification: sas,
+                            });
                     }
                     Ok(None) => {
                         self.print("Could not start emoji verification");
@@ -207,7 +211,11 @@ impl Verification {
                         );
                         self.buffer
                             .replace_verification_event(flow_id, rendered);
-                        *self.inner.borrow_mut() = Some(sas.clone().into());
+                        *self.inner.borrow_mut() =
+                            Some(ActiveVerification::Sas {
+                                flow_id: flow_id.to_string(),
+                                verification: sas.clone(),
+                            });
 
                         // We accept here automatically since the only method
                         // we're supporting is SAS verification
@@ -240,8 +248,9 @@ impl Verification {
                     return;
                 };
                 let flow_id = &e.content.relates_to.event_id;
-                if let Some(ActiveVerification::Sas(sas)) =
-                    self.inner.borrow().clone()
+                if let Some(ActiveVerification::Sas {
+                    verification: sas, ..
+                }) = self.inner.borrow().clone()
                 {
                     if sas.can_be_presented() {
                         let rendered = e.content.render_with_prefix(
@@ -256,9 +265,29 @@ impl Verification {
                 }
             }
             AnySyncMessageLikeEvent::KeyVerificationMac(_) => {}
-            AnySyncMessageLikeEvent::KeyVerificationDone(_) => {
-                self.inner.borrow_mut().take();
-                self.print("Verification done");
+            AnySyncMessageLikeEvent::KeyVerificationDone(e) => {
+                let Some(e) = e.as_original() else {
+                    return;
+                };
+                let completed_flow = e.content.relates_to.event_id.as_str();
+                let matches_active = self
+                    .inner
+                    .borrow()
+                    .as_ref()
+                    .map(|active| match active {
+                        ActiveVerification::Request(request) => {
+                            request.flow_id() == completed_flow
+                        }
+                        ActiveVerification::Sas { flow_id, .. } => {
+                            flow_id == completed_flow
+                        }
+                    })
+                    .unwrap_or(false);
+
+                if matches_active {
+                    self.inner.borrow_mut().take();
+                    self.print("Verification done");
+                }
             }
             AnySyncMessageLikeEvent::RoomMessage(e) => {
                 let Some(e) = e.as_original() else {
