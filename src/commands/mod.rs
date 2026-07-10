@@ -15,8 +15,8 @@ mod matrix;
 mod me;
 mod media;
 mod page_up;
-mod upload;
 mod part;
+mod upload;
 mod verification;
 
 use buffer_clear::BufferClearCommand;
@@ -27,8 +27,8 @@ use matrix::MatrixCommand;
 use me::MeCommand;
 use media::MediaCommand;
 use page_up::PageUpCommand;
-use upload::UploadCommand;
 use part::PartCommand;
+use upload::UploadCommand;
 
 pub struct Commands {
     _matrix: Command,
