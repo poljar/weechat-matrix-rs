@@ -916,6 +916,9 @@ impl InnerServer {
                 refresh_status_bar = true;
                 handle_event(&event, e.content.transaction_id.to_string()).await
             }
+            AnyToDeviceEvent::KeyVerificationDone(e) => {
+                handle_event(&event, e.content.transaction_id.to_string()).await
+            }
             _ => {}
         }
 
