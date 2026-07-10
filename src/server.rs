@@ -1093,7 +1093,18 @@ impl InnerServer {
         passphrase: String,
         room_id: Option<OwnedRoomId>,
     ) {
-        let client = self.get_client().unwrap();
+        let Some(client) = self.get_client() else {
+            self.print_error("Can't export E2EE keys while disconnected");
+            return;
+        };
+        let success_message = room_id.as_ref().map_or_else(
+            || "Successfully exported E2EE keys".to_owned(),
+            |room_id| {
+                format!(
+                    "Exported E2EE keys matching room {room_id}; the Matrix SDK does not report whether any sessions matched"
+                )
+            },
+        );
 
         let export = async move {
             client
@@ -1113,9 +1124,11 @@ impl InnerServer {
                     e
                 ));
             } else {
-                self.print_network("Successfully exported E2EE keys")
+                self.print_network(&success_message)
             }
-        };
+        } else {
+            self.print_error("Can't export E2EE keys while disconnected");
+        }
     }
 
     pub async fn import_keys(&self, file: PathBuf, passphrase: String) {
