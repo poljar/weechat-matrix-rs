@@ -356,26 +356,6 @@ fn mxc_to_http_download_path(
     ))
 }
 
-/// Convert a matrix content URI to HTTP(s), respecting a user's homeserver
-fn mxc_to_http(
-    mxc_url: &MxcUri,
-    homeserver: &Url,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let url = url::Url::parse(mxc_url.as_str())?;
-
-    if url.scheme() != "mxc" {
-        return Err("URL missing MXC scheme".into());
-    }
-
-    if url.path().is_empty() {
-        return Err("URL missing path".into());
-    }
-
-    Ok(homeserver
-        .join(&mxc_to_http_download_path(url)?)?
-        .to_string())
-}
-
 /// Convert a matrix content URI to an encrypted mxc URI, respecting a user's homeserver.
 ///
 /// The return value of this function will have a URI schema of emxc://. The path of the URI will
@@ -433,12 +413,28 @@ fn mxc_to_emxc(
     Ok(emxc_url.to_string())
 }
 
-fn media_download_command(source: &MediaSource) -> Option<String> {
-    match source {
-        MediaSource::Plain(url) => {
-            Some(format!("/matrix media download {} [file]", url.as_str()))
+#[derive(Debug, PartialEq, Eq)]
+enum MediaRendering {
+    Link(String),
+    AuthenticatedDownload(String),
+}
+
+fn media_rendering<C: HasUrlOrFile>(
+    content: &C,
+    homeserver: &Url,
+) -> MediaRendering {
+    match content.source() {
+        MediaSource::Plain(url) => MediaRendering::AuthenticatedDownload(
+            format!("/matrix media download {} [file]", url.as_str()),
+        ),
+        MediaSource::Encrypted(encrypted_file) => {
+            // Convert encrypted MXC to EMXC, but fallback to MXC if unable to.
+            let url =
+                mxc_to_emxc(&encrypted_file.url, homeserver, encrypted_file)
+                    .unwrap_or_else(|_| encrypted_file.url.to_string());
+
+            MediaRendering::Link(url)
         }
-        MediaSource::Encrypted(_) => None,
     }
 }
 
@@ -447,43 +443,31 @@ impl<C: HasUrlOrFile> Render for C {
     const TAGS: &'static [&'static str] = &["matrix_media"];
 
     fn render(&self, homeserver: &Self::RenderContext) -> RenderedContent {
-        // Convert MXC to HTTP(s) or EMXC, but fallback to MXC if unable to.
-        let mxc_url = match self.encrypted_file() {
-            Some(encrypted_file) => {
-                mxc_to_emxc(self.resolve_url(), homeserver, encrypted_file)
-            }
-            None => mxc_to_http(self.resolve_url(), homeserver),
-        }
-        .unwrap_or_else(|_| self.resolve_url().to_string());
-
-        let message = format!(
-            "{color_delimiter}<{color_reset}{}{color_delimiter}>\
-                [{color_reset}{}{color_delimiter}]{color_reset}",
-            self.body(),
-            mxc_url,
-            color_delimiter = Weechat::color("color_delimiter"),
-            color_reset = Weechat::color("reset")
-        );
+        let message = match media_rendering(self, homeserver) {
+            MediaRendering::Link(url) => format!(
+                "{color_delimiter}<{color_reset}{}{color_delimiter}>\
+                    [{color_reset}{}{color_delimiter}]{color_reset}",
+                self.body(),
+                url,
+                color_delimiter = Weechat::color("color_delimiter"),
+                color_reset = Weechat::color("reset")
+            ),
+            MediaRendering::AuthenticatedDownload(command) => format!(
+                "attached {color_delimiter}<{color_reset}{}\
+                    {color_delimiter}>{color_reset}, authenticated download: {}",
+                self.body(),
+                command,
+                color_delimiter = Weechat::color("color_delimiter"),
+                color_reset = Weechat::color("reset")
+            ),
+        };
 
         let line = RenderedLine {
             message,
             tags: self.tags(),
         };
 
-        let mut lines = vec![line];
-
-        if let Some(command) = media_download_command(self.source()) {
-            lines.push(RenderedLine {
-                message: format!(
-                    "{}authenticated download: {}",
-                    Weechat::prefix(Prefix::Network),
-                    command
-                ),
-                tags: self.tags(),
-            });
-        }
-
-        RenderedContent { lines }
+        RenderedContent { lines: vec![line] }
     }
 }
 
@@ -772,16 +756,6 @@ render_key_content!(ToDeviceKeyVerificationKeyEventContent);
 pub trait HasUrlOrFile {
     fn body(&self) -> &str;
 
-    #[inline]
-    fn resolve_url(&self) -> &MxcUri {
-        match self.source() {
-            MediaSource::Plain(s) => s,
-            MediaSource::Encrypted(e) => &e.url,
-        }
-    }
-
-    fn encrypted_file(&self) -> Option<&EncryptedFile>;
-
     fn source(&self) -> &MediaSource;
 }
 
@@ -796,13 +770,6 @@ macro_rules! has_url_or_file {
 
             fn source(&self) -> &MediaSource {
                 &self.source
-            }
-
-            fn encrypted_file(&self) -> Option<&EncryptedFile> {
-                match &self.source {
-                    MediaSource::Encrypted(e) => Some(&e),
-                    _ => None,
-                }
             }
         }
     };
@@ -972,6 +939,8 @@ pub fn render_membership(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use matrix_sdk::ruma::{
         events::room::{EncryptedFileInit, JsonWebKeyInit},
         serde::Base64,
@@ -980,24 +949,11 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_mxc_to_http() {
-        let homeserver = url::Url::parse("https://matrix.org").unwrap();
-        let mxc_url = OwnedMxcUri::from("mxc://matrix.org/some-media-id");
-        let expected =
-            "https://matrix.org/_matrix/media/r0/download/matrix.org/some-media-id";
-        assert_eq!(expected, mxc_to_http(&mxc_url, &homeserver).unwrap());
-    }
-
-    #[test]
-    fn test_emxc_to_http() {
-        use std::collections::BTreeMap;
-
-        let homeserver = url::Url::parse("https://matrix.org").unwrap();
-        let mxc_url = OwnedMxcUri::from("mxc://matrix.org/some-media-id");
+    fn encrypted_file() -> EncryptedFile {
         let mut hashes: BTreeMap<String, Base64> = BTreeMap::new();
         hashes.insert("sha256".to_string(), Base64::parse("aGFzaA").unwrap());
-        let encrypt_info = EncryptedFileInit {
+
+        EncryptedFileInit {
             key: JsonWebKeyInit {
                 k: Base64::parse("dGVzdA").unwrap(),
                 kty: "oct".to_string(),
@@ -1008,10 +964,17 @@ mod tests {
             .into(),
             iv: Base64::parse("aXY").unwrap(),
             v: "v2".to_string(),
-            url: OwnedMxcUri::from("mxc://some-url"),
+            url: OwnedMxcUri::from("mxc://matrix.org/some-media-id"),
             hashes,
         }
-        .into();
+        .into()
+    }
+
+    #[test]
+    fn test_emxc_to_http() {
+        let homeserver = url::Url::parse("https://matrix.org").unwrap();
+        let mxc_url = OwnedMxcUri::from("mxc://matrix.org/some-media-id");
+        let encrypt_info = encrypted_file();
         let expected =
             "emxc://matrix.org:443/_matrix/media/r0/download/matrix.org/some-media-id?key=dGVzdA&hash=aGFzaA&iv=aXY";
         assert_eq!(
@@ -1021,44 +984,37 @@ mod tests {
     }
 
     #[test]
-    fn test_plain_media_download_command() {
-        let source = MediaSource::Plain(OwnedMxcUri::from(
-            "mxc://matrix.org/some-media-id",
-        ));
+    fn plain_media_renders_as_single_authenticated_download() {
+        let homeserver = url::Url::parse("https://matrix.org").unwrap();
+        let content = ImageMessageEventContent::plain(
+            "image.png".to_owned(),
+            OwnedMxcUri::from("mxc://matrix.org/some-media-id"),
+        );
 
         assert_eq!(
-            Some(
+            MediaRendering::AuthenticatedDownload(
                 "/matrix media download mxc://matrix.org/some-media-id [file]"
                     .to_owned()
             ),
-            media_download_command(&source)
+            media_rendering(&content, &homeserver)
         );
     }
 
     #[test]
-    fn test_encrypted_media_has_no_plain_download_command() {
-        use std::collections::BTreeMap;
+    fn encrypted_media_keeps_single_emxc_link() {
+        let homeserver = url::Url::parse("https://matrix.org").unwrap();
+        let content = ImageMessageEventContent::encrypted(
+            "image.png".to_owned(),
+            encrypted_file(),
+        );
 
-        let mut hashes: BTreeMap<String, Base64> = BTreeMap::new();
-        hashes.insert("sha256".to_string(), Base64::parse("aGFzaA").unwrap());
-        let encrypt_info = EncryptedFileInit {
-            key: JsonWebKeyInit {
-                k: Base64::parse("dGVzdA").unwrap(),
-                kty: "oct".to_string(),
-                key_ops: vec![],
-                ext: true,
-                alg: "A256CTR".to_string(),
-            }
-            .into(),
-            iv: Base64::parse("aXY").unwrap(),
-            v: "v2".to_string(),
-            url: OwnedMxcUri::from("mxc://some-url"),
-            hashes,
-        }
-        .into();
-        let source = MediaSource::Encrypted(Box::new(encrypt_info));
-
-        assert_eq!(None, media_download_command(&source));
+        assert_eq!(
+            MediaRendering::Link(
+                "emxc://matrix.org:443/_matrix/media/r0/download/matrix.org/some-media-id?key=dGVzdA&hash=aGFzaA&iv=aXY"
+                    .to_owned()
+            ),
+            media_rendering(&content, &homeserver)
+        );
     }
 
     #[test]
