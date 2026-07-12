@@ -442,6 +442,16 @@ fn media_download_command(source: &MediaSource) -> Option<String> {
     }
 }
 
+fn media_download_message<C: HasUrlOrFile>(content: &C) -> Option<String> {
+    media_download_command(content.source()).map(|command| {
+        format!(
+            "attached `{}`, authenticated download: {}",
+            content.body(),
+            command
+        )
+    })
+}
+
 impl<C: HasUrlOrFile> Render for C {
     type RenderContext = Url;
     const TAGS: &'static [&'static str] = &["matrix_media"];
@@ -456,34 +466,23 @@ impl<C: HasUrlOrFile> Render for C {
         }
         .unwrap_or_else(|_| self.resolve_url().to_string());
 
-        let message = format!(
-            "{color_delimiter}<{color_reset}{}{color_delimiter}>\
-                [{color_reset}{}{color_delimiter}]{color_reset}",
-            self.body(),
-            mxc_url,
-            color_delimiter = Weechat::color("color_delimiter"),
-            color_reset = Weechat::color("reset")
-        );
+        let message = media_download_message(self).unwrap_or_else(|| {
+            format!(
+                "{color_delimiter}<{color_reset}{}{color_delimiter}>\
+                    [{color_reset}{}{color_delimiter}]{color_reset}",
+                self.body(),
+                mxc_url,
+                color_delimiter = Weechat::color("color_delimiter"),
+                color_reset = Weechat::color("reset")
+            )
+        });
 
         let line = RenderedLine {
             message,
             tags: self.tags(),
         };
 
-        let mut lines = vec![line];
-
-        if let Some(command) = media_download_command(self.source()) {
-            lines.push(RenderedLine {
-                message: format!(
-                    "{}authenticated download: {}",
-                    Weechat::prefix(Prefix::Network),
-                    command
-                ),
-                tags: self.tags(),
-            });
-        }
-
-        RenderedContent { lines }
+        RenderedContent { lines: vec![line] }
     }
 }
 
@@ -1032,6 +1031,23 @@ mod tests {
                     .to_owned()
             ),
             media_download_command(&source)
+        );
+    }
+
+    #[test]
+    fn test_plain_media_renders_authenticated_download_message() {
+        let content = ImageMessageEventContent::plain(
+            "image.png".to_owned(),
+            OwnedMxcUri::from("mxc://matrix.org/some-media-id"),
+        );
+
+        assert_eq!(
+            Some(
+                "attached `image.png`, authenticated download: /matrix media \
+                 download mxc://matrix.org/some-media-id [file]"
+                    .to_owned()
+            ),
+            media_download_message(&content)
         );
     }
 
