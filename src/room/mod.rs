@@ -598,7 +598,19 @@ impl MatrixRoom {
             RoomMessage(c) => {
                 let reply_to = match c.relates_to.as_ref() {
                     Some(Relation::Reply { in_reply_to }) => {
-                        Some(&in_reply_to.event_id)
+                        let sender = match self
+                            .buffer
+                            .reply_sender_id(&in_reply_to.event_id)
+                        {
+                            Some(sender_id) => self
+                                .members
+                                .get(&sender_id)
+                                .await
+                                .map(|member| member.nick()),
+                            None => None,
+                        };
+
+                        Some((&in_reply_to.event_id, sender))
                     }
                     _ => None,
                 };
@@ -646,8 +658,8 @@ impl MatrixRoom {
                     _ => return None,
                 };
 
-                if let Some(event_id) = reply_to {
-                    rendered.add_reply_context(event_id)
+                if let Some((event_id, sender)) = reply_to {
+                    rendered.add_reply_context(event_id, sender.as_deref())
                 } else {
                     rendered
                 }

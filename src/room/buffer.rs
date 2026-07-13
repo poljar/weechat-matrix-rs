@@ -3,7 +3,7 @@ use std::{borrow::Cow, cell::RefCell, rc::Rc};
 use futures_util::StreamExt;
 use matrix_sdk::{
     room::ParentSpace,
-    ruma::{EventId, OwnedRoomAliasId, TransactionId, UserId},
+    ruma::{EventId, OwnedRoomAliasId, OwnedUserId, TransactionId, UserId},
     Error, Room,
 };
 use tokio::runtime::Handle;
@@ -46,6 +46,22 @@ impl RoomBuffer {
             .unwrap_or_default()
     }
 
+    /// Return the sender ID for an event that is still in the buffer.
+    ///
+    /// Reply rendering uses this local lookup so it never blocks on a
+    /// homeserver request. Callers retain the event-id fallback when the target
+    /// line is no longer available.
+    pub fn reply_sender_id(&self, event_id: &EventId) -> Option<OwnedUserId> {
+        let buffer_handle = self.buffer_handle();
+        let buffer = buffer_handle.upgrade().ok()?;
+        let event_id_tag = Cow::from(event_id.to_tag());
+        let line = buffer
+            .lines()
+            .rfind(|line| line.tags().contains(&event_id_tag))?;
+
+        reply_sender_id_from_tags(&line.tags())
+    }
+
     /// Replace the local echo of an event with a fully rendered one.
     pub fn replace_local_echo(
         &self,
@@ -68,8 +84,11 @@ impl RoomBuffer {
             while let Some(line) = &current_line {
                 line_num -= 1;
                 let rendered_line = &rendered.content.lines[line_num];
+                let tags: Vec<&str> =
+                    rendered_line.tags.iter().map(String::as_str).collect();
 
                 line.set_message(&rendered_line.message);
+                line.set_tags(&tags);
                 current_line = lines.next_back().filter(line_contains_uuid);
             }
         }
@@ -266,6 +285,14 @@ impl RoomBuffer {
     }
 }
 
+fn reply_sender_id_from_tags<T: AsRef<str>>(tags: &[T]) -> Option<OwnedUserId> {
+    tags.iter().find_map(|tag| {
+        tag.as_ref()
+            .strip_prefix("matrix_sender_")
+            .and_then(|sender| UserId::parse(sender).ok())
+    })
+}
+
 fn non_empty_room_name(name: &str) -> Option<String> {
     let name = name.trim();
 
@@ -341,7 +368,26 @@ impl RoomBuffer {
 
 #[cfg(test)]
 mod tests {
-    use super::format_buffer_name;
+    use matrix_sdk::ruma::user_id;
+
+    use super::{format_buffer_name, reply_sender_id_from_tags};
+
+    #[test]
+    fn reply_sender_uses_matrix_sender_tag() {
+        let tags = ["matrix_text", "matrix_sender_@alice:example.org"];
+
+        assert_eq!(
+            Some(user_id!("@alice:example.org").to_owned()),
+            reply_sender_id_from_tags(&tags)
+        );
+    }
+
+    #[test]
+    fn reply_sender_is_unknown_without_matrix_sender_tag() {
+        let tags = ["matrix_text", "matrix_reply"];
+
+        assert_eq!(None, reply_sender_id_from_tags(&tags));
+    }
 
     #[test]
     fn preserves_named_channel_prefix() {

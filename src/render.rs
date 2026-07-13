@@ -73,7 +73,11 @@ impl RenderedEvent {
         self
     }
 
-    pub fn add_reply_context(mut self, event_id: &EventId) -> Self {
+    pub fn add_reply_context(
+        mut self,
+        event_id: &EventId,
+        sender: Option<&str>,
+    ) -> Self {
         let mut tags = self
             .content
             .lines
@@ -86,7 +90,10 @@ impl RenderedEvent {
             0,
             RenderedLine {
                 tags,
-                message: format!("Reply to {}", event_id),
+                message: format!(
+                    "Reply to {}",
+                    sender.unwrap_or_else(|| event_id.as_str())
+                ),
             },
         );
 
@@ -1092,7 +1099,7 @@ mod tests {
     }
 
     #[test]
-    fn reply_context_is_rendered_as_visible_line() {
+    fn reply_context_names_known_sender() {
         let event_id =
             matrix_sdk::ruma::owned_event_id!("$replyevent:example.org");
         let rendered = RenderedEvent {
@@ -1105,9 +1112,32 @@ mod tests {
                 }],
             },
         }
-        .add_reply_context(&event_id);
+        .add_reply_context(&event_id, Some("Alice"));
 
         assert_eq!(2, rendered.content.lines.len());
+        assert_eq!("Reply to Alice", rendered.content.lines[0].message);
+        assert!(rendered.content.lines[0]
+            .tags
+            .contains(&"matrix_reply".to_owned()));
+        assert_eq!("reply body", rendered.content.lines[1].message);
+    }
+
+    #[test]
+    fn reply_context_falls_back_to_event_id() {
+        let event_id =
+            matrix_sdk::ruma::owned_event_id!("$replyevent:example.org");
+        let rendered = RenderedEvent {
+            message_timestamp: 0,
+            prefix: "alice\t".to_owned(),
+            content: RenderedContent {
+                lines: vec![RenderedLine {
+                    tags: vec!["matrix_text".to_owned()],
+                    message: "reply body".to_owned(),
+                }],
+            },
+        }
+        .add_reply_context(&event_id, None);
+
         assert_eq!(
             "Reply to $replyevent:example.org",
             rendered.content.lines[0].message
