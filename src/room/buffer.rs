@@ -342,7 +342,6 @@ impl RoomBuffer {
     }
 
     pub fn calculate_buffer_name(&self) -> String {
-        let room = self.room.clone();
         let room = active_room(&self.room);
         let is_direct =
             self.runtime.block_on(room.is_direct()).unwrap_or(false);
