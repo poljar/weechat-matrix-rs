@@ -274,10 +274,6 @@ impl Members {
         }
     }
 
-    fn room(&self) -> Room {
-        active_room(&self.room)
-    }
-
     pub fn mark_active(
         &self,
         user_id: &UserId,
