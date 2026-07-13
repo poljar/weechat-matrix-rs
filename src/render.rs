@@ -1056,6 +1056,10 @@ macro_rules! has_formatted_body {
     };
 }
 
+has_formatted_body!(EmoteMessageEventContent);
+has_formatted_body!(NoticeMessageEventContent);
+has_formatted_body!(TextMessageEventContent);
+
 /// This trait is implemented for message types that can contain either an URL
 /// or an encrypted file. One of these _must_ be present.
 pub trait HasUrlOrFile {
