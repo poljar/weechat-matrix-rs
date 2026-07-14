@@ -103,6 +103,32 @@ use crate::{
     ConfigHandle, Servers, PLUGIN_NAME,
 };
 
+fn with_entered_runtime_until_final_drop<F>(
+    runtime: Rc<tokio::runtime::Runtime>,
+    f: F,
+) where
+    F: FnOnce(),
+{
+    with_entered_runtime_until_drop(runtime, f, drop);
+}
+
+fn with_entered_runtime_until_drop<F, D>(
+    runtime: Rc<tokio::runtime::Runtime>,
+    f: F,
+    drop_runtime: D,
+) where
+    F: FnOnce(),
+    D: FnOnce(Rc<tokio::runtime::Runtime>),
+{
+    let handle = runtime.handle().clone();
+    let guard = handle.enter();
+
+    f();
+
+    drop_runtime(runtime);
+    drop(guard);
+}
+
 #[derive(Debug)]
 pub enum ServerError {
     StartError(String),
@@ -1649,9 +1675,10 @@ impl InnerServer {
         });
 
         if let Some(runtime) = runtime {
-            let _guard = runtime.enter();
-            self.shutdown_sdk_state();
-            drop(connection);
+            with_entered_runtime_until_final_drop(runtime, || {
+                self.shutdown_sdk_state();
+                drop(connection);
+            });
         } else {
             let runtime = self.servers.runtime().to_owned();
             let _guard = runtime.enter();
@@ -1711,8 +1738,32 @@ impl InnerServer {
 
 #[cfg(test)]
 mod tests {
-    use super::InnerServer;
+    use super::{with_entered_runtime_until_drop, InnerServer};
     use std::path::{Path, PathBuf};
+    use std::rc::Rc;
+    use std::sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc,
+    };
+    use tokio::runtime::{Handle, Runtime};
+
+    const NOT_DROPPED: u8 = 0;
+    const DROPPED_OUTSIDE_RUNTIME: u8 = 1;
+    const DROPPED_INSIDE_RUNTIME: u8 = 2;
+
+    struct DropProbe(Arc<AtomicU8>);
+
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            let context = if Handle::try_current().is_ok() {
+                DROPPED_INSIDE_RUNTIME
+            } else {
+                DROPPED_OUTSIDE_RUNTIME
+            };
+
+            self.0.store(context, Ordering::SeqCst);
+        }
+    }
 
     #[test]
     fn keeps_absolute_download_path_for_display() {
@@ -1736,5 +1787,24 @@ mod tests {
         let path = PathBuf::from("/tmp/matrix-media");
 
         assert_eq!(InnerServer::display_download_path(&path), path);
+    }
+
+    #[test]
+    fn final_runtime_drop_happens_while_handle_is_entered() {
+        let runtime = Rc::new(Runtime::new().expect("runtime"));
+        let drop_context = Arc::new(AtomicU8::new(NOT_DROPPED));
+        let final_drop_context = Arc::clone(&drop_context);
+
+        with_entered_runtime_until_drop(
+            runtime,
+            || {},
+            |runtime| {
+                let probe = DropProbe(final_drop_context);
+                drop(runtime);
+                drop(probe);
+            },
+        );
+
+        assert_eq!(drop_context.load(Ordering::SeqCst), DROPPED_INSIDE_RUNTIME);
     }
 }
