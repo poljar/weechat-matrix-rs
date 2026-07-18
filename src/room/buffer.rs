@@ -62,6 +62,20 @@ impl RoomBuffer {
         reply_sender_id_from_tags(&line.tags())
     }
 
+    /// Return whether an event is already rendered in the buffer.
+    pub fn contains_event(&self, event_id: &EventId) -> bool {
+        let buffer_handle = self.buffer_handle();
+        let Ok(buffer) = buffer_handle.upgrade() else {
+            return false;
+        };
+        let event_id_tag = Cow::from(event_id.to_tag());
+
+        buffer
+            .lines()
+            .rfind(|line| line.tags().contains(&event_id_tag))
+            .is_some()
+    }
+
     /// Replace the local echo of an event with a fully rendered one.
     pub fn replace_local_echo(
         &self,

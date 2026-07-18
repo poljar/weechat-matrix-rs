@@ -36,7 +36,7 @@ use verification::Verification;
 use std::{
     borrow::Cow,
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ops::Deref,
     path::PathBuf,
     rc::Rc,
@@ -180,12 +180,14 @@ pub struct MessageQueue {
     queue: Rc<
         RefCell<HashMap<OwnedTransactionId, (bool, RoomMessageEventContent)>>,
     >,
+    rendering: Rc<RefCell<HashSet<OwnedEventId>>>,
 }
 
 impl MessageQueue {
     fn new() -> Self {
         Self {
             queue: Rc::new(RefCell::new(HashMap::new())),
+            rendering: Rc::new(RefCell::new(HashSet::new())),
         }
     }
 
@@ -206,6 +208,24 @@ impl MessageQueue {
         uuid: &TransactionId,
     ) -> Option<(bool, RoomMessageEventContent)> {
         self.queue.borrow_mut().remove(uuid)
+    }
+
+    fn start_response(
+        &self,
+        uuid: &TransactionId,
+        event_id: &EventId,
+    ) -> Option<(bool, RoomMessageEventContent)> {
+        let message = self.remove(uuid)?;
+        self.rendering.borrow_mut().insert(event_id.to_owned());
+        Some(message)
+    }
+
+    fn finish_response(&self, event_id: &EventId) {
+        self.rendering.borrow_mut().remove(event_id);
+    }
+
+    fn response_in_progress(&self, event_id: &EventId) -> bool {
+        self.rendering.borrow().contains(event_id)
     }
 }
 
@@ -782,13 +802,10 @@ impl MatrixRoom {
                 .await
             {
                 Ok(r) => {
-                    if let TransactionEventHandling::LocalEcho {
-                        echo,
-                        content,
-                    } = take_transaction_event(
-                        &self.outgoing_messages,
-                        Some(&transaction_id),
-                    ) {
+                    if let Some((echo, content)) = self
+                        .outgoing_messages
+                        .start_response(&transaction_id, &r.event_id)
+                    {
                         self.handle_outgoing_message(
                             &transaction_id,
                             &r.event_id,
@@ -796,6 +813,7 @@ impl MatrixRoom {
                             content,
                         )
                         .await;
+                        self.outgoing_messages.finish_response(&r.event_id);
                     }
                 }
                 Err(_e) => {
@@ -1177,6 +1195,17 @@ impl MatrixRoom {
             .mark_active(event.sender(), event.origin_server_ts());
 
         if let Some(id) = event.transaction_id() {
+            // The send response may have rendered this event before /sync
+            // arrived.
+            if !event.is_edit()
+                && (self
+                    .outgoing_messages
+                    .response_in_progress(event.event_id())
+                    || self.buffer.contains_event(event.event_id()))
+            {
+                return;
+            }
+
             if let TransactionEventHandling::LocalEcho { echo, content } =
                 take_transaction_event(&self.outgoing_messages, Some(id))
             {
@@ -1432,5 +1461,23 @@ mod tests {
             take_transaction_event(&queue, Some(&transaction_id)),
             TransactionEventHandling::RenderNormally
         ));
+    }
+
+    #[test]
+    fn send_response_reserves_event_until_render_finishes() {
+        let queue = MessageQueue::new();
+        let transaction_id = TransactionId::new();
+        let event_id = EventId::parse("$event:example.org").unwrap();
+
+        queue.add(transaction_id.clone(), text_content("sent message"));
+        assert!(queue.start_response(&transaction_id, &event_id).is_some());
+        assert!(queue.response_in_progress(&event_id));
+        assert!(matches!(
+            take_transaction_event(&queue, Some(&transaction_id)),
+            TransactionEventHandling::RenderNormally
+        ));
+
+        queue.finish_response(&event_id);
+        assert!(!queue.response_in_progress(&event_id));
     }
 }
