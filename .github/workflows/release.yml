@@ -73,10 +73,6 @@ jobs:
         run: |
           apt-get update
           apt-get install -y ca-certificates curl gnupg apt-transport-https build-essential pkg-config libssl-dev libsqlite3-dev libclang-dev git
-          mkdir -p /etc/apt/keyrings
-          curl --silent https://weechat.org/dev/info/debian_repository_signing_key_asc/ | tee /etc/apt/keyrings/weechat.asc
-          echo "deb [signed-by=/etc/apt/keyrings/weechat.asc] https://weechat.org/debian trixie main" | tee /etc/apt/sources.list.d/weechat.list
-          apt-get update
           apt-get install -y weechat-curses weechat-plugins weechat-python weechat-perl weechat-dev
       - name: Install Rust toolchain
         run: |
