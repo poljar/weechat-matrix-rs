@@ -41,7 +41,7 @@ use matrix_sdk::{
 };
 use ruma_html::{
     matrix::{AnchorUri, MatrixElement},
-    Html, NodeData, NodeRef,
+    Html, NodeData, NodeRef, SanitizerConfig,
 };
 
 use weechat::{Prefix, Weechat};
@@ -82,6 +82,26 @@ impl RenderedEvent {
         event_id: &EventId,
         sender: Option<&str>,
     ) -> Self {
+        let reply_fallback = self.content.reply_fallback.take();
+        let reply_sender = sender
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                reply_fallback
+                    .as_ref()
+                    .and_then(|fallback| fallback.sender.clone())
+            })
+            .unwrap_or_else(|| event_id.as_str().to_owned());
+        let message = match reply_fallback {
+            Some(fallback) => {
+                format!(
+                    "Reply to {}: {}",
+                    reply_sender,
+                    compact_reply_preview(&fallback.body)
+                )
+            }
+            None => format!("Reply to {}", reply_sender),
+        };
+
         let mut tags = self
             .content
             .lines
@@ -90,16 +110,7 @@ impl RenderedEvent {
             .unwrap_or_default();
         tags.push("matrix_reply".to_owned());
 
-        self.content.lines.insert(
-            0,
-            RenderedLine {
-                tags,
-                message: format!(
-                    "Reply to {}",
-                    sender.unwrap_or_else(|| event_id.as_str())
-                ),
-            },
-        );
+        self.content.lines.insert(0, RenderedLine { tags, message });
 
         self
     }
@@ -117,6 +128,30 @@ pub struct RenderedLine {
 pub struct RenderedContent {
     /// The collection of lines that the event has.
     pub lines: Vec<RenderedLine>,
+    reply_fallback: Option<ReplyFallback>,
+}
+
+impl RenderedContent {
+    fn new(lines: Vec<RenderedLine>) -> Self {
+        Self {
+            lines,
+            reply_fallback: None,
+        }
+    }
+
+    fn with_reply_fallback(
+        mut self,
+        reply_fallback: Option<ReplyFallback>,
+    ) -> Self {
+        self.reply_fallback = reply_fallback;
+        self
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ReplyFallback {
+    sender: Option<String>,
+    body: String,
 }
 
 /// Trait allowing events to be rendered for Weechat.
@@ -266,7 +301,7 @@ impl Render for EmoteMessageEventContent {
             tags: self.tags(),
         };
 
-        RenderedContent { lines: vec![line] }
+        RenderedContent::new(vec![line])
     }
 }
 
@@ -294,7 +329,7 @@ impl Render for LocationMessageEventContent {
             tags: self.tags(),
         };
 
-        RenderedContent { lines: vec![line] }
+        RenderedContent::new(vec![line])
     }
 }
 
@@ -324,7 +359,7 @@ impl Render for NoticeMessageEventContent {
             tags: self.tags(),
         };
 
-        RenderedContent { lines: vec![line] }
+        RenderedContent::new(vec![line])
     }
 }
 
@@ -352,7 +387,7 @@ impl Render for ServerNoticeMessageEventContent {
             tags: self.tags(),
         };
 
-        RenderedContent { lines: vec![line] }
+        RenderedContent::new(vec![line])
     }
 }
 
@@ -493,7 +528,7 @@ impl<C: HasUrlOrFile> Render for C {
             tags: self.tags(),
         };
 
-        RenderedContent { lines: vec![line] }
+        RenderedContent::new(vec![line])
     }
 }
 
@@ -517,7 +552,7 @@ impl Render for RoomEncryptedEventContent {
             tags: self.tags(),
         };
 
-        RenderedContent { lines: vec![line] }
+        RenderedContent::new(vec![line])
     }
 }
 
@@ -541,7 +576,7 @@ impl Render for RedactedSyncMessageLikeEvent<RedactedRoomMessageEventContent> {
             tags: self.tags(),
         };
 
-        RenderedContent { lines: vec![line] }
+        RenderedContent::new(vec![line])
     }
 }
 
@@ -590,9 +625,7 @@ macro_rules! render_start_content {
                                     // We auto accept emoji verifications that start
                                     // from a verification request, so don't print
                                     // anything.
-                                    return RenderedContent {
-                                        lines: vec![],
-                                    }
+                                    return RenderedContent::new(vec![]);
                                 } else {
                                     format!(
                                         "You have started an interactive emoji \
@@ -617,9 +650,7 @@ macro_rules! render_start_content {
                                 // We auto accept emoji verifications that start
                                 // from a verification request, so don't print
                                 // anything.
-                                return RenderedContent {
-                                    lines: vec![],
-                                }
+                                return RenderedContent::new(vec![]);
                             }
                         }
                     }
@@ -636,12 +667,10 @@ macro_rules! render_start_content {
                     _ => unreachable!(),
                 };
 
-                RenderedContent {
-                    lines: vec![RenderedLine {
+                RenderedContent::new(vec![RenderedLine {
                         message,
                         tags: self.tags(),
-                    }],
-                }
+                    }])
             }
         }
     };
@@ -686,12 +715,10 @@ macro_rules! render_request_content {
                     }
                 };
 
-                RenderedContent {
-                    lines: vec![RenderedLine {
-                        message,
-                        tags: self.tags(),
-                    }],
-                }
+                RenderedContent::new(vec![RenderedLine {
+                    message,
+                    tags: self.tags(),
+                }])
             }
         }
     };
@@ -723,12 +750,10 @@ macro_rules! render_ready_content {
                     )
                 };
 
-                RenderedContent {
-                    lines: vec![RenderedLine {
-                        message,
-                        tags: self.tags(),
-                    }],
-                }
+                RenderedContent::new(vec![RenderedLine {
+                    message,
+                    tags: self.tags(),
+                }])
             }
         }
     };
@@ -782,7 +807,7 @@ macro_rules! render_key_content {
                     })
                     .collect();
 
-                RenderedContent { lines }
+                RenderedContent::new(lines)
             }
         }
     };
@@ -795,7 +820,10 @@ fn render_formatted_message_body(
     body: &str,
     tags: Vec<String>,
 ) -> RenderedContent {
-    render_plain_message_body(&formatted_body_to_plain_text(body), tags)
+    let body = formatted_message_body_to_plain_text(body);
+
+    render_plain_message_body(&body.text, tags)
+        .with_reply_fallback(body.reply_fallback)
 }
 
 fn render_plain_message_body(body: &str, tags: Vec<String>) -> RenderedContent {
@@ -807,11 +835,30 @@ fn render_plain_message_body(body: &str, tags: Vec<String>) -> RenderedContent {
         })
         .collect();
 
-    RenderedContent { lines }
+    RenderedContent::new(lines)
 }
 
 fn formatted_body_to_plain_text(body: &str) -> String {
+    formatted_message_body_to_plain_text(body).text
+}
+
+struct FormattedMessageBody {
+    text: String,
+    reply_fallback: Option<ReplyFallback>,
+}
+
+fn formatted_message_body_to_plain_text(body: &str) -> FormattedMessageBody {
     let html = Html::parse(body);
+    html.sanitize_with(&SanitizerConfig::compat());
+
+    let mut reply_fallback = None;
+
+    for node in html.children() {
+        if reply_fallback.is_none() {
+            reply_fallback = render_reply_fallback(&node);
+        }
+    }
+
     html.sanitize();
 
     let mut output = String::new();
@@ -821,7 +868,10 @@ fn formatted_body_to_plain_text(body: &str) -> String {
         render_html_node(&node, &mut output, &mut context);
     }
 
-    trim_newlines(output)
+    FormattedMessageBody {
+        text: trim_newlines(output),
+        reply_fallback,
+    }
 }
 
 #[derive(Clone, Default)]
@@ -963,6 +1013,158 @@ fn render_html_node(
     }
 }
 
+fn render_reply_fallback(node: &NodeRef) -> Option<ReplyFallback> {
+    let reply_node = find_first_matrix_reply(node)?;
+    let blockquote = find_first_blockquote(&reply_node)?;
+    let body = render_reply_fallback_body(&blockquote);
+
+    if body.is_empty() {
+        return None;
+    }
+
+    Some(ReplyFallback {
+        sender: render_reply_fallback_sender(&blockquote),
+        body,
+    })
+}
+
+fn find_first_matrix_reply(node: &NodeRef) -> Option<NodeRef> {
+    if is_matrix_element(node, |element| {
+        matches!(element, MatrixElement::MatrixReply)
+    }) {
+        return Some(node.clone());
+    }
+
+    node.children()
+        .find_map(|child| find_first_matrix_reply(&child))
+}
+
+fn find_first_blockquote(node: &NodeRef) -> Option<NodeRef> {
+    if is_matrix_element(node, |element| {
+        matches!(element, MatrixElement::Blockquote)
+    }) {
+        return Some(node.clone());
+    }
+
+    node.children()
+        .find_map(|child| find_first_blockquote(&child))
+}
+
+fn is_matrix_element<F>(node: &NodeRef, predicate: F) -> bool
+where
+    F: FnOnce(MatrixElement) -> bool,
+{
+    match node.data() {
+        NodeData::Element(element) => predicate(element.to_matrix().element),
+        _ => false,
+    }
+}
+
+fn render_reply_fallback_sender(blockquote: &NodeRef) -> Option<String> {
+    let mut anchors = Vec::new();
+
+    collect_anchor_text_before_first_br(blockquote, &mut anchors);
+
+    anchors
+        .into_iter()
+        .filter_map(|anchor| {
+            let anchor = collapse_whitespace(&anchor);
+            (!anchor.is_empty() && !anchor.eq_ignore_ascii_case("in reply to"))
+                .then_some(anchor)
+        })
+        .next_back()
+}
+
+fn collect_anchor_text_before_first_br(
+    node: &NodeRef,
+    anchors: &mut Vec<String>,
+) -> bool {
+    match node.data() {
+        NodeData::Element(element)
+            if matches!(element.to_matrix().element, MatrixElement::Br) =>
+        {
+            return true;
+        }
+        NodeData::Element(element)
+            if matches!(element.to_matrix().element, MatrixElement::A(_)) =>
+        {
+            let text = plain_text_children(node);
+            if !text.trim().is_empty() {
+                anchors.push(text);
+            }
+        }
+        _ => {}
+    }
+
+    for child in node.children() {
+        if collect_anchor_text_before_first_br(&child, anchors) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn plain_text_children(node: &NodeRef) -> String {
+    let mut text = String::new();
+
+    collect_plain_text(node, &mut text);
+
+    text
+}
+
+fn collect_plain_text(node: &NodeRef, output: &mut String) {
+    match node.data() {
+        NodeData::Text(text) => output.push_str(&text.borrow()),
+        _ => {
+            for child in node.children() {
+                collect_plain_text(&child, output);
+            }
+        }
+    }
+}
+
+fn render_reply_fallback_body(blockquote: &NodeRef) -> String {
+    let mut output = String::new();
+    let mut context = HtmlRenderContext::default();
+    let mut after_intro = false;
+
+    for child in blockquote.children() {
+        render_after_first_br(
+            &child,
+            &mut output,
+            &mut context,
+            &mut after_intro,
+        );
+    }
+
+    trim_newlines(output)
+}
+
+fn render_after_first_br(
+    node: &NodeRef,
+    output: &mut String,
+    context: &mut HtmlRenderContext,
+    after_intro: &mut bool,
+) {
+    if !*after_intro {
+        if is_matrix_element(node, |element| {
+            matches!(element, MatrixElement::Br)
+        }) {
+            *after_intro = true;
+            return;
+        }
+
+        for child in node.children() {
+            render_after_first_br(&child, output, context, after_intro);
+        }
+
+        return;
+    }
+
+    render_html_node(node, output, context);
+}
+
 fn render_html_children(
     node: &NodeRef,
     output: &mut String,
@@ -1002,6 +1204,28 @@ fn anchor_uri_to_string(uri: &AnchorUri) -> Option<String> {
         AnchorUri::Other(uri) => Some(uri.to_string()),
         _ => None,
     }
+}
+
+fn compact_reply_preview(body: &str) -> String {
+    const MAX_PREVIEW_CHARS: usize = 160;
+
+    let body = collapse_whitespace(body);
+
+    if body.chars().count() <= MAX_PREVIEW_CHARS {
+        return body;
+    }
+
+    let mut preview = body
+        .chars()
+        .take(MAX_PREVIEW_CHARS.saturating_sub(3))
+        .collect::<String>();
+    preview.push_str("...");
+
+    preview
+}
+
+fn collapse_whitespace(body: &str) -> String {
+    body.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn prefix_lines(text: String, prefix: &str) -> String {
@@ -1397,12 +1621,10 @@ mod tests {
         let rendered = RenderedEvent {
             message_timestamp: 0,
             prefix: "alice\t".to_owned(),
-            content: RenderedContent {
-                lines: vec![RenderedLine {
-                    tags: vec!["matrix_text".to_owned()],
-                    message: "reply body".to_owned(),
-                }],
-            },
+            content: RenderedContent::new(vec![RenderedLine {
+                tags: vec!["matrix_text".to_owned()],
+                message: "reply body".to_owned(),
+            }]),
         }
         .add_reply_context(&event_id, Some("Alice"));
 
@@ -1421,12 +1643,10 @@ mod tests {
         let rendered = RenderedEvent {
             message_timestamp: 0,
             prefix: "alice\t".to_owned(),
-            content: RenderedContent {
-                lines: vec![RenderedLine {
-                    tags: vec!["matrix_text".to_owned()],
-                    message: "reply body".to_owned(),
-                }],
-            },
+            content: RenderedContent::new(vec![RenderedLine {
+                tags: vec!["matrix_text".to_owned()],
+                message: "reply body".to_owned(),
+            }]),
         }
         .add_reply_context(&event_id, None);
 
@@ -1438,6 +1658,64 @@ mod tests {
             .tags
             .contains(&"matrix_reply".to_owned()));
         assert_eq!("reply body", rendered.content.lines[1].message);
+    }
+
+    #[test]
+    fn reply_context_uses_formatted_reply_fallback_preview() {
+        let event_id =
+            matrix_sdk::ruma::owned_event_id!("$replyevent:example.org");
+        let body = "\
+            <mx-reply>\
+                <blockquote>\
+                    <a href=\"https://matrix.to/#/!room:example.org/$replyevent:example.org\">In reply to</a> \
+                    <a href=\"https://matrix.to/#/@alice:example.org\">@alice:example.org</a>\
+                    <br>\
+                    <p>Previous <strong>message</strong> text</p>\
+                </blockquote>\
+            </mx-reply>\
+            <p>new message</p>";
+        let content = TextMessageEventContent::html("fallback", body);
+        let rendered = RenderedEvent {
+            message_timestamp: 0,
+            prefix: "bob\t".to_owned(),
+            content: content.render(&()),
+        }
+        .add_reply_context(&event_id, Some("Alice"));
+
+        assert_eq!(2, rendered.content.lines.len());
+        assert_eq!(
+            "Reply to Alice: Previous *message* text",
+            rendered.content.lines[0].message
+        );
+        assert_eq!("new message", rendered.content.lines[1].message);
+    }
+
+    #[test]
+    fn reply_context_uses_reply_fallback_sender_when_local_sender_is_unknown() {
+        let event_id =
+            matrix_sdk::ruma::owned_event_id!("$replyevent:example.org");
+        let body = "\
+            <mx-reply>\
+                <blockquote>\
+                    <a href=\"https://matrix.to/#/!room:example.org/$replyevent:example.org\">In reply to</a> \
+                    <a href=\"https://matrix.to/#/@alice:example.org\">@alice:example.org</a>\
+                    <br>\
+                    Previous message\
+                </blockquote>\
+            </mx-reply>\
+            <p>new message</p>";
+        let content = TextMessageEventContent::html("fallback", body);
+        let rendered = RenderedEvent {
+            message_timestamp: 0,
+            prefix: "bob\t".to_owned(),
+            content: content.render(&()),
+        }
+        .add_reply_context(&event_id, None);
+
+        assert_eq!(
+            "Reply to @alice:example.org: Previous message",
+            rendered.content.lines[0].message
+        );
     }
 
     #[test]
