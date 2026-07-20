@@ -1687,6 +1687,9 @@ impl InnerServer {
     }
 
     fn shutdown_sdk_state(&self) {
+        for verification in self.verification_buffers.borrow().values() {
+            verification.release_sdk_state();
+        }
         self.verification_buffers.borrow_mut().clear();
 
         for room in self.rooms.borrow().values() {
