@@ -26,7 +26,7 @@ mod buffer;
 mod members;
 mod verification;
 
-use buffer::RoomBuffer;
+use buffer::{print_rendered_event_to_buffer, RoomBuffer};
 use members::Members;
 pub use members::WeechatRoomMember;
 use tokio::runtime::Handle;
@@ -56,6 +56,7 @@ use matrix_sdk::{
     room::Room,
     ruma::{
         events::{
+            relation::Thread,
             room::{
                 member::RoomMemberEventContent,
                 message::{
@@ -168,6 +169,7 @@ pub struct MatrixRoom {
     prev_batch: Rc<RefCell<Option<PrevBatch>>>,
     latest_event_id: Rc<RefCell<Option<OwnedEventId>>>,
     latest_read_event_id: Rc<RefCell<Option<OwnedEventId>>>,
+    latest_thread_event_ids: Rc<RefCell<HashMap<OwnedEventId, OwnedEventId>>>,
 
     outgoing_messages: MessageQueue,
 
@@ -249,6 +251,59 @@ fn take_transaction_event(
     }
 }
 
+fn make_text_message_content(
+    input: String,
+    markdown: bool,
+    thread_root: Option<OwnedEventId>,
+    latest_thread_event: Option<OwnedEventId>,
+) -> RoomMessageEventContent {
+    let text = if markdown {
+        TextMessageEventContent::markdown(input)
+    } else {
+        TextMessageEventContent::plain(input)
+    };
+
+    let mut content = RoomMessageEventContent::new(MessageType::Text(text));
+
+    if let Some(thread_root) = thread_root {
+        let latest_thread_event =
+            latest_thread_event.unwrap_or_else(|| thread_root.clone());
+
+        content.relates_to = Some(Relation::Thread(Thread::plain(
+            thread_root,
+            latest_thread_event,
+        )));
+    }
+
+    content
+}
+
+fn thread_root_from_buffer(buffer: &Buffer) -> Option<OwnedEventId> {
+    buffer
+        .get_localvar("thread_root")
+        .and_then(|thread_root| EventId::parse(thread_root.as_ref()).ok())
+}
+
+fn thread_root_from_content(
+    content: &RoomMessageEventContent,
+) -> Option<&EventId> {
+    match content.relates_to.as_ref() {
+        Some(Relation::Thread(thread)) => Some(&thread.event_id),
+        _ => None,
+    }
+}
+
+fn thread_root_from_event(
+    event: &AnySyncMessageLikeEvent,
+) -> Option<OwnedEventId> {
+    event.original_content().and_then(|content| match content {
+        AnyMessageLikeEventContent::RoomMessage(content) => {
+            thread_root_from_content(&content).map(ToOwned::to_owned)
+        }
+        _ => None,
+    })
+}
+
 impl RoomHandle {
     pub fn new(
         server_name: &str,
@@ -292,6 +347,7 @@ impl RoomHandle {
             )),
             latest_event_id: Rc::new(RefCell::new(None)),
             latest_read_event_id: Rc::new(RefCell::new(None)),
+            latest_thread_event_ids: Rc::new(RefCell::new(HashMap::new())),
             own_user_id: own_user_id.into(),
             members,
             buffer,
@@ -431,22 +487,30 @@ impl RoomHandle {
 
 #[async_trait(?Send)]
 impl BufferInputCallbackAsync for MatrixRoom {
-    async fn callback(&mut self, _: BufferHandle, input: String) {
-        let content = if self.config.borrow().input().markdown_input() {
-            RoomMessageEventContent::new(MessageType::Text(
-                TextMessageEventContent::markdown(input),
-            ))
-        } else {
-            RoomMessageEventContent::new(MessageType::Text(
-                TextMessageEventContent::plain(input),
-            ))
-        };
+    async fn callback(&mut self, buffer: BufferHandle, input: String) {
+        let thread_root = buffer
+            .upgrade()
+            .ok()
+            .and_then(|buffer| thread_root_from_buffer(&buffer));
+        let latest_thread_event = thread_root.as_ref().and_then(|root| {
+            self.latest_thread_event_ids.borrow().get(root).cloned()
+        });
+        let content = make_text_message_content(
+            input,
+            self.config.borrow().input().markdown_input(),
+            thread_root,
+            latest_thread_event,
+        );
 
         self.send_message(content).await;
     }
 }
 
 impl MatrixRoom {
+    pub fn owns_buffer(&self, buffer: &Buffer) -> bool {
+        self.buffer.owns_buffer(buffer)
+    }
+
     pub fn is_encrypted(&self) -> bool {
         self.members
             .runtime
@@ -705,6 +769,92 @@ impl MatrixRoom {
         Some(rendered)
     }
 
+    fn get_or_create_thread_buffer(
+        &self,
+        thread_root: &EventId,
+    ) -> Option<BufferHandle> {
+        if let Some(handle) = self.buffer.thread_buffer(thread_root) {
+            if handle.upgrade().is_ok() {
+                return Some(handle);
+            }
+
+            self.buffer.remove_thread_buffer(thread_root);
+        }
+
+        let room_buffer_handle = self.buffer_handle();
+        let room_buffer = room_buffer_handle.upgrade().ok()?;
+        let thread_short_name =
+            self.buffer.calculate_thread_buffer_name(thread_root);
+        let buffer_name = format!(
+            "{}.thread.{}",
+            room_buffer.name(),
+            RoomBuffer::thread_buffer_suffix(thread_root)
+        );
+        let server = room_buffer
+            .get_localvar("server")
+            .map(|value| value.to_string());
+        let nick = room_buffer
+            .get_localvar("nick")
+            .map(|value| value.to_string());
+        let domain = room_buffer
+            .get_localvar("domain")
+            .map(|value| value.to_string());
+        let room_short_name = self.buffer.short_name();
+
+        let buffer_handle = BufferBuilderAsync::new(&buffer_name)
+            .input_callback(self.clone())
+            .close_callback(|_weechat: &Weechat, _buffer: &Buffer| Ok(()))
+            .build()
+            .ok()?;
+        let buffer = buffer_handle.upgrade().ok()?;
+
+        buffer.set_short_name(&thread_short_name);
+        buffer.enable_multiline();
+        buffer.disable_nicklist();
+        buffer.disable_nicklist_groups();
+
+        if let Some(server) = server {
+            buffer.set_localvar("server", &server);
+        }
+        if let Some(nick) = nick {
+            buffer.set_localvar("nick", &nick);
+        }
+        if let Some(domain) = domain {
+            buffer.set_localvar("domain", &domain);
+        }
+
+        buffer.set_localvar("room_id", self.room_id.as_str());
+        buffer.set_localvar("thread_root", thread_root.as_str());
+        buffer.set_localvar("type", "thread");
+        buffer.set_title(&format!(
+            "Thread {} in {}",
+            thread_root, room_short_name
+        ));
+
+        self.buffer
+            .set_thread_buffer(thread_root.to_owned(), buffer_handle.clone());
+
+        Some(buffer_handle)
+    }
+
+    fn print_rendered_event_for_relation(
+        &self,
+        thread_root: Option<&EventId>,
+        rendered: RenderedEvent,
+    ) {
+        if let Some(handle) =
+            thread_root.and_then(|root| self.get_or_create_thread_buffer(root))
+        {
+            if let Ok(buffer) = handle.upgrade() {
+                print_rendered_event_to_buffer(&buffer, rendered);
+            } else {
+                self.buffer.print_rendered_event(rendered);
+            }
+        } else {
+            self.buffer.print_rendered_event(rendered);
+        }
+    }
+
     async fn render_sync_message(
         &self,
         event: &AnySyncMessageLikeEvent,
@@ -744,6 +894,9 @@ impl MatrixRoom {
         transaction_id: &TransactionId,
         content: &RoomMessageEventContent,
     ) {
+        let thread_root =
+            thread_root_from_content(content).map(ToOwned::to_owned);
+
         if self.config.borrow().look().local_echo() {
             if let MessageType::Text(c) = &content.msgtype {
                 let sender =
@@ -754,7 +907,10 @@ impl MatrixRoom {
                 let local_echo = c
                     .render_with_prefix_for_echo(&sender, transaction_id, &())
                     .add_self_tags();
-                self.buffer.print_rendered_event(local_echo);
+                self.print_rendered_event_for_relation(
+                    thread_root.as_deref(),
+                    local_echo,
+                );
 
                 self.outgoing_messages
                     .add_with_echo(transaction_id.to_owned(), content.clone());
@@ -1127,6 +1283,9 @@ impl MatrixRoom {
         echo: bool,
         content: RoomMessageEventContent,
     ) {
+        let thread_root =
+            thread_root_from_content(&content).map(ToOwned::to_owned);
+
         let event = OriginalSyncMessageLikeEvent {
             sender: (*self.own_user_id).to_owned(),
             origin_server_ts: MilliSecondsSinceUnixEpoch::now(),
@@ -1147,9 +1306,17 @@ impl MatrixRoom {
         if echo {
             self.buffer.replace_local_echo(transaction_id, rendered);
         } else {
-            self.buffer.print_rendered_event(rendered);
+            self.print_rendered_event_for_relation(
+                thread_root.as_deref(),
+                rendered,
+            );
         }
 
+        if let Some(thread_root) = thread_root {
+            self.latest_thread_event_ids
+                .borrow_mut()
+                .insert(thread_root, event_id.to_owned());
+        }
         self.mark_event_as_read(event_id.to_owned(), false);
     }
 
@@ -1227,7 +1394,18 @@ impl MatrixRoom {
         } else if event.is_edit() {
             self.handle_edits(event).await;
         } else if let Some(rendered) = self.render_sync_message(event).await {
-            self.buffer.print_rendered_event(rendered);
+            let thread_root = thread_root_from_event(event);
+
+            if let Some(thread_root) = &thread_root {
+                self.latest_thread_event_ids
+                    .borrow_mut()
+                    .insert(thread_root.clone(), event.event_id().to_owned());
+            }
+
+            self.print_rendered_event_for_relation(
+                thread_root.as_deref(),
+                rendered,
+            );
         }
     }
 
@@ -1411,6 +1589,32 @@ mod tests {
     #[test]
     fn restored_rooms_without_prev_batch_have_no_history_request() {
         assert_eq!(restored_prev_batch(None), None);
+    }
+
+    #[test]
+    fn thread_buffer_input_sends_thread_relation() {
+        let content = make_text_message_content(
+            "thread body".to_owned(),
+            false,
+            Some(EventId::parse("$thread-root:example.org").unwrap()),
+            Some(EventId::parse("$latest-thread-event:example.org").unwrap()),
+        );
+
+        assert!(matches!(content.msgtype, MessageType::Text(_)));
+
+        let Some(Relation::Thread(thread)) = content.relates_to else {
+            panic!("thread buffer input must send an m.thread relation");
+        };
+
+        assert_eq!(
+            thread.event_id,
+            EventId::parse("$thread-root:example.org").unwrap()
+        );
+        assert_eq!(
+            thread.in_reply_to.expect("fallback target").event_id,
+            EventId::parse("$latest-thread-event:example.org").unwrap()
+        );
+        assert!(thread.is_falling_back);
     }
 
     #[test]

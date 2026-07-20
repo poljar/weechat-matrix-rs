@@ -1,9 +1,12 @@
-use std::{borrow::Cow, cell::RefCell, rc::Rc};
+use std::{borrow::Cow, cell::RefCell, collections::HashMap, rc::Rc};
 
 use futures_util::StreamExt;
 use matrix_sdk::{
     room::ParentSpace,
-    ruma::{EventId, OwnedRoomAliasId, OwnedUserId, TransactionId, UserId},
+    ruma::{
+        EventId, OwnedEventId, OwnedRoomAliasId, OwnedUserId, TransactionId,
+        UserId,
+    },
     Error, Room,
 };
 use tokio::runtime::Handle;
@@ -19,6 +22,7 @@ pub struct RoomBuffer {
     room: Room,
     runtime: Handle,
     pub(super) inner: Rc<RefCell<Option<BufferHandle>>>,
+    thread_buffers: Rc<RefCell<HashMap<OwnedEventId, BufferHandle>>>,
 }
 
 impl RoomBuffer {
@@ -27,6 +31,7 @@ impl RoomBuffer {
             room,
             runtime,
             inner: Rc::new(RefCell::new(None)),
+            thread_buffers: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -44,6 +49,39 @@ impl RoomBuffer {
             .as_ref()
             .and_then(|b| b.upgrade().ok().map(|b| b.short_name().to_string()))
             .unwrap_or_default()
+    }
+
+    pub fn owns_buffer(&self, buffer: &Buffer) -> bool {
+        if self
+            .inner
+            .borrow()
+            .as_ref()
+            .and_then(|b| b.upgrade().ok())
+            .is_some_and(|b| &b == buffer)
+        {
+            return true;
+        }
+
+        self.thread_buffers
+            .borrow()
+            .values()
+            .any(|handle| handle.upgrade().is_ok_and(|b| &b == buffer))
+    }
+
+    pub fn thread_buffer(&self, thread_root: &EventId) -> Option<BufferHandle> {
+        self.thread_buffers.borrow().get(thread_root).cloned()
+    }
+
+    pub fn set_thread_buffer(
+        &self,
+        thread_root: OwnedEventId,
+        handle: BufferHandle,
+    ) {
+        self.thread_buffers.borrow_mut().insert(thread_root, handle);
+    }
+
+    pub fn remove_thread_buffer(&self, thread_root: &EventId) {
+        self.thread_buffers.borrow_mut().remove(thread_root);
     }
 
     /// Return the sender ID for an event that is still in the buffer.
@@ -64,16 +102,19 @@ impl RoomBuffer {
 
     /// Return whether an event is already rendered in the buffer.
     pub fn contains_event(&self, event_id: &EventId) -> bool {
-        let buffer_handle = self.buffer_handle();
-        let Ok(buffer) = buffer_handle.upgrade() else {
-            return false;
-        };
         let event_id_tag = Cow::from(event_id.to_tag());
 
-        buffer
-            .lines()
-            .rfind(|line| line.tags().contains(&event_id_tag))
-            .is_some()
+        let main_buffer_contains_event = self
+            .buffer_handle()
+            .upgrade()
+            .is_ok_and(|buffer| buffer_contains_tag(&buffer, &event_id_tag));
+
+        main_buffer_contains_event
+            || self.thread_buffers.borrow().values().any(|handle| {
+                handle.upgrade().is_ok_and(|buffer| {
+                    buffer_contains_tag(&buffer, &event_id_tag)
+                })
+            })
     }
 
     /// Replace the local echo of an event with a fully rendered one.
@@ -82,30 +123,19 @@ impl RoomBuffer {
         transaction_id: &TransactionId,
         rendered: RenderedEvent,
     ) {
-        if let Ok(buffer) = self.buffer_handle().upgrade() {
-            let uuid_tag = Cow::from(format!("matrix_echo_{}", transaction_id));
-            let line_contains_uuid =
-                |l: &BufferLine| l.tags().contains(&uuid_tag);
+        let uuid_tag = Cow::from(format!("matrix_echo_{}", transaction_id));
 
-            let mut lines = buffer.lines();
-            let mut current_line = lines.rfind(line_contains_uuid);
-
-            // We go in reverse order here since we also use rfind(). We got from
-            // the bottom of the buffer to the top since we're expecting these
-            // lines to be freshly printed and thus at the bottom.
-            let mut line_num = rendered.content.lines.len();
-
-            while let Some(line) = &current_line {
-                line_num -= 1;
-                let rendered_line = &rendered.content.lines[line_num];
-                let tags: Vec<&str> =
-                    rendered_line.tags.iter().map(String::as_str).collect();
-
-                line.set_message(&rendered_line.message);
-                line.set_tags(&tags);
-                current_line = lines.next_back().filter(line_contains_uuid);
-            }
+        if self.buffer_handle().upgrade().is_ok_and(|buffer| {
+            replace_local_echo_in_buffer(&buffer, &uuid_tag, &rendered)
+        }) {
+            return;
         }
+
+        self.thread_buffers.borrow().values().any(|handle| {
+            handle.upgrade().is_ok_and(|buffer| {
+                replace_local_echo_in_buffer(&buffer, &uuid_tag, &rendered)
+            })
+        });
     }
 
     pub fn replace_edit(
@@ -114,22 +144,53 @@ impl RoomBuffer {
         sender: &UserId,
         event: RenderedEvent,
     ) {
-        if let Ok(buffer) = self.buffer_handle().upgrade() {
-            let sender_tag = Cow::from(sender.to_tag());
-            let event_id_tag = Cow::from(event_id.to_tag());
+        let sender_tag = Cow::from(sender.to_tag());
+        let event_id_tag = Cow::from(event_id.to_tag());
 
-            let lines: Vec<BufferLine> = buffer
-                .lines()
-                .filter(|l| l.tags().contains(&event_id_tag))
-                .collect();
+        if self.buffer_handle().upgrade().is_ok_and(|buffer| {
+            self.replace_edit_in_buffer(
+                &buffer,
+                &event_id_tag,
+                &sender_tag,
+                &event,
+            )
+        }) {
+            return;
+        }
 
-            if lines
-                .get(0)
-                .map(|l| l.tags().contains(&sender_tag))
-                .unwrap_or(false)
-            {
-                self.replace_event_helper(&buffer, lines, event);
-            }
+        self.thread_buffers.borrow().values().any(|handle| {
+            handle.upgrade().is_ok_and(|buffer| {
+                self.replace_edit_in_buffer(
+                    &buffer,
+                    &event_id_tag,
+                    &sender_tag,
+                    &event,
+                )
+            })
+        });
+    }
+
+    fn replace_edit_in_buffer(
+        &self,
+        buffer: &Buffer,
+        event_id_tag: &Cow<str>,
+        sender_tag: &Cow<str>,
+        event: &RenderedEvent,
+    ) -> bool {
+        let lines: Vec<BufferLine> = buffer
+            .lines()
+            .filter(|l| l.tags().contains(event_id_tag))
+            .collect();
+
+        if lines
+            .get(0)
+            .map(|l| l.tags().contains(sender_tag))
+            .unwrap_or(false)
+        {
+            self.replace_event_helper(buffer, lines, event);
+            true
+        } else {
+            false
         }
     }
 
@@ -137,7 +198,7 @@ impl RoomBuffer {
         &self,
         buffer: &Buffer,
         lines: Vec<BufferLine<'_>>,
-        event: RenderedEvent,
+        event: &RenderedEvent,
     ) {
         use std::cmp::Ordering;
         let date = lines.get(0).map(|l| l.date()).unwrap_or_default();
@@ -297,6 +358,37 @@ impl RoomBuffer {
 
         format_buffer_name(&room_name, is_direct)
     }
+
+    pub fn calculate_thread_buffer_name(
+        &self,
+        thread_root: &EventId,
+    ) -> String {
+        format!(
+            "{}.thread.{}",
+            self.calculate_buffer_name(),
+            Self::thread_buffer_suffix(thread_root)
+        )
+    }
+
+    pub fn thread_buffer_suffix(thread_root: &EventId) -> String {
+        sanitize_thread_id(thread_root)
+    }
+}
+
+fn buffer_contains_tag(buffer: &Buffer, tag: &Cow<str>) -> bool {
+    buffer
+        .lines()
+        .rfind(|line| line.tags().contains(tag))
+        .is_some()
+}
+
+fn sanitize_thread_id(thread_root: &EventId) -> String {
+    thread_root
+        .as_str()
+        .trim_start_matches('$')
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
 }
 
 fn reply_sender_id_from_tags<T: AsRef<str>>(tags: &[T]) -> Option<OwnedUserId> {
@@ -358,7 +450,7 @@ impl RoomBuffer {
                 .filter(|l| l.tags().contains(&event_id_tag))
                 .collect();
 
-            self.replace_event_helper(&buffer, lines, event);
+            self.replace_event_helper(&buffer, lines, &event);
         }
     }
 
@@ -366,25 +458,57 @@ impl RoomBuffer {
         let buffer = self.buffer_handle();
 
         if let Ok(buffer) = buffer.upgrade() {
-            for line in rendered.content.lines {
-                let message = format!("{}{}", &rendered.prefix, &line.message);
-                let tags: Vec<&str> =
-                    line.tags.iter().map(|t| t.as_str()).collect();
-                buffer.print_date_tags(
-                    rendered.message_timestamp,
-                    &tags,
-                    &message,
-                )
-            }
+            print_rendered_event_to_buffer(&buffer, rendered);
         }
     }
 }
 
+pub fn print_rendered_event_to_buffer(
+    buffer: &Buffer,
+    rendered: RenderedEvent,
+) {
+    for line in rendered.content.lines {
+        let message = format!("{}{}", &rendered.prefix, &line.message);
+        let tags: Vec<&str> = line.tags.iter().map(|t| t.as_str()).collect();
+        buffer.print_date_tags(rendered.message_timestamp, &tags, &message)
+    }
+}
+
+fn replace_local_echo_in_buffer(
+    buffer: &Buffer,
+    uuid_tag: &Cow<str>,
+    rendered: &RenderedEvent,
+) -> bool {
+    let line_contains_uuid = |line: &BufferLine| line.tags().contains(uuid_tag);
+    let mut lines = buffer.lines();
+    let mut current_line = lines.rfind(line_contains_uuid);
+    let mut replaced = false;
+
+    // We go from bottom to top since local echoes are expected to be fresh.
+    let mut line_num = rendered.content.lines.len();
+
+    while let Some(line) = &current_line {
+        line_num -= 1;
+        let rendered_line = &rendered.content.lines[line_num];
+        let tags: Vec<&str> =
+            rendered_line.tags.iter().map(String::as_str).collect();
+
+        line.set_message(&rendered_line.message);
+        line.set_tags(&tags);
+        replaced = true;
+        current_line = lines.next_back().filter(line_contains_uuid);
+    }
+
+    replaced
+}
+
 #[cfg(test)]
 mod tests {
-    use matrix_sdk::ruma::user_id;
+    use matrix_sdk::ruma::{event_id, user_id};
 
-    use super::{format_buffer_name, reply_sender_id_from_tags};
+    use super::{
+        format_buffer_name, reply_sender_id_from_tags, sanitize_thread_id,
+    };
 
     #[test]
     fn reply_sender_uses_matrix_sender_tag() {
@@ -424,6 +548,14 @@ mod tests {
         assert_eq!(
             format_buffer_name("!roomid:matrix.osgeo.org", false),
             "!roomid:matrix.osgeo.org"
+        );
+    }
+
+    #[test]
+    fn sanitizes_thread_event_id_for_buffer_name() {
+        assert_eq!(
+            sanitize_thread_id(event_id!("$abc/def:example.org")),
+            "abc_def_example_org"
         );
     }
 }

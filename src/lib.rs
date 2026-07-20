@@ -122,12 +122,8 @@ impl Servers {
             }
 
             for room in server.rooms() {
-                let buffer_handle = room.buffer_handle();
-
-                if let Ok(b) = buffer_handle.upgrade() {
-                    if buffer == &b {
-                        return BufferOwner::Room(server.clone(), room);
-                    }
+                if room.owns_buffer(buffer) {
+                    return BufferOwner::Room(server.clone(), room);
                 }
             }
 
