@@ -98,11 +98,12 @@ pub struct RoomHandle {
 
 pub(super) type SharedRoom = Rc<RefCell<Option<Room>>>;
 
+pub(super) fn maybe_active_room(room: &SharedRoom) -> Option<Room> {
+    room.borrow().as_ref().cloned()
+}
+
 pub(super) fn active_room(room: &SharedRoom) -> Room {
-    room.borrow()
-        .as_ref()
-        .expect("Matrix room was already shut down")
-        .clone()
+    maybe_active_room(room).expect("Matrix room was already shut down")
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -528,33 +529,47 @@ impl MatrixRoom {
     }
 
     pub fn is_encrypted(&self) -> bool {
+        let Some(room) = maybe_active_room(&self.room) else {
+            return false;
+        };
+
         self.members
             .runtime
-            .block_on(self.room().latest_encryption_state())
+            .block_on(room.latest_encryption_state())
             .map(|s| s.is_encrypted())
             .unwrap_or_default()
     }
 
     pub fn contains_only_verified_devices(&self) -> bool {
+        let Some(room) = maybe_active_room(&self.room) else {
+            return false;
+        };
+
         self.members
             .runtime
-            .block_on(self.room().contains_only_verified_devices())
+            .block_on(room.contains_only_verified_devices())
             .unwrap_or_default()
     }
 
     pub fn is_public(&self) -> bool {
-        self.room().is_public().unwrap_or_default()
+        maybe_active_room(&self.room)
+            .and_then(|room| room.is_public())
+            .unwrap_or_default()
     }
 
     pub fn is_direct(&self) -> bool {
+        let Some(room) = maybe_active_room(&self.room) else {
+            return false;
+        };
+
         self.members
             .runtime
-            .block_on(self.room().is_direct())
+            .block_on(room.is_direct())
             .unwrap_or_default()
     }
 
     pub fn alias(&self) -> Option<OwnedRoomAliasId> {
-        self.room().canonical_alias()
+        maybe_active_room(&self.room).and_then(|room| room.canonical_alias())
     }
 
     pub fn room_id(&self) -> &RoomId {

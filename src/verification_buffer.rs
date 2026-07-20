@@ -98,11 +98,19 @@ impl Verification {
 
 #[derive(Clone)]
 struct InnerVerificationBuffer {
-    verification: Rc<RefCell<Verification>>,
+    verification: Rc<RefCell<Option<Verification>>>,
     connection: Rc<RefCell<Option<Connection>>>,
 }
 
 impl InnerVerificationBuffer {
+    fn verification(&self) -> Option<Verification> {
+        self.verification.borrow().clone()
+    }
+
+    fn release_sdk_state(&self) {
+        self.verification.borrow_mut().take();
+    }
+
     fn print_message(buffer: BufferHandle, message: &str) {
         if let Ok(buffer) = buffer.upgrade() {
             buffer.print(message);
@@ -115,7 +123,9 @@ impl InnerVerificationBuffer {
 
     pub async fn accept(&self, buffer: BufferHandle) -> Result<(), Error> {
         if let Some(c) = self.connection.borrow().clone() {
-            let verification = self.verification.borrow().clone();
+            let Some(verification) = self.verification() else {
+                return Ok(());
+            };
             let verification_clone = verification.clone();
 
             c.spawn(async move { verification_clone.accept().await })
@@ -142,7 +152,7 @@ impl InnerVerificationBuffer {
                 } else if let Some(sas) =
                     c.spawn(async move { request.start_sas().await }).await?
                 {
-                    *self.verification.borrow_mut() = sas.into();
+                    *self.verification.borrow_mut() = Some(sas.into());
                 }
             }
         }
@@ -152,16 +162,14 @@ impl InnerVerificationBuffer {
 
     pub async fn confirm(&self, buffer: BufferHandle) -> Result<(), Error> {
         if let Some(c) = self.connection.borrow().clone() {
-            if let Verification::Sas(s) = self.verification.borrow().clone() {
+            if let Some(Verification::Sas(s)) = self.verification() {
                 let sas = s.clone();
                 c.spawn(async move { s.confirm().await }).await?;
 
                 if sas.is_done() {
                     self.print_done(buffer);
                 }
-            } else if let Verification::Qr(qr) =
-                self.verification.borrow().clone()
-            {
+            } else if let Some(Verification::Qr(qr)) = self.verification() {
                 c.spawn(async move { qr.confirm().await }).await?;
 
                 // if qr.is_done() {
@@ -177,7 +185,10 @@ impl InnerVerificationBuffer {
 
     pub async fn cancel(&self) -> Result<(), Error> {
         if let Some(c) = self.connection.borrow().clone() {
-            let verification = self.verification.borrow().clone();
+            let Some(verification) = self.verification() else {
+                return Ok(());
+            };
+
             c.spawn(async move { verification.cancel().await }).await?;
         }
 
@@ -232,7 +243,7 @@ impl VerificationBuffer {
         connection: Rc<RefCell<Option<Connection>>>,
     ) -> Self {
         let inner = InnerVerificationBuffer {
-            verification: Rc::new(RefCell::new(verification.into())),
+            verification: Rc::new(RefCell::new(Some(verification.into()))),
             connection,
         };
 
@@ -268,6 +279,10 @@ impl VerificationBuffer {
         self.buffer.clone()
     }
 
+    pub fn release_sdk_state(&self) {
+        self.inner.release_sdk_state();
+    }
+
     pub fn accept(&self) {
         let buffer = self.buffer();
         let inner = self.inner.clone();
@@ -286,12 +301,14 @@ impl VerificationBuffer {
     }
 
     pub async fn update_qr(&mut self, qr: QrVerification) {
-        *self.inner.verification.borrow_mut() = qr.into();
+        *self.inner.verification.borrow_mut() = Some(qr.into());
     }
 
     pub async fn update(&mut self, sas: SasVerification) -> Result<(), Error> {
-        *self.inner.verification.borrow_mut() = sas.into();
-        let verification = self.inner.verification.borrow().clone();
+        *self.inner.verification.borrow_mut() = Some(sas.into());
+        let Some(verification) = self.inner.verification() else {
+            return Ok(());
+        };
 
         if let Some(c) = self.inner.connection.borrow().clone() {
             c.spawn(async move { verification.accept().await }).await?;
@@ -305,8 +322,8 @@ impl VerificationBuffer {
     pub async fn handle_event(&self, event: &AnyToDeviceEvent) {
         match event {
             AnyToDeviceEvent::KeyVerificationRequest(e) => {
-                if let Verification::Request(_) =
-                    self.inner.verification.borrow().clone()
+                if let Some(Verification::Request(_)) =
+                    self.inner.verification()
                 {
                     let content =
                         e.content.render(&VerificationContext::ToDevice);
@@ -315,7 +332,9 @@ impl VerificationBuffer {
                 }
             }
             AnyToDeviceEvent::KeyVerificationStart(e) => {
-                let verification = self.inner.verification.borrow().clone();
+                let Some(verification) = self.inner.verification() else {
+                    return;
+                };
 
                 if let Ok(verification) = verification.try_into() {
                     let content =
@@ -337,8 +356,7 @@ impl VerificationBuffer {
                 self.print_sas(&e.content);
             }
             AnyToDeviceEvent::KeyVerificationMac(_) => {
-                if let Verification::Sas(sas) =
-                    self.inner.verification.borrow().clone()
+                if let Some(Verification::Sas(sas)) = self.inner.verification()
                 {
                     if sas.is_done() {
                         self.inner.print_done(self.buffer.clone());
@@ -363,8 +381,7 @@ impl VerificationBuffer {
     }
 
     fn print_sas(&self, content: &ToDeviceKeyVerificationKeyEventContent) {
-        if let Verification::Sas(sas) = self.inner.verification.borrow().clone()
-        {
+        if let Some(Verification::Sas(sas)) = self.inner.verification() {
             let message = content.render(&sas);
             self.print(&message);
         }
