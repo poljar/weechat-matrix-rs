@@ -108,32 +108,15 @@ impl ModerationCommand {
             return;
         };
 
-        let room = room.room().clone();
         let action = self.action;
-        let error_user_id = user_id.clone();
         Weechat::spawn(async move {
-            let result = match action {
-                ModerationAction::Ban => {
-                    room.ban_user(&user_id, reason.as_deref()).await
-                }
-                ModerationAction::Kick => {
-                    room.kick_user(&user_id, reason.as_deref()).await
-                }
+            match action {
+                ModerationAction::Ban => room.ban_user(user_id, reason).await,
+                ModerationAction::Kick => room.kick_user(user_id, reason).await,
                 ModerationAction::Unban => {
-                    room.unban_user(&user_id, reason.as_deref()).await
+                    room.unban_user(user_id, reason).await
                 }
             };
-
-            if let Err(error) = result {
-                Weechat::print(&format!(
-                    "{}{}: Failed to {} {}: {}",
-                    Weechat::prefix(Prefix::Error),
-                    PLUGIN_NAME,
-                    action.verb(),
-                    error_user_id,
-                    error
-                ));
-            }
         })
         .detach();
     }
