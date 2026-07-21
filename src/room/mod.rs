@@ -871,6 +871,33 @@ impl MatrixRoom {
         }
     }
 
+    pub async fn send_redaction(
+        &self,
+        event_id: OwnedEventId,
+        reason: Option<String>,
+    ) {
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        let room = self.room().clone();
+        let error_event_id = event_id.clone();
+
+        match connection
+            .spawn(async move {
+                room.redact(&event_id, reason.as_deref(), None).await
+            })
+            .await
+        {
+            Ok(_) => (),
+            Err(error) => self.print_error(&format!(
+                "Failed to redact {}: {}",
+                error_event_id, error
+            )),
+        }
+    }
+
     pub async fn send_attachment(&self, path: PathBuf) {
         let Some(filename) = path
             .file_name()

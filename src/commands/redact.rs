@@ -91,19 +91,8 @@ impl RedactCommand {
         reason: Option<String>,
     ) {
         if let Some(room) = self.servers.find_room(buffer) {
-            let room = room.room().clone();
-
             Weechat::spawn(async move {
-                if let Err(error) =
-                    room.redact(&event_id, reason.as_deref(), None).await
-                {
-                    Weechat::print(&format!(
-                        "{}Failed to redact {}: {}",
-                        Weechat::prefix(Prefix::Error),
-                        event_id,
-                        error
-                    ));
-                }
+                room.send_redaction(event_id, reason).await
             })
             .detach();
         } else {
