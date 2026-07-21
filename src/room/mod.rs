@@ -825,7 +825,6 @@ impl MatrixRoom {
 
         buffer.set_localvar("room_id", self.room_id.as_str());
         buffer.set_localvar("thread_root", thread_root.as_str());
-        buffer.set_localvar("type", "thread");
         buffer.set_title(&format!(
             "Thread {} in {}",
             thread_root, room_short_name
