@@ -1053,6 +1053,79 @@ impl MatrixRoom {
         }
     }
 
+    pub async fn ban_user(&self, user_id: OwnedUserId, reason: Option<String>) {
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        let room = self.room().clone();
+        let error_user_id = user_id.clone();
+
+        match connection
+            .spawn(
+                async move { room.ban_user(&user_id, reason.as_deref()).await },
+            )
+            .await
+        {
+            Ok(_) => (),
+            Err(error) => self.print_error(&format!(
+                "Failed to ban {}: {}",
+                error_user_id, error
+            )),
+        }
+    }
+
+    pub async fn kick_user(
+        &self,
+        user_id: OwnedUserId,
+        reason: Option<String>,
+    ) {
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        let room = self.room().clone();
+        let error_user_id = user_id.clone();
+
+        match connection
+            .spawn(async move { room.kick_user(&user_id, reason.as_deref()).await })
+            .await
+        {
+            Ok(_) => (),
+            Err(error) => self.print_error(&format!(
+                "Failed to kick {}: {}",
+                error_user_id, error
+            )),
+        }
+    }
+
+    pub async fn unban_user(
+        &self,
+        user_id: OwnedUserId,
+        reason: Option<String>,
+    ) {
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        let room = self.room().clone();
+        let error_user_id = user_id.clone();
+
+        match connection
+            .spawn(async move { room.unban_user(&user_id, reason.as_deref()).await })
+            .await
+        {
+            Ok(_) => (),
+            Err(error) => self.print_error(&format!(
+                "Failed to unban {}: {}",
+                error_user_id, error
+            )),
+        }
+    }
+
     pub async fn send_attachment(&self, path: PathBuf) {
         let Some(filename) = path
             .file_name()
