@@ -383,12 +383,21 @@ fn buffer_contains_tag(buffer: &Buffer, tag: &Cow<str>) -> bool {
 }
 
 fn sanitize_thread_id(thread_root: &EventId) -> String {
-    thread_root
+    const THREAD_ID_DISPLAY_CHARS: usize = 12;
+
+    let mut sanitized: String = thread_root
         .as_str()
         .trim_start_matches('$')
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect()
+        .take(THREAD_ID_DISPLAY_CHARS)
+        .collect();
+
+    if sanitized.is_empty() {
+        sanitized.push_str("unknown");
+    }
+
+    sanitized
 }
 
 fn reply_sender_id_from_tags<T: AsRef<str>>(tags: &[T]) -> Option<OwnedUserId> {
@@ -508,6 +517,7 @@ mod tests {
 
     use super::{
         format_buffer_name, reply_sender_id_from_tags, sanitize_thread_id,
+        RoomBuffer,
     };
 
     #[test]
@@ -555,7 +565,17 @@ mod tests {
     fn sanitizes_thread_event_id_for_buffer_name() {
         assert_eq!(
             sanitize_thread_id(event_id!("$abc/def:example.org")),
-            "abc_def_example_org"
+            "abc_def_exam"
+        );
+    }
+
+    #[test]
+    fn thread_buffer_suffix_uses_short_human_id() {
+        assert_eq!(
+            RoomBuffer::thread_buffer_suffix(event_id!(
+                "$abcdef0123456789:example.org"
+            )),
+            "abcdef012345"
         );
     }
 }
