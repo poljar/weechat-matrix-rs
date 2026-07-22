@@ -19,12 +19,14 @@ impl RedactCommand {
     pub fn create(servers: &Servers) -> Result<Command, ()> {
         let settings = CommandSettings::new("redact")
             .description("Redact a Matrix event in the current room.")
-            .add_argument("[event-id] [reason...]")
+            .add_argument("[event-id|index] [reason...]")
             .arguments_description(
-                "event-id: The Matrix event ID to redact. If omitted, the latest \
-                 unredacted event in the current buffer is used.
-  reason: Optional reason for the redaction. If no event ID is given, all text \
-          is used as the reason for redacting the latest unredacted event.",
+                "event-id: The Matrix event ID to redact.
+    index: 1-based recent unredacted event index. 1, 0, or -1 select the latest \
+           event; 2 or -2 select the event before that.
+   reason: Optional reason for the redaction. If no event ID or index is given, \
+           all text is used as the reason for redacting the latest unredacted \
+           event.",
             );
 
         Command::new(
@@ -36,17 +38,40 @@ impl RedactCommand {
     }
 
     fn latest_event_id(buffer: &Buffer) -> Option<OwnedEventId> {
-        buffer.lines().rev().find_map(|line| {
-            let tags = line.tags();
+        Self::event_id_at_index(buffer, 1)
+    }
 
-            if tags.iter().any(|tag| tag.as_ref() == "matrix_redacted") {
-                return None;
-            }
+    fn event_id_at_index(
+        buffer: &Buffer,
+        index: usize,
+    ) -> Option<OwnedEventId> {
+        buffer
+            .lines()
+            .rev()
+            .filter_map(|line| {
+                let tags = line.tags();
 
-            tags.iter()
-                .find_map(|tag| tag.as_ref().strip_prefix(EVENT_ID_TAG_PREFIX))
-                .and_then(|event_id| EventId::parse(event_id).ok())
-        })
+                if tags.iter().any(|tag| tag.as_ref() == "matrix_redacted") {
+                    return None;
+                }
+
+                tags.iter()
+                    .find_map(|tag| {
+                        tag.as_ref().strip_prefix(EVENT_ID_TAG_PREFIX)
+                    })
+                    .and_then(|event_id| EventId::parse(event_id).ok())
+            })
+            .nth(index.saturating_sub(1))
+    }
+
+    fn parse_index(argument: &str) -> Option<usize> {
+        let index = argument.parse::<isize>().ok()?;
+
+        match index {
+            0 | -1 => Some(1),
+            n if n > 0 => Some(n as usize),
+            n => n.checked_abs().map(|n| n as usize),
+        }
     }
 
     fn parse_arguments(
@@ -77,6 +102,21 @@ impl RedactCommand {
             };
 
             Ok((event_id, reason))
+        } else if let Some(index) = Self::parse_index(first) {
+            let reason = if rest.is_empty() {
+                None
+            } else {
+                Some(rest.join(" "))
+            };
+
+            Self::event_id_at_index(buffer, index)
+                .map(|event_id| (event_id, reason))
+                .ok_or_else(|| {
+                    format!(
+                        "No Matrix event found at redaction index {}.",
+                        first
+                    )
+                })
         } else {
             Self::latest_event_id(buffer)
                 .map(|event_id| (event_id, Some(arguments.join(" "))))
@@ -100,6 +140,26 @@ impl RedactCommand {
                 "The /redact command needs to be run in a Matrix room buffer.",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RedactCommand;
+
+    #[test]
+    fn redaction_index_accepts_recent_event_forms() {
+        assert_eq!(Some(1), RedactCommand::parse_index("1"));
+        assert_eq!(Some(1), RedactCommand::parse_index("0"));
+        assert_eq!(Some(1), RedactCommand::parse_index("-1"));
+        assert_eq!(Some(2), RedactCommand::parse_index("2"));
+        assert_eq!(Some(2), RedactCommand::parse_index("-2"));
+    }
+
+    #[test]
+    fn redaction_index_rejects_non_indices() {
+        assert_eq!(None, RedactCommand::parse_index("reason"));
+        assert_eq!(None, RedactCommand::parse_index("$event:example.org"));
     }
 }
 
