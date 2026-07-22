@@ -91,17 +91,6 @@ impl RenderedEvent {
                     .and_then(|fallback| fallback.sender.clone())
             })
             .unwrap_or_else(|| event_id.as_str().to_owned());
-        let message = match reply_fallback {
-            Some(fallback) => {
-                format!(
-                    "Reply to {}: {}",
-                    reply_sender,
-                    compact_reply_preview(&fallback.body)
-                )
-            }
-            None => format!("Reply to {}", reply_sender),
-        };
-
         let mut tags = self
             .content
             .lines
@@ -110,7 +99,29 @@ impl RenderedEvent {
             .unwrap_or_default();
         tags.push("matrix_reply".to_owned());
 
-        self.content.lines.insert(0, RenderedLine { tags, message });
+        let mut context_lines = match reply_fallback {
+            Some(fallback) => {
+                let mut lines = vec![RenderedLine {
+                    tags: tags.clone(),
+                    message: format!("Reply to {}:", reply_sender),
+                }];
+
+                lines.extend(reply_quote_lines(&fallback.body).map(
+                    |message| RenderedLine {
+                        tags: tags.clone(),
+                        message,
+                    },
+                ));
+
+                lines
+            }
+            None => vec![RenderedLine {
+                tags,
+                message: format!("Reply to {}", reply_sender),
+            }],
+        };
+
+        self.content.lines.splice(0..0, context_lines.drain(..));
 
         self
     }
@@ -1206,22 +1217,16 @@ fn anchor_uri_to_string(uri: &AnchorUri) -> Option<String> {
     }
 }
 
-fn compact_reply_preview(body: &str) -> String {
-    const MAX_PREVIEW_CHARS: usize = 160;
+fn reply_quote_lines(body: &str) -> impl Iterator<Item = String> + '_ {
+    body.lines().map(|line| {
+        let line = line.trim();
 
-    let body = collapse_whitespace(body);
-
-    if body.chars().count() <= MAX_PREVIEW_CHARS {
-        return body;
-    }
-
-    let mut preview = body
-        .chars()
-        .take(MAX_PREVIEW_CHARS.saturating_sub(3))
-        .collect::<String>();
-    preview.push_str("...");
-
-    preview
+        if line.is_empty() {
+            ">".to_owned()
+        } else {
+            format!("> {}", line)
+        }
+    })
 }
 
 fn collapse_whitespace(body: &str) -> String {
@@ -1661,7 +1666,7 @@ mod tests {
     }
 
     #[test]
-    fn reply_context_uses_formatted_reply_fallback_preview() {
+    fn reply_context_uses_formatted_reply_fallback_quote() {
         let event_id =
             matrix_sdk::ruma::owned_event_id!("$replyevent:example.org");
         let body = "\
@@ -1682,12 +1687,13 @@ mod tests {
         }
         .add_reply_context(&event_id, Some("Alice"));
 
-        assert_eq!(2, rendered.content.lines.len());
+        assert_eq!(3, rendered.content.lines.len());
+        assert_eq!("Reply to Alice:", rendered.content.lines[0].message);
         assert_eq!(
-            "Reply to Alice: Previous *message* text",
-            rendered.content.lines[0].message
+            "> Previous *message* text",
+            rendered.content.lines[1].message
         );
-        assert_eq!("new message", rendered.content.lines[1].message);
+        assert_eq!("new message", rendered.content.lines[2].message);
     }
 
     #[test]
@@ -1713,8 +1719,44 @@ mod tests {
         .add_reply_context(&event_id, None);
 
         assert_eq!(
-            "Reply to @alice:example.org: Previous message",
+            "Reply to @alice:example.org:",
             rendered.content.lines[0].message
+        );
+        assert_eq!("> Previous message", rendered.content.lines[1].message);
+    }
+
+    #[test]
+    fn reply_context_quotes_multiline_reply_fallback() {
+        let event_id =
+            matrix_sdk::ruma::owned_event_id!("$replyevent:example.org");
+        let body = "\
+            <mx-reply>\
+                <blockquote>\
+                    <a href=\"https://matrix.to/#/!room:example.org/$replyevent:example.org\">In reply to</a> \
+                    <a href=\"https://matrix.to/#/@alice:example.org\">@alice:example.org</a>\
+                    <br>\
+                    <p>line one</p><p>line two</p>\
+                </blockquote>\
+            </mx-reply>\
+            <p>new message</p>";
+        let content = TextMessageEventContent::html("fallback", body);
+        let rendered = RenderedEvent {
+            message_timestamp: 0,
+            prefix: "bob\t".to_owned(),
+            content: content.render(&()),
+        }
+        .add_reply_context(&event_id, Some("Alice"));
+
+        let messages = rendered
+            .content
+            .lines
+            .iter()
+            .map(|line| line.message.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            vec!["Reply to Alice:", "> line one", "> line two", "new message"],
+            messages
         );
     }
 
