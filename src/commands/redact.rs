@@ -11,6 +11,10 @@ use crate::Servers;
 
 const EVENT_ID_TAG_PREFIX: &str = "matrix_id_";
 
+fn message_matches_pattern(message: &str, pattern: &str) -> bool {
+    message.contains(pattern)
+}
+
 pub struct RedactCommand {
     servers: Servers,
 }
@@ -19,11 +23,13 @@ impl RedactCommand {
     pub fn create(servers: &Servers) -> Result<Command, ()> {
         let settings = CommandSettings::new("redact")
             .description("Redact a Matrix event in the current room.")
-            .add_argument("[event-id|index] [reason...]")
+            .add_argument("[event-id|index|/pattern/] [reason...]")
             .arguments_description(
                 "event-id: The Matrix event ID to redact.
     index: 1-based recent unredacted event index. 1, 0, or -1 select the latest \
            event; 2 or -2 select the event before that.
+  pattern: A case-sensitive substring enclosed in slashes. The most recent \
+           unredacted message containing it is selected.
    reason: Optional reason for the redaction. If no event ID or index is given, \
            all text is used as the reason for redacting the latest unredacted \
            event.",
@@ -74,6 +80,43 @@ impl RedactCommand {
         }
     }
 
+    fn parse_pattern(argument: &str) -> Result<Option<&str>, String> {
+        let Some(pattern) = argument
+            .strip_prefix('/')
+            .and_then(|argument| argument.strip_suffix('/'))
+        else {
+            return Ok(None);
+        };
+
+        if pattern.is_empty() {
+            Err("The redaction pattern cannot be empty.".to_owned())
+        } else {
+            Ok(Some(pattern))
+        }
+    }
+
+    fn event_id_matching_pattern(
+        buffer: &Buffer,
+        pattern: &str,
+    ) -> Option<OwnedEventId> {
+        buffer.lines().rev().find_map(|line| {
+            let tags = line.tags();
+
+            if tags.iter().any(|tag| tag.as_ref() == "matrix_redacted")
+                || !message_matches_pattern(
+                    &Weechat::remove_color(&line.message()),
+                    pattern,
+                )
+            {
+                return None;
+            }
+
+            tags.iter()
+                .find_map(|tag| tag.as_ref().strip_prefix(EVENT_ID_TAG_PREFIX))
+                .and_then(|event_id| EventId::parse(event_id).ok())
+        })
+    }
+
     fn parse_arguments(
         buffer: &Buffer,
         arguments: Option<Vec<&str>>,
@@ -117,6 +160,18 @@ impl RedactCommand {
                         first
                     )
                 })
+        } else if let Some(pattern) = Self::parse_pattern(first)? {
+            let reason = if rest.is_empty() {
+                None
+            } else {
+                Some(rest.join(" "))
+            };
+
+            Self::event_id_matching_pattern(buffer, pattern)
+                .map(|event_id| (event_id, reason))
+                .ok_or_else(|| {
+                    format!("No unredacted Matrix event matches /{}/.", pattern)
+                })
         } else {
             Self::latest_event_id(buffer)
                 .map(|event_id| (event_id, Some(arguments.join(" "))))
@@ -145,7 +200,7 @@ impl RedactCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::RedactCommand;
+    use super::{message_matches_pattern, RedactCommand};
 
     #[test]
     fn redaction_index_accepts_recent_event_forms() {
@@ -160,6 +215,36 @@ mod tests {
     fn redaction_index_rejects_non_indices() {
         assert_eq!(None, RedactCommand::parse_index("reason"));
         assert_eq!(None, RedactCommand::parse_index("$event:example.org"));
+    }
+
+    #[test]
+    fn redaction_pattern_uses_slash_delimiters() {
+        assert_eq!(
+            Ok(Some("needle")),
+            RedactCommand::parse_pattern("/needle/")
+        );
+        assert_eq!(Ok(None), RedactCommand::parse_pattern("needle"));
+        assert_eq!(Ok(None), RedactCommand::parse_pattern("/needle"));
+    }
+
+    #[test]
+    fn redaction_pattern_rejects_empty_match() {
+        assert_eq!(
+            Err("The redaction pattern cannot be empty.".to_owned()),
+            RedactCommand::parse_pattern("//")
+        );
+    }
+
+    #[test]
+    fn redaction_pattern_matches_message_substrings() {
+        assert!(message_matches_pattern(
+            "the self-hosted version",
+            "self-hosted"
+        ));
+        assert!(!message_matches_pattern(
+            "the hosted version",
+            "self-hosted"
+        ));
     }
 }
 
