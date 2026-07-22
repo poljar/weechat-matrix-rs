@@ -9,6 +9,7 @@ use crate::{config::ConfigHandle, Servers};
 
 mod buffer_clear;
 mod devices;
+mod ignore;
 mod invite;
 mod join;
 mod keys;
@@ -26,6 +27,7 @@ mod verification;
 
 use buffer_clear::BufferClearCommand;
 use devices::DevicesCommand;
+use ignore::IgnoreCommand;
 use invite::InviteCommand;
 use join::JoinCommand;
 use keys::KeysCommand;
@@ -45,6 +47,7 @@ pub struct Commands {
     _keys: Command,
     _devices: Command,
     _invite: Command,
+    _ignore: [CommandRun; 2],
     _ban: Command,
     _kick: Command,
     _page_up: CommandRun,
@@ -69,6 +72,7 @@ impl Commands {
             _matrix: MatrixCommand::create(servers, config)?,
             _devices: DevicesCommand::create(servers)?,
             _invite: InviteCommand::create(servers)?,
+            _ignore: IgnoreCommand::create()?,
             _ban: ModerationCommand::ban(servers)?,
             _kick: ModerationCommand::kick(servers)?,
             _keys: KeysCommand::create(servers)?,
