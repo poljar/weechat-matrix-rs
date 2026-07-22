@@ -293,7 +293,7 @@ impl Connection {
         .await
     }
 
-    fn save_device_id(
+    pub(crate) fn save_device_id(
         user_name: &str,
         mut server_path: PathBuf,
         response: &LoginResponse,

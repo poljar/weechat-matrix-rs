@@ -327,6 +327,84 @@ impl MatrixServer {
         Ok(())
     }
 
+    pub fn complete_sso_login(&self, login_token: String) {
+        if self
+            .get_client()
+            .map(|client| client.matrix_auth().logged_in())
+            .unwrap_or(false)
+        {
+            self.print_error(&format!(
+                "Already connected to {}{}{}",
+                Weechat::color("chat_server"),
+                self.name(),
+                Weechat::color("reset")
+            ));
+            return;
+        }
+
+        if self.connected() {
+            self.connection.borrow_mut().take();
+        }
+
+        let client = match self.get_or_create_client() {
+            Ok(client) => client,
+            Err(e) => {
+                self.print_error(&format!(
+                    "Failed to create Matrix client: {:?}",
+                    e
+                ));
+                return;
+            }
+        };
+
+        let server_name = self.name().to_owned();
+        let server_path = self.get_server_path();
+
+        let response = self.servers.runtime().block_on(async {
+            client
+                .matrix_auth()
+                .login_token(&login_token)
+                .initial_device_display_name("WeeChat-Matrix-rs")
+                .send()
+                .await
+        });
+
+        match response {
+            Ok(response) => {
+                if let Err(e) = Connection::save_device_id(
+                    &server_name,
+                    server_path,
+                    &response,
+                ) {
+                    self.print_error(&format!(
+                        "Error while writing the device id for server {}{}{}: {:?}",
+                        Weechat::color("chat_server"),
+                        self.name(),
+                        Weechat::color("reset"),
+                        e
+                    ));
+                    return;
+                }
+
+                self.receive_login(response);
+                let connection = Connection::new(self, &client);
+                self.set_connection(connection);
+                self.print_network(&format!(
+                    "Completed SSO login for {}{}{}",
+                    Weechat::color("chat_server"),
+                    self.name(),
+                    Weechat::color("reset")
+                ));
+            }
+            Err(e) => {
+                self.print_error(&format!(
+                    "Failed to complete SSO login: {:?}",
+                    e
+                ));
+            }
+        }
+    }
+
     fn inner(&self) -> Rc<InnerServer> {
         self.inner.clone()
     }
