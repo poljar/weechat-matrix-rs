@@ -42,6 +42,7 @@ impl MatrixCommand {
             .add_argument("media download <mxc-uri> [file]")
             .add_argument("disconnect <server-name>")
             .add_argument("reconnect <server-name>")
+            .add_argument("sso-complete <server-name> <login-token>")
             .add_argument("read")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
             .arguments_description(format!(
@@ -50,6 +51,7 @@ impl MatrixCommand {
   disconnect: Disconnect from one or all Matrix servers.
    reconnect: Reconnect to server(s).
        join: Join a Matrix room by ID or alias.
+sso-complete: Finish SSO login with a copied loginToken.
        read: Mark the current room as read.
      devices: {}
         keys: {}
@@ -73,8 +75,9 @@ Use /matrix [command] help to find out more.\n",
             .add_completion("connect %(matrix_servers)")
             .add_completion("disconnect %(matrix_servers)")
             .add_completion("reconnect %(matrix_servers)")
+            .add_completion("sso-complete %(matrix_servers)")
             .add_completion(
-                "help server|connect|disconnect|reconnect|join|read|keys|devices|media",
+                "help server|connect|disconnect|reconnect|join|sso-complete|read|keys|devices|media",
             );
 
         Command::new(
@@ -231,6 +234,22 @@ Use /matrix [command] help to find out more.\n",
         }
     }
 
+    fn sso_complete_command(&self, args: &ArgMatches) {
+        let server_name = args
+            .value_of("name")
+            .expect("Server name not set but was required");
+        let login_token = args
+            .value_of("login-token")
+            .expect("Login token not set but was required")
+            .to_owned();
+
+        if let Some(s) = self.servers.get(server_name) {
+            s.complete_sso_login(login_token);
+        } else {
+            self.server_not_found(server_name)
+        }
+    }
+
     fn join_command(&self, buffer: &Buffer, args: &ArgMatches) {
         let room_id_or_alias = args
             .value_of("room")
@@ -251,6 +270,9 @@ Use /matrix [command] help to find out more.\n",
         match args.subcommand() {
             ("connect", Some(subargs)) => self.connect_command(subargs),
             ("disconnect", Some(subargs)) => self.disconnect_command(subargs),
+            ("sso-complete", Some(subargs)) => {
+                self.sso_complete_command(subargs)
+            }
             ("join", Some(subargs)) => self.join_command(buffer, subargs),
             ("server", Some(subargs)) => self.server_command(subargs),
             ("devices", Some(subargs)) => {
@@ -365,6 +387,20 @@ impl CommandCallback for MatrixCommand {
                     .arg(
                         Arg::with_name("name")
                             .value_name("server-name")
+                            .required(true),
+                    ),
+            )
+            .subcommand(
+                SubCommand::with_name("sso-complete")
+                    .about("Finish SSO login with a copied loginToken")
+                    .arg(
+                        Arg::with_name("name")
+                            .value_name("server-name")
+                            .required(true),
+                    )
+                    .arg(
+                        Arg::with_name("login-token")
+                            .value_name("login-token")
                             .required(true),
                     ),
             )
