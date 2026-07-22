@@ -116,6 +116,10 @@ fn restored_prev_batch(prev_batch: Option<String>) -> Option<PrevBatch> {
     prev_batch.map(PrevBatch::Backwards)
 }
 
+fn should_render_event(already_rendered: bool) -> bool {
+    !already_rendered
+}
+
 impl Deref for RoomHandle {
     type Target = MatrixRoom;
 
@@ -477,6 +481,11 @@ impl RoomHandle {
 
         debug!("Restoring room {}", room.room_id());
 
+        // Sync callbacks can run while member restoration awaits the SDK. Put
+        // the saved history cursor in place first so a sync event cannot set a
+        // newer cursor which is then overwritten with the saved one.
+        *room_buffer.prev_batch.borrow_mut() = restored_prev_batch(prev_batch);
+
         let matrix_members = runtime
             .spawn(async move { room.joined_user_ids().await })
             .await
@@ -486,8 +495,6 @@ impl RoomHandle {
             trace!("Restoring member {}", &user_id);
             room_buffer.members.restore_member(user_id).await;
         }
-
-        *room_buffer.prev_batch.borrow_mut() = restored_prev_batch(prev_batch);
 
         room_buffer.buffer.update_buffer_name();
         room_buffer.buffer.set_topic();
@@ -1523,6 +1530,10 @@ impl MatrixRoom {
             self.verification.handle_room_verification(event).await;
         } else if event.is_edit() {
             self.handle_edits(event).await;
+        } else if !should_render_event(
+            self.buffer.contains_event(event.event_id()),
+        ) {
+            return;
         } else if let Some(rendered) = self.render_sync_message(event).await {
             let thread_root = thread_root_from_event(event);
 
@@ -1635,7 +1646,11 @@ impl MatrixRoom {
             AnyTimelineEvent::MessageLike(event) => {
                 // TODO: Only print out historical events if they aren't edits of
                 // other events.
-                if !event.is_edit() {
+                if !event.is_edit()
+                    && should_render_event(
+                        self.buffer.contains_event(event.event_id()),
+                    )
+                {
                     let sender = self.members.get(event.sender()).await.expect(
                     "Rendering a message but the sender isn't in the nicklist",
                 );
@@ -1719,6 +1734,12 @@ mod tests {
     #[test]
     fn restored_rooms_without_prev_batch_have_no_history_request() {
         assert_eq!(restored_prev_batch(None), None);
+    }
+
+    #[test]
+    fn already_rendered_events_are_not_printed_again() {
+        assert!(should_render_event(false));
+        assert!(!should_render_event(true));
     }
 
     #[test]
