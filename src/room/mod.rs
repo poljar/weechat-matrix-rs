@@ -1157,6 +1157,35 @@ impl MatrixRoom {
         }
     }
 
+    pub async fn leave(&self) {
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        let room = self.room().clone();
+
+        match connection.spawn(async move { room.leave().await }).await {
+            Ok(()) => {
+                if let Ok(buffer) = self.buffer_handle().upgrade() {
+                    let display_name = buffer
+                        .get_localvar("nick")
+                        .map(|nick| nick.into_owned())
+                        .unwrap_or_else(|| self.room_id().to_string());
+
+                    buffer.print(&format!(
+                        "{}{} has left the room",
+                        Weechat::prefix(Prefix::Quit),
+                        display_name,
+                    ));
+                }
+            }
+            Err(error) => {
+                self.print_error(&format!("Failed to leave room: {}", error))
+            }
+        }
+    }
+
     pub async fn send_attachment(&self, path: PathBuf) {
         let Some(filename) = path
             .file_name()
