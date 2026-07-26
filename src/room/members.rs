@@ -99,7 +99,33 @@ impl Members {
         self.nicks.insert(member.user_id().to_owned(), nick);
     }
 
-    pub async fn restore_member(&self, user_id: OwnedUserId) {
+    fn weechat_member(&self, member: RoomMember) -> WeechatRoomMember {
+        let user_id = member.user_id();
+        let sdk_room = active_room(&self.room);
+        let color = if sdk_room.own_user_id() == user_id {
+            "weechat.color.chat_nick_self".into()
+        } else {
+            Weechat::info_get("nick_color_name", user_id.as_str())
+                .expect("Couldn't get the nick color name")
+        };
+
+        WeechatRoomMember {
+            prefix_color: Rc::new(Self::prefix_color_for_power_level(
+                &self.config.borrow(),
+                member.normalized_power_level(),
+            )),
+            color: Rc::new(color),
+            ambiguous_nick: Rc::new(
+                self.ambiguity_map
+                    .get(member.user_id())
+                    .map(|a| *a)
+                    .unwrap_or(false),
+            ),
+            inner: member,
+        }
+    }
+
+    async fn fetch_member(&self, user_id: &UserId) -> Option<RoomMember> {
         let room = active_room(&self.room);
         let user = user_id.to_owned();
 
@@ -109,29 +135,19 @@ impl Members {
             .await
             .expect("Fetching the room member from the store panicked")
         {
-            Ok(Some(member)) => {
-                self.ambiguity_map
-                    .insert(user_id.to_owned(), member.name_ambiguous());
-                self.update_member(&user_id).await;
-            }
-            Ok(None) => {
-                panic!(
-                    "Couldn't find member {} in {}",
-                    user_id,
-                    self.buffer.short_name()
-                )
-            }
+            Ok(member) => member,
             Err(e) => {
                 Weechat::print(&format!(
                     "{}: Error fetching a room member from the store: {}",
                     Weechat::prefix(Prefix::Error),
                     e,
                 ));
+                None
             }
         }
     }
 
-    pub async fn update_member(&self, user_id: &UserId) {
+    fn update_member_from_room_member(&self, member: RoomMember) {
         let buffer = self.buffer.buffer_handle();
 
         let buffer = if let Ok(b) = buffer.upgrade() {
@@ -140,19 +156,41 @@ impl Members {
             return;
         };
 
-        if let Some(nick) = self.nicks.get(user_id) {
+        if let Some(nick) = self.nicks.get(member.user_id()) {
             buffer.remove_nick(&nick);
         }
 
-        let member = self.get(user_id).await.unwrap_or_else(|| {
+        let member = self.weechat_member(member);
+        self.add_nick(&buffer, &member);
+    }
+
+    pub async fn restore_member(&self, user_id: OwnedUserId) {
+        match self.fetch_member(&user_id).await {
+            Some(member) => {
+                self.ambiguity_map
+                    .insert(user_id.to_owned(), member.name_ambiguous());
+                self.update_member_from_room_member(member);
+            }
+            None => {
+                panic!(
+                    "Couldn't find member {} in {}",
+                    user_id,
+                    self.buffer.short_name()
+                )
+            }
+        }
+    }
+
+    pub async fn update_member(&self, user_id: &UserId) {
+        let member = self.fetch_member(user_id).await.unwrap_or_else(|| {
             panic!(
                 "Couldn't find member {} in {}",
                 user_id,
-                buffer.short_name()
+                self.buffer.short_name()
             )
         });
 
-        self.add_nick(&buffer, &member);
+        self.update_member_from_room_member(member);
     }
 
     /// Add a new Weechat room member.
@@ -217,46 +255,9 @@ impl Members {
 
     /// Retrieve a reference to a Weechat room member by user ID.
     pub async fn get(&self, user_id: &UserId) -> Option<WeechatRoomMember> {
-        let sdk_room = active_room(&self.room);
-        let color = if sdk_room.own_user_id() == user_id {
-            "weechat.color.chat_nick_self".into()
-        } else {
-            Weechat::info_get("nick_color_name", user_id.as_str())
-                .expect("Couldn't get the nick color name")
-        };
+        let member = self.fetch_member(user_id).await?;
 
-        let room = sdk_room.clone();
-        let user = user_id.to_owned();
-
-        match self
-            .runtime
-            .spawn(async move { room.get_member_no_sync(&user).await })
-            .await
-            .expect("Fetching the room member from the store panicked")
-        {
-            Ok(m) => m.map(|m| WeechatRoomMember {
-                prefix_color: Rc::new(Self::prefix_color_for_power_level(
-                    &self.config.borrow(),
-                    m.normalized_power_level(),
-                )),
-                color: Rc::new(color),
-                ambiguous_nick: Rc::new(
-                    self.ambiguity_map
-                        .get(m.user_id())
-                        .map(|a| *a)
-                        .unwrap_or(false),
-                ),
-                inner: m,
-            }),
-            Err(e) => {
-                Weechat::print(&format!(
-                    "{}: Error fetching a room member from the store: {}",
-                    Weechat::prefix(Prefix::Error),
-                    e,
-                ));
-                None
-            }
-        }
+        Some(self.weechat_member(member))
     }
 
     fn prefix_color_for_power_level(
