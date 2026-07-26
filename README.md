@@ -219,6 +219,26 @@ The plugin keeps Matrix state and encryption data in
 If the cache grows or causes too much disk I/O, disconnect WeeChat and remove
 only the `-cache` directory. Do not remove the main server directory unless you
 want to reset stored Matrix state.
+
+# Troubleshooting
+
+If startup or login fails with a Matrix SDK state-store decode error, first make
+sure the plugin was built from current sources and try starting WeeChat again so
+SDK migrations can run. If the same error still stops login, disconnect WeeChat
+and move `$WEECHAT_HOME/matrix-rust/<server>/` aside before reconnecting. This
+resets the stored Matrix state for that server, including encryption/session
+data, so keep the old directory until the new login is verified.
+
+For crashes, aborts, or a blocked WeeChat UI during startup or `/quit`, collect
+a full thread backtrace from another shell while the process is still stopped or
+blocked:
+
+       gdb -p $(pidof weechat) -batch -ex 'thread apply all bt'
+
+A short `bt` from the crashing thread is often not enough to tell whether the
+Matrix plugin, WeeChat itself, another plugin, or shutdown cleanup owns the
+block.
+
 Nick prefix colors for Matrix power levels can be changed with:
 
        /set matrix-rust.color.nick_prefix_admin lightgreen
