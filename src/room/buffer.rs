@@ -390,6 +390,7 @@ impl RoomBuffer {
         };
         let is_direct =
             self.runtime.block_on(room.is_direct()).unwrap_or(false);
+        let is_space = room.is_space();
 
         let room_name = room
             .name()
@@ -407,7 +408,7 @@ impl RoomBuffer {
             })
             .unwrap_or_else(|| room.room_id().to_string());
 
-        format_buffer_name(&room_name, is_direct)
+        format_buffer_name(&room_name, is_direct, is_space)
     }
 
     pub fn calculate_thread_buffer_name(
@@ -489,13 +490,35 @@ fn non_empty_room_name(name: &str) -> Option<String> {
     }
 }
 
-fn format_buffer_name(room_name: &str, is_direct: bool) -> String {
+fn format_buffer_name(
+    room_name: &str,
+    is_direct: bool,
+    is_space: bool,
+) -> String {
+    if is_direct || room_name.starts_with('!') {
+        return room_name.to_owned();
+    }
+
+    if is_space {
+        if room_name == "+" {
+            return "++".to_owned();
+        }
+
+        return room_name
+            .strip_prefix('#')
+            .map(|name| format!("+{}", name))
+            .unwrap_or_else(|| {
+                if room_name.starts_with('+') {
+                    room_name.to_owned()
+                } else {
+                    format!("+{}", room_name)
+                }
+            });
+    }
+
     let room_name = if room_name == "#" {
         "##".to_owned()
-    } else if room_name.starts_with('#')
-        || room_name.starts_with('!')
-        || is_direct
-    {
+    } else if room_name.starts_with('#') {
         room_name.to_owned()
     } else {
         format!("#{}", room_name)
@@ -618,26 +641,34 @@ mod tests {
 
     #[test]
     fn preserves_named_channel_prefix() {
-        assert_eq!(format_buffer_name("OSGeo", false), "#OSGeo");
+        assert_eq!(format_buffer_name("OSGeo", false, false), "#OSGeo");
     }
 
     #[test]
     fn preserves_direct_room_names() {
-        assert_eq!(format_buffer_name("Alice", true), "Alice");
+        assert_eq!(format_buffer_name("Alice", true, false), "Alice");
     }
 
     #[test]
     fn preserves_alias_like_names() {
-        assert_eq!(format_buffer_name("#lounge", false), "#lounge");
-        assert_eq!(format_buffer_name("#", false), "##");
+        assert_eq!(format_buffer_name("#lounge", false, false), "#lounge");
+        assert_eq!(format_buffer_name("#", false, false), "##");
     }
 
     #[test]
     fn preserves_room_id_fallbacks() {
         assert_eq!(
-            format_buffer_name("!roomid:matrix.osgeo.org", false),
+            format_buffer_name("!roomid:matrix.osgeo.org", false, false),
             "!roomid:matrix.osgeo.org"
         );
+    }
+
+    #[test]
+    fn marks_space_buffers_with_plus_prefix() {
+        assert_eq!(format_buffer_name("OSGeo", false, true), "+OSGeo");
+        assert_eq!(format_buffer_name("#OSGeo", false, true), "+OSGeo");
+        assert_eq!(format_buffer_name("+OSGeo", false, true), "+OSGeo");
+        assert_eq!(format_buffer_name("+", false, true), "++");
     }
 
     #[test]
