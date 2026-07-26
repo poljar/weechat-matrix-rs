@@ -70,6 +70,21 @@ impl RoomBuffer {
             .any(|handle| handle.upgrade().is_ok_and(|b| &b == buffer))
     }
 
+    pub fn thread_root_for_buffer(
+        &self,
+        buffer: &Buffer,
+    ) -> Option<OwnedEventId> {
+        self.thread_buffers
+            .borrow()
+            .iter()
+            .find_map(|(thread_root, handle)| {
+                handle
+                    .upgrade()
+                    .is_ok_and(|b| &b == buffer)
+                    .then(|| thread_root.clone())
+            })
+    }
+
     pub fn thread_buffer(&self, thread_root: &EventId) -> Option<BufferHandle> {
         self.thread_buffers.borrow().get(thread_root).cloned()
     }
@@ -84,6 +99,17 @@ impl RoomBuffer {
 
     pub fn remove_thread_buffer(&self, thread_root: &EventId) {
         self.thread_buffers.borrow_mut().remove(thread_root);
+    }
+
+    pub fn remove_thread_buffer_for_buffer(&self, buffer: &Buffer) -> bool {
+        let thread_root = self.thread_root_for_buffer(buffer);
+
+        if let Some(thread_root) = thread_root {
+            self.remove_thread_buffer(&thread_root);
+            true
+        } else {
+            false
+        }
     }
 
     /// Return the sender ID for an event that is still in the buffer.

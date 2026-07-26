@@ -31,6 +31,10 @@ impl CommandRunCallback for PartCommand {
         _: Cow<str>,
     ) -> ReturnCode {
         if let Some(room) = self.servers.find_room(buffer) {
+            if room.close_thread_buffer(buffer) {
+                return ReturnCode::OkEat;
+            }
+
             Weechat::spawn(async move { room.leave().await }).detach();
 
             ReturnCode::OkEat

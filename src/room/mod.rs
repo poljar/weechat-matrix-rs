@@ -530,6 +530,15 @@ impl MatrixRoom {
         self.buffer.owns_buffer(buffer)
     }
 
+    pub fn close_thread_buffer(&self, buffer: &Buffer) -> bool {
+        if self.buffer.remove_thread_buffer_for_buffer(buffer) {
+            buffer.close();
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn release_sdk_state(&self) {
         self.verification.release_sdk_state();
         self.room.borrow_mut().take();
