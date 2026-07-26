@@ -43,10 +43,20 @@ path to that header:
 
     export WEECHAT_PLUGIN_FILE=/usr/include/weechat/weechat-plugin.h
 
+Use the same WeeChat API headers as the WeeChat binary that will load the
+plugin. If WeeChat reports an API mismatch while loading `matrix.so`, rebuild
+after installing the matching development package or setting
+`WEECHAT_PLUGIN_FILE`. Set `WEECHAT_BUNDLED=1` only when you deliberately want
+to build against the bundled fallback header, for example in a controlled test
+or package build.
+
 If `bindgen` reports that `stddef.h`, `libclang`, or `libLLVM` is missing, check
 that the `clang` command-line tools, C/C++ compiler headers, and matching
 `libclang` package are installed. On minimal distributions the library package
 alone may not provide the compiler include paths that `bindgen` needs.
+Use a coherent `clang`/`libclang`/`libLLVM` set from the same toolchain; copying
+only one shared library from another package or SDK can leave `bindgen` loading
+an incompatible LLVM library.
 
 After the dependencies are installed the plugin can be compiled with:
 
@@ -185,6 +195,24 @@ The inactivity delay defaults to five minutes and can be changed with:
 
        /set matrix-rust.look.smart_filter_delay 300000
 
+# Room Status And Verification
+
+The `buffer_modes` bar item shows Matrix room state. Encrypted rooms show
+`matrix-rust.look.encrypted_room_sign`; encrypted rooms that still contain
+unverified devices also show `matrix-rust.look.encryption_warning_sign`. Public
+rooms show `matrix-rust.look.public_room_sign`, and busy rooms show
+`matrix-rust.look.busy_sign`.
+
+Interactive verification requests can be accepted, confirmed, or cancelled from
+the room or verification buffer:
+
+       /verification accept
+       /verification confirm
+       /verification cancel
+
+The plugin renders in-room SAS verification requests and shows the emoji or
+decimal short authentication string when it is ready.
+
 # Matrix Spaces
 
 Space buffers use a `+` prefix in their short name, while ordinary room buffers
@@ -209,6 +237,12 @@ example, to prefix Matrix room names with their first parent Space:
 Remove that prefix again with:
 
        /unset buflist.format.name
+
+Matrix rooms can belong to more than one Space. WeeChat buffers cannot be shown
+as the same room under multiple server-like parents at the same time, so the
+plugin exposes all known parent Spaces as metadata instead of moving room
+buffers into a fake hierarchy. Matrix Space buffers use a `+` short-name prefix;
+ordinary rooms keep the usual room/channel naming rules.
 
 # Storage
 
