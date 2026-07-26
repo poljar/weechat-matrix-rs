@@ -868,6 +868,7 @@ impl MatrixRoom {
             thread_root, room_short_name
         ));
 
+        self.buffer.seed_thread_buffer(thread_root, &buffer);
         self.buffer
             .set_thread_buffer(thread_root.to_owned(), buffer_handle.clone());
 
