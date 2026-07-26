@@ -145,6 +145,19 @@ impl RoomBuffer {
             })
     }
 
+    /// Copy the root event line into a newly created thread buffer.
+    pub fn seed_thread_buffer(
+        &self,
+        thread_root: &EventId,
+        thread_buffer: &Buffer,
+    ) -> bool {
+        let event_id_tag = Cow::from(thread_root.to_tag());
+
+        self.buffer_handle().upgrade().is_ok_and(|buffer| {
+            copy_buffer_line_by_tag(&buffer, thread_buffer, &event_id_tag)
+        })
+    }
+
     /// Replace the local echo of an event with a fully rendered one.
     pub fn replace_local_echo(
         &self,
@@ -401,11 +414,7 @@ impl RoomBuffer {
         &self,
         thread_root: &EventId,
     ) -> String {
-        format!(
-            "{}.thread.{}",
-            self.calculate_buffer_name(),
-            Self::thread_buffer_suffix(thread_root)
-        )
+        format_thread_buffer_name(&self.calculate_buffer_name(), thread_root)
     }
 
     pub fn thread_buffer_suffix(thread_root: &EventId) -> String {
@@ -418,6 +427,30 @@ fn buffer_contains_tag(buffer: &Buffer, tag: &Cow<str>) -> bool {
         .lines()
         .rfind(|line| line.tags().contains(tag))
         .is_some()
+}
+
+fn copy_buffer_line_by_tag(
+    source: &Buffer,
+    target: &Buffer,
+    tag: &Cow<str>,
+) -> bool {
+    let Some(line) = source.lines().rfind(|line| line.tags().contains(tag))
+    else {
+        return false;
+    };
+
+    let prefix = line.prefix();
+    let message = if prefix.is_empty() {
+        line.message().to_string()
+    } else {
+        format!("{}\t{}", prefix, line.message())
+    };
+    let tags = line.tags();
+    let tags: Vec<&str> = tags.iter().map(|tag| tag.as_ref()).collect();
+
+    target.print_date_tags(line.date(), &tags, &message);
+
+    true
 }
 
 fn sanitize_thread_id(thread_root: &EventId) -> String {
@@ -469,6 +502,14 @@ fn format_buffer_name(room_name: &str, is_direct: bool) -> String {
     };
 
     room_name
+}
+
+fn format_thread_buffer_name(room_name: &str, thread_root: &EventId) -> String {
+    format!(
+        "{}.{}",
+        room_name,
+        RoomBuffer::thread_buffer_suffix(thread_root)
+    )
 }
 
 impl RoomBuffer {
@@ -554,8 +595,8 @@ mod tests {
     use matrix_sdk::ruma::{event_id, user_id};
 
     use super::{
-        format_buffer_name, reply_sender_id_from_tags, sanitize_thread_id,
-        RoomBuffer,
+        format_buffer_name, format_thread_buffer_name,
+        reply_sender_id_from_tags, sanitize_thread_id, RoomBuffer,
     };
 
     #[test]
@@ -614,6 +655,17 @@ mod tests {
                 "$abcdef0123456789:example.org"
             )),
             "abcdef012345"
+        );
+    }
+
+    #[test]
+    fn thread_buffer_name_uses_room_prefix_and_short_suffix() {
+        assert_eq!(
+            format_thread_buffer_name(
+                "#OSGeo",
+                event_id!("$abcdef0123456789:example.org")
+            ),
+            "#OSGeo.abcdef012345"
         );
     }
 }
