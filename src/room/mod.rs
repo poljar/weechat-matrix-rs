@@ -85,7 +85,7 @@ use weechat::{
 use crate::{
     config::{Config, RedactionStyle},
     connection::Connection,
-    render::{Render, RenderedEvent},
+    render::{Render, RenderedEvent, ReplyContext},
     utils::{Edit, VerificationEvent},
     PLUGIN_NAME,
 };
@@ -822,7 +822,21 @@ impl MatrixRoom {
                 };
 
                 if let Some((event_id, sender)) = reply_to {
-                    rendered.add_reply_context(event_id, sender.as_deref())
+                    let threshold = self
+                        .config
+                        .borrow()
+                        .look()
+                        .reply_full_quote_threshold();
+                    let context = reply_context_for_distance(
+                        threshold,
+                        self.buffer.reply_line_distance(event_id),
+                    );
+
+                    rendered.add_reply_context(
+                        event_id,
+                        sender.as_deref(),
+                        context,
+                    )
                 } else {
                     rendered
                 }
@@ -1788,6 +1802,16 @@ impl MatrixRoom {
     }
 }
 
+fn reply_context_for_distance(
+    threshold: i64,
+    distance: Option<usize>,
+) -> ReplyContext {
+    distance
+        .filter(|distance| threshold > 0 && *distance <= threshold as usize)
+        .map(|_| ReplyContext::Inline)
+        .unwrap_or(ReplyContext::Full)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1813,6 +1837,22 @@ mod tests {
     fn already_rendered_events_are_not_printed_again() {
         assert!(should_render_event(false));
         assert!(!should_render_event(true));
+    }
+
+    #[test]
+    fn zero_reply_quote_threshold_keeps_full_reply_context() {
+        assert_eq!(ReplyContext::Full, reply_context_for_distance(0, Some(0)));
+        assert_eq!(ReplyContext::Full, reply_context_for_distance(0, Some(1)));
+    }
+
+    #[test]
+    fn positive_reply_quote_threshold_allows_inline_recent_replies() {
+        assert_eq!(
+            ReplyContext::Inline,
+            reply_context_for_distance(2, Some(2))
+        );
+        assert_eq!(ReplyContext::Full, reply_context_for_distance(2, Some(3)));
+        assert_eq!(ReplyContext::Full, reply_context_for_distance(2, None));
     }
 
     #[test]

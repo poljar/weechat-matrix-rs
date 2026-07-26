@@ -186,6 +186,23 @@ impl RoomBuffer {
         reply_sender_id_from_tags(&line.tags())
     }
 
+    /// Count printed lines after an event that is still visible in a buffer.
+    pub fn reply_line_distance(&self, event_id: &EventId) -> Option<usize> {
+        let event_id_tag = Cow::from(event_id.to_tag());
+
+        self.buffer_handle()
+            .upgrade()
+            .ok()
+            .and_then(|buffer| buffer_line_distance(&buffer, &event_id_tag))
+            .or_else(|| {
+                self.thread_buffers.borrow().values().find_map(|handle| {
+                    handle.upgrade().ok().and_then(|buffer| {
+                        buffer_line_distance(&buffer, &event_id_tag)
+                    })
+                })
+            })
+    }
+
     /// Return whether an event is already rendered in the buffer.
     pub fn contains_event(&self, event_id: &EventId) -> bool {
         let event_id_tag = Cow::from(event_id.to_tag());
@@ -621,6 +638,20 @@ where
 
     line.set_message(&new_message);
     line.set_tags(&tags);
+}
+
+fn buffer_line_distance(buffer: &Buffer, tag: &Cow<str>) -> Option<usize> {
+    let mut lines_after = 0;
+
+    for line in buffer.lines().rev() {
+        if line.tags().contains(tag) {
+            return Some(lines_after);
+        }
+
+        lines_after += 1;
+    }
+
+    None
 }
 
 fn sanitize_thread_id(thread_root: &EventId) -> String {
