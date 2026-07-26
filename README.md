@@ -187,6 +187,9 @@ The inactivity delay defaults to five minutes and can be changed with:
 
 # Matrix Spaces
 
+Space buffers use a `+` prefix in their short name, while ordinary room buffers
+keep the `#` prefix and direct-message buffers stay unprefixed.
+
 Room buffers expose Matrix parent Spaces as WeeChat local variables. Switch to a
 room buffer that belongs to a Space and run:
 
