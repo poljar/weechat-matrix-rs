@@ -23,6 +23,7 @@ mod nick;
 mod page_up;
 mod part;
 mod redact;
+mod reply;
 mod topic;
 mod upload;
 mod verification;
@@ -43,6 +44,7 @@ use nick::NickCommand;
 use page_up::PageUpCommand;
 use part::PartCommand;
 use redact::RedactCommand;
+use reply::ReplyCommand;
 use topic::TopicCommand;
 use upload::UploadCommand;
 
@@ -56,6 +58,7 @@ pub struct Commands {
     _kick: Command,
     _page_up: CommandRun,
     _redact: Command,
+    _reply: Command,
     _topic: Command,
     _verification: Command,
     _buffer_clear: CommandRun,
@@ -84,6 +87,7 @@ impl Commands {
             _keys: KeysCommand::create(servers)?,
             _page_up: PageUpCommand::create(servers)?,
             _redact: RedactCommand::create(servers)?,
+            _reply: ReplyCommand::create(servers)?,
             _topic: TopicCommand::create(servers)?,
             _verification: VerificationCommand::create(servers)?,
             _buffer_clear: BufferClearCommand::create(servers)?,
