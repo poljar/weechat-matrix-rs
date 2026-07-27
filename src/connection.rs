@@ -22,6 +22,7 @@ use matrix_sdk::{
     ruma::{
         api::client::{
             device::{
+                delete_device::{self, v3::Response as DeleteDeviceResponse},
                 delete_devices::v3::Response as DeleteDevicesResponse,
                 get_devices::v3::Response as DevicesResponse,
             },
@@ -226,6 +227,21 @@ impl Connection {
                 } else {
                     client.delete_devices(&devices, None).await
                 }
+            })
+            .await?)
+    }
+
+    pub async fn delete_device(
+        &self,
+        device: OwnedDeviceId,
+        auth_info: Option<InteractiveAuthInfo>,
+    ) -> MatrixResult<DeleteDeviceResponse> {
+        let client = self.client().clone();
+        Ok(self
+            .spawn(async move {
+                let mut request = delete_device::v3::Request::new(device);
+                request.auth = auth_info.map(|info| info.as_auth_data());
+                client.send(request).await
             })
             .await?)
     }

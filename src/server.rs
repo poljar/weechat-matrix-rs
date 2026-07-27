@@ -1279,7 +1279,17 @@ impl InnerServer {
         };
 
         if let Some(c) = self.connection() {
-            match c.delete_devices(devices.clone(), None).await {
+            let delete = |auth_info| async {
+                if let [device] = devices.as_slice() {
+                    c.delete_device(device.clone(), auth_info).await.map(|_| ())
+                } else {
+                    c.delete_devices(devices.clone(), auth_info)
+                        .await
+                        .map(|_| ())
+                }
+            };
+
+            match delete(None).await {
                 Ok(_) => print_success(),
                 Err(e) => {
                     if let Some(info) = e.as_uiaa_response() {
@@ -1292,10 +1302,7 @@ impl InnerServer {
                             }
                         };
 
-                        if let Err(e) = c
-                            .delete_devices(devices.clone(), Some(auth_info))
-                            .await
-                        {
+                        if let Err(e) = delete(Some(auth_info)).await {
                             print_fail(e);
                         } else {
                             print_success();
