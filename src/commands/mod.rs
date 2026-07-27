@@ -18,6 +18,7 @@ mod me;
 mod media;
 mod moderation;
 mod names;
+mod nick;
 mod page_up;
 mod part;
 mod redact;
@@ -36,6 +37,7 @@ use me::MeCommand;
 use media::MediaCommand;
 use moderation::ModerationCommand;
 use names::NamesCommand;
+use nick::NickCommand;
 use page_up::PageUpCommand;
 use part::PartCommand;
 use redact::RedactCommand;
@@ -61,6 +63,7 @@ pub struct Commands {
     _part: CommandRun,
     _names: CommandRun,
     _unban: Command,
+    _nick: CommandRun,
 }
 
 impl Commands {
@@ -87,6 +90,7 @@ impl Commands {
             _part: PartCommand::create(servers)?,
             _names: NamesCommand::create(servers)?,
             _unban: ModerationCommand::unban(servers)?,
+            _nick: NickCommand::create(servers)?,
         })
     }
 }
