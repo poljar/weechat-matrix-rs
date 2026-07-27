@@ -78,7 +78,6 @@ use matrix_sdk::{
 use weechat::{
     buffer::{
         Buffer, BufferBuilderAsync, BufferHandle, BufferInputCallbackAsync,
-        BufferLine,
     },
     Prefix, Weechat,
 };
@@ -628,14 +627,6 @@ impl MatrixRoom {
             return;
         };
 
-        let buffer_handle = self.buffer_handle();
-
-        let buffer = if let Ok(b) = buffer_handle.upgrade() {
-            b
-        } else {
-            return;
-        };
-
         // TODO: remove this unwrap.
         let redacter = self.members.get(&event.sender).await.unwrap();
 
@@ -664,12 +655,6 @@ impl MatrixRoom {
 
         let redaction_style = self.config.borrow().look().redaction_style();
 
-        let predicate = |l: &BufferLine| {
-            let tags = l.tags();
-            tags.contains(&event_id_tag)
-                && !tags.contains(&Cow::from("matrix_redacted"))
-        };
-
         let strike_through = |string: Cow<str>| {
             Weechat::remove_color(&string)
                 .graphemes(true)
@@ -696,33 +681,12 @@ impl MatrixRoom {
             RedactionStyle::StrikeThrough => strike_through(message),
         };
 
-        fn modify_line<F>(line: BufferLine, tag: Cow<str>, redaction_func: F)
-        where
-            F: Fn(Cow<str>) -> String,
-        {
-            let message = line.message();
-            let new_message = redaction_func(message);
-
-            let mut tags = line.tags();
-            tags.push(tag);
-            let tags: Vec<&str> = tags.iter().map(|t| t.as_ref()).collect();
-
-            line.set_message(&new_message);
-            line.set_tags(&tags);
-        }
-
-        let mut lines = buffer.lines();
-        let first_line = lines.rfind(predicate);
-
-        if let Some(line) = first_line {
-            modify_line(line, tag.clone(), redact_first_line);
-        } else {
-            return;
-        }
-
-        while let Some(line) = lines.next_back().filter(predicate) {
-            modify_line(line, tag.clone(), redact_string);
-        }
+        self.buffer.redact_event_lines(
+            &event_id_tag,
+            &tag,
+            redact_first_line,
+            redact_string,
+        );
     }
 
     async fn render_message_content(

@@ -211,6 +211,42 @@ impl RoomBuffer {
         });
     }
 
+    pub fn redact_event_lines<F, G>(
+        &self,
+        event_id_tag: &Cow<str>,
+        redacted_tag: &Cow<str>,
+        redact_first_line: F,
+        redact_rest_line: G,
+    ) -> bool
+    where
+        F: Fn(Cow<str>) -> String,
+        G: Fn(Cow<str>) -> String,
+    {
+        let mut redacted = self.buffer_handle().upgrade().is_ok_and(|buffer| {
+            redact_event_lines_in_buffer(
+                &buffer,
+                event_id_tag,
+                redacted_tag,
+                &redact_first_line,
+                &redact_rest_line,
+            )
+        });
+
+        for handle in self.thread_buffers.borrow().values() {
+            redacted |= handle.upgrade().is_ok_and(|buffer| {
+                redact_event_lines_in_buffer(
+                    &buffer,
+                    event_id_tag,
+                    redacted_tag,
+                    &redact_first_line,
+                    &redact_rest_line,
+                )
+            });
+        }
+
+        redacted
+    }
+
     fn replace_edit_in_buffer(
         &self,
         buffer: &Buffer,
@@ -452,6 +488,53 @@ fn copy_buffer_line_by_tag(
     target.print_date_tags(line.date(), &tags, &message);
 
     true
+}
+
+fn redact_event_lines_in_buffer<F, G>(
+    buffer: &Buffer,
+    event_id_tag: &Cow<str>,
+    redacted_tag: &Cow<str>,
+    redact_first_line: &F,
+    redact_rest_line: &G,
+) -> bool
+where
+    F: Fn(Cow<str>) -> String,
+    G: Fn(Cow<str>) -> String,
+{
+    let predicate = |line: &BufferLine| {
+        let tags = line.tags();
+        tags.contains(event_id_tag) && !tags.contains(redacted_tag)
+    };
+
+    let mut lines = buffer.lines();
+    let first_line = lines.rfind(predicate);
+
+    if let Some(line) = first_line {
+        modify_line(line, redacted_tag.clone(), redact_first_line);
+    } else {
+        return false;
+    }
+
+    while let Some(line) = lines.next_back().filter(predicate) {
+        modify_line(line, redacted_tag.clone(), redact_rest_line);
+    }
+
+    true
+}
+
+fn modify_line<F>(line: BufferLine, tag: Cow<str>, redaction_func: F)
+where
+    F: Fn(Cow<str>) -> String,
+{
+    let message = line.message();
+    let new_message = redaction_func(message);
+
+    let mut tags = line.tags();
+    tags.push(tag);
+    let tags: Vec<&str> = tags.iter().map(|tag| tag.as_ref()).collect();
+
+    line.set_message(&new_message);
+    line.set_tags(&tags);
 }
 
 fn sanitize_thread_id(thread_root: &EventId) -> String {
