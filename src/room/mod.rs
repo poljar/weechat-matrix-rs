@@ -599,6 +599,13 @@ impl MatrixRoom {
         self.buffer.buffer_handle()
     }
 
+    pub fn buffer_handle_for_short_name(
+        &self,
+        short_name: &str,
+    ) -> Option<BufferHandle> {
+        self.buffer.buffer_handle_for_short_name(short_name)
+    }
+
     pub fn update_parent_spaces(&self) {
         self.buffer.update_parent_spaces();
     }

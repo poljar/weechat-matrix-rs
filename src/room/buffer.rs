@@ -53,6 +53,30 @@ impl RoomBuffer {
             .unwrap_or_default()
     }
 
+    pub fn buffer_handle_for_short_name(
+        &self,
+        short_name: &str,
+    ) -> Option<BufferHandle> {
+        if let Some(handle) = self.inner.borrow().as_ref() {
+            if handle
+                .upgrade()
+                .is_ok_and(|buffer| buffer.short_name() == short_name)
+            {
+                return Some(handle.clone());
+            }
+        }
+
+        self.thread_buffers
+            .borrow()
+            .values()
+            .find(|handle| {
+                handle
+                    .upgrade()
+                    .is_ok_and(|buffer| buffer.short_name() == short_name)
+            })
+            .cloned()
+    }
+
     pub fn owns_buffer(&self, buffer: &Buffer) -> bool {
         if self
             .inner
@@ -437,9 +461,9 @@ impl RoomBuffer {
                     .and_then(|alias| non_empty_room_name(alias.alias()))
             })
             .or_else(|| {
-                is_direct
-                    .then(|| self.runtime.block_on(room.display_name()).ok())
-                    .flatten()
+                self.runtime
+                    .block_on(room.display_name())
+                    .ok()
                     .and_then(|name| non_empty_room_name(&name.to_string()))
             })
             .unwrap_or_else(|| room.room_id().to_string());
@@ -451,7 +475,7 @@ impl RoomBuffer {
         &self,
         thread_root: &EventId,
     ) -> String {
-        format_thread_buffer_name(&self.calculate_buffer_name(), thread_root)
+        format_thread_buffer_name(thread_root)
     }
 
     pub fn thread_buffer_suffix(thread_root: &EventId) -> String {
@@ -610,12 +634,8 @@ fn format_buffer_name(
     room_name
 }
 
-fn format_thread_buffer_name(room_name: &str, thread_root: &EventId) -> String {
-    format!(
-        "{}.{}",
-        room_name,
-        RoomBuffer::thread_buffer_suffix(thread_root)
-    )
+fn format_thread_buffer_name(thread_root: &EventId) -> String {
+    format!("thread.{}", RoomBuffer::thread_buffer_suffix(thread_root))
 }
 
 impl RoomBuffer {
@@ -773,13 +793,12 @@ mod tests {
     }
 
     #[test]
-    fn thread_buffer_name_uses_room_prefix_and_short_suffix() {
+    fn thread_buffer_name_uses_thread_prefix_and_short_suffix() {
         assert_eq!(
-            format_thread_buffer_name(
-                "#OSGeo",
-                event_id!("$abcdef0123456789:example.org")
-            ),
-            "#OSGeo.abcdef012345"
+            format_thread_buffer_name(event_id!(
+                "$abcdef0123456789:example.org"
+            )),
+            "thread.abcdef012345"
         );
     }
 }

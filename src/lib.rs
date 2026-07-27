@@ -157,6 +157,20 @@ impl Servers {
     pub fn find_room(&self, buffer: &Buffer) -> Option<RoomHandle> {
         self.buffer_owner(buffer).into_room()
     }
+
+    pub fn find_buffer_by_short_name(
+        &self,
+        short_name: &str,
+    ) -> Option<BufferHandle> {
+        let servers = self.borrow();
+
+        servers.values().find_map(|server| {
+            server
+                .rooms()
+                .into_iter()
+                .find_map(|room| room.buffer_handle_for_short_name(short_name))
+        })
+    }
 }
 
 impl SignalCallback for Servers {

@@ -8,6 +8,7 @@ use weechat::{
 use crate::{config::ConfigHandle, Servers};
 
 mod buffer_clear;
+mod buffer_switch;
 mod devices;
 mod ignore;
 mod invite;
@@ -27,6 +28,7 @@ mod upload;
 mod verification;
 
 use buffer_clear::BufferClearCommand;
+use buffer_switch::BufferSwitchCommand;
 use devices::DevicesCommand;
 use ignore::IgnoreCommand;
 use invite::InviteCommand;
@@ -57,6 +59,7 @@ pub struct Commands {
     _topic: Command,
     _verification: Command,
     _buffer_clear: CommandRun,
+    _buffer_switch: CommandRun,
     _join: CommandRun,
     _me: CommandRun,
     _upload: CommandRun,
@@ -84,6 +87,7 @@ impl Commands {
             _topic: TopicCommand::create(servers)?,
             _verification: VerificationCommand::create(servers)?,
             _buffer_clear: BufferClearCommand::create(servers)?,
+            _buffer_switch: BufferSwitchCommand::create(servers)?,
             _join: JoinCommand::create(servers)?,
             _me: MeCommand::create(servers)?,
             _upload: UploadCommand::create(servers)?,
