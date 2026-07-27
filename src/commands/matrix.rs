@@ -51,10 +51,10 @@ impl MatrixCommand {
      connect: Connect to Matrix servers.
   disconnect: Disconnect from one or all Matrix servers.
    reconnect: Reconnect to server(s).
-       join: Join a Matrix room by ID or alias.
+        join: Join a Matrix room by ID or alias.
 sso-complete: Finish SSO login with a copied loginToken.
-       read: Mark the current room as read.
-      version: Show version information about weechat-matrix.
+        read: Mark the current room as read.
+     version: Show version information about weechat-matrix.
      devices: {}
         keys: {}
        media: {}
