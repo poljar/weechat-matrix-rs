@@ -296,9 +296,10 @@ Use /matrix [command] help to find out more.\n",
             }
             ("version", _) => {
                 Weechat::print(&format!(
-                    "{}: weechat-matrix version {}",
+                    "{}: weechat-matrix version {} ({})",
                     PLUGIN_NAME,
                     env!("CARGO_PKG_VERSION"),
+                    option_env!("GIT_DESCRIBE").unwrap_or("unknown"),
                 ));
             }
             _ => unreachable!(),
