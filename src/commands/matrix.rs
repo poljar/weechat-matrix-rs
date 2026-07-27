@@ -44,6 +44,7 @@ impl MatrixCommand {
             .add_argument("reconnect <server-name>")
             .add_argument("sso-complete <server-name> <login-token>")
             .add_argument("read")
+            .add_argument("version")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
             .arguments_description(format!(
                 "      server: List, add, or remove Matrix servers.
@@ -52,12 +53,13 @@ impl MatrixCommand {
    reconnect: Reconnect to server(s).
        join: Join a Matrix room by ID or alias.
 sso-complete: Finish SSO login with a copied loginToken.
-       read: Mark the current room as read.
+        read: Mark the current room as read.
+      version: Show version information about weechat-matrix.
      devices: {}
-        keys: {}
-       media: {}
-verification: {}
-        help: Show detailed command help.\n
+         keys: {}
+        media: {}
+ verification: {}
+         help: Show detailed command help.\n
 Use /matrix [command] help to find out more.\n",
                 DevicesCommand::DESCRIPTION,
                 KeysCommand::DESCRIPTION,
@@ -77,7 +79,7 @@ Use /matrix [command] help to find out more.\n",
             .add_completion("reconnect %(matrix_servers)")
             .add_completion("sso-complete %(matrix_servers)")
             .add_completion(
-                "help server|connect|disconnect|reconnect|join|sso-complete|read|keys|devices|media",
+                "help server|connect|disconnect|reconnect|join|sso-complete|read|version|keys|devices|media",
             );
 
         Command::new(
@@ -292,6 +294,13 @@ Use /matrix [command] help to find out more.\n",
                     room.mark_as_read();
                 }
             }
+            ("version", _) => {
+                Weechat::print(&format!(
+                    "{}: weechat-matrix version {}",
+                    PLUGIN_NAME,
+                    env!("CARGO_PKG_VERSION"),
+                ));
+            }
             _ => unreachable!(),
         }
     }
@@ -416,6 +425,10 @@ impl CommandCallback for MatrixCommand {
             .subcommand(
                 SubCommand::with_name("read")
                     .about("Mark the current room as read."),
+            )
+            .subcommand(
+                SubCommand::with_name("version")
+                    .about("Show version information about weechat-matrix."),
             );
 
         parse_and_run(argparse, arguments, |args| self.run(buffer, args));
