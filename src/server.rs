@@ -726,6 +726,18 @@ impl InnerServer {
         self.settings.borrow().password.clone()
     }
 
+    pub fn user_id_domain(&self) -> Option<String> {
+        if let Some(login_state) = self.login_state.borrow().as_ref() {
+            return Some(login_state.user_id.server_name().as_str().to_owned());
+        }
+
+        self.settings
+            .borrow()
+            .homeserver
+            .as_ref()
+            .and_then(|url| url.host_str().map(str::to_owned))
+    }
+
     /// Set the display name for this account on the homeserver.
     pub async fn set_display_name(&self, name: Option<&str>) {
         let Some(client) = self.get_client() else {
@@ -785,6 +797,46 @@ impl InnerServer {
             }
             Err(e) => self.print_error(&format!("Error restoring room: {}", e)),
         }
+    }
+
+    pub async fn get_or_create_dm(
+        &self,
+        user_id: OwnedUserId,
+    ) -> Option<RoomHandle> {
+        let Some(connection) = self.connection() else {
+            self.print_error("Not connected. Please connect first.");
+            return None;
+        };
+
+        let client = connection.client().clone();
+        let target = user_id.clone();
+        let room = connection
+            .spawn(async move {
+                if let Some(room) = client.get_dm_room(&target) {
+                    Ok(room)
+                } else {
+                    client.create_dm(&target).await
+                }
+            })
+            .await;
+
+        let room = match room {
+            Ok(room) => room,
+            Err(error) => {
+                self.print_error(&format!(
+                    "Failed to open direct message with {}: {}",
+                    user_id, error
+                ));
+                return None;
+            }
+        };
+
+        let room_id = room.room_id().to_owned();
+        if !self.rooms.borrow().contains_key(&room_id) {
+            self.restore_room(room).await;
+        }
+
+        self.rooms.borrow().get(&room_id).cloned()
     }
 
     fn create_server_buffer(&self) -> BufferHandle {

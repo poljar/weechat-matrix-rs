@@ -10,6 +10,7 @@ use crate::{config::ConfigHandle, Servers};
 mod buffer_clear;
 mod buffer_switch;
 mod devices;
+mod dm;
 mod ignore;
 mod invite;
 mod join;
@@ -31,6 +32,7 @@ mod verification;
 use buffer_clear::BufferClearCommand;
 use buffer_switch::BufferSwitchCommand;
 use devices::DevicesCommand;
+use dm::DirectMessageCommand;
 use ignore::IgnoreCommand;
 use invite::InviteCommand;
 use join::JoinCommand;
@@ -67,6 +69,8 @@ pub struct Commands {
     _me: CommandRun,
     _upload: CommandRun,
     _part: CommandRun,
+    _query: CommandRun,
+    _msg: CommandRun,
     _names: CommandRun,
     _unban: Command,
     _nick: CommandRun,
@@ -96,6 +100,8 @@ impl Commands {
             _me: MeCommand::create(servers)?,
             _upload: UploadCommand::create(servers)?,
             _part: PartCommand::create(servers)?,
+            _query: DirectMessageCommand::query(servers)?,
+            _msg: DirectMessageCommand::msg(servers)?,
             _names: NamesCommand::create(servers)?,
             _unban: ModerationCommand::unban(servers)?,
             _nick: NickCommand::create(servers)?,
