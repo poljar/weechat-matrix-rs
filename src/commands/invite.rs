@@ -82,7 +82,7 @@ impl CommandCallback for InviteCommand {
     }
 }
 
-fn normalize_invitee(
+pub(crate) fn normalize_invitee(
     input: &str,
     default_domain: &str,
 ) -> Result<OwnedUserId, String> {
