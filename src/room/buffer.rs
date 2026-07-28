@@ -53,6 +53,20 @@ impl RoomBuffer {
             .unwrap_or_default()
     }
 
+    pub fn short_names(&self) -> Vec<String> {
+        let mut handles =
+            self.inner.borrow().iter().cloned().collect::<Vec<_>>();
+        handles.extend(self.thread_buffers.borrow().values().cloned());
+
+        handles
+            .into_iter()
+            .filter_map(|handle| {
+                let buffer = handle.upgrade().ok()?;
+                Some(buffer.short_name().into_owned())
+            })
+            .collect()
+    }
+
     pub fn buffer_handle_for_short_name(
         &self,
         short_name: &str,

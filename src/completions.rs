@@ -10,10 +10,12 @@ use weechat::{
     Weechat,
 };
 
+use crate::commands::is_buffer_target;
 use crate::Servers;
 
 #[allow(dead_code)]
 pub struct Completions {
+    buffer_short_names: CompletionHook,
     servers: CompletionHook,
     users: CompletionHook,
     media: CompletionHook,
@@ -22,10 +24,58 @@ pub struct Completions {
 impl Completions {
     pub fn hook_all(servers: Servers) -> Result<Self, ()> {
         Ok(Self {
+            buffer_short_names: BufferShortNamesCompletion::create(
+                servers.clone(),
+            )?,
             servers: ServersCompletion::create(servers.clone())?,
             users: UsersCompletion::create(servers.clone())?,
             media: MediaCompletion::create(servers)?,
         })
+    }
+}
+
+struct BufferShortNamesCompletion {
+    servers: Servers,
+}
+
+impl BufferShortNamesCompletion {
+    fn create(servers: Servers) -> Result<CompletionHook, ()> {
+        let comp = BufferShortNamesCompletion { servers };
+
+        // WeeChat's /buffer completion uses this item after adding its regular
+        // buffer names. Adding Matrix short names here keeps those core
+        // candidates intact while making the command-run hook reachable.
+        CompletionHook::new(
+            "buffers_names",
+            "Completion for Matrix buffer short names",
+            comp,
+        )
+    }
+}
+
+impl CompletionCallback for BufferShortNamesCompletion {
+    fn callback(
+        &mut self,
+        _: &Weechat,
+        _: &Buffer,
+        _: Cow<str>,
+        completion: &Completion,
+    ) -> Result<(), ()> {
+        for short_name in buffer_completion_candidates(
+            self.servers
+                .borrow()
+                .values()
+                .flat_map(|server| server.rooms())
+                .flat_map(|room| room.buffer_short_names()),
+        ) {
+            completion.add_with_options(
+                &short_name,
+                false,
+                CompletionPosition::Sorted,
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -185,6 +235,16 @@ fn extract_mxc_uris(message: &str) -> Vec<String> {
         .collect()
 }
 
+fn buffer_completion_candidates<I>(short_names: I) -> BTreeSet<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    short_names
+        .into_iter()
+        .filter(|short_name| is_buffer_target(short_name))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,5 +263,19 @@ mod tests {
     #[test]
     fn ignores_invalid_mxc_uris() {
         assert!(extract_mxc_uris("download mxc://").is_empty());
+    }
+
+    #[test]
+    fn completes_only_resolvable_matrix_short_names() {
+        assert_eq!(
+            buffer_completion_candidates([
+                "#matrix:example.org".to_owned(),
+                "#matrix:example.org".to_owned(),
+                "".to_owned(),
+                "matrix room".to_owned(),
+                "list".to_owned(),
+            ]),
+            BTreeSet::from(["#matrix:example.org".to_owned()]),
+        );
     }
 }
