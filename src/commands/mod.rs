@@ -31,6 +31,8 @@ mod verification;
 
 use buffer_clear::BufferClearCommand;
 use buffer_switch::BufferSwitchCommand;
+
+pub(crate) use buffer_switch::is_buffer_target;
 use devices::DevicesCommand;
 use dm::DirectMessageCommand;
 use ignore::IgnoreCommand;

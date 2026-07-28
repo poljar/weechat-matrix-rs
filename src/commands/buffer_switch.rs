@@ -52,11 +52,14 @@ impl CommandRunCallback for BufferSwitchCommand {
 fn buffer_target(command: &str) -> Option<&str> {
     let target = command.strip_prefix("/buffer")?.trim();
 
-    (!target.is_empty()
+    is_buffer_target(target).then_some(target)
+}
+
+pub(crate) fn is_buffer_target(target: &str) -> bool {
+    !target.is_empty()
         && !target.contains(char::is_whitespace)
         && !target.starts_with('-')
-        && !is_core_buffer_subcommand(target))
-    .then_some(target)
+        && !is_core_buffer_subcommand(target)
 }
 
 fn is_core_buffer_subcommand(target: &str) -> bool {
@@ -82,7 +85,7 @@ fn is_core_buffer_subcommand(target: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::buffer_target;
+    use super::{buffer_target, is_buffer_target};
 
     #[test]
     fn extracts_single_buffer_argument() {
@@ -99,5 +102,13 @@ mod tests {
         assert_eq!(buffer_target("/buffer move 1"), None);
         assert_eq!(buffer_target("/buffer clear"), None);
         assert_eq!(buffer_target("/buffer -merged"), None);
+    }
+
+    #[test]
+    fn recognizes_resolvable_buffer_targets() {
+        assert!(is_buffer_target("#OSGeo"));
+        assert!(!is_buffer_target(""));
+        assert!(!is_buffer_target("matrix room"));
+        assert!(!is_buffer_target("list"));
     }
 }
