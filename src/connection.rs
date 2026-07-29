@@ -62,6 +62,7 @@ use crate::{
 
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 const SSO_CALLBACK_PORT: u16 = 29_325;
+const HISTORY_BATCH_SIZE: u16 = 200;
 
 pub struct InteractiveAuthInfo {
     pub user: String,
@@ -262,14 +263,15 @@ impl Connection {
         prev_batch: PrevBatch,
     ) -> MatrixResult<Messages> {
         self.spawn(async move {
-            let request = match &prev_batch {
+            let mut request = match &prev_batch {
                 PrevBatch::Backwards(t) => {
-                    MessagesOptions::backward().from(Some(t.as_ref()))
+                    MessagesOptions::backward().from(t.as_deref())
                 }
                 PrevBatch::Forward(t) => {
                     MessagesOptions::forward().from(Some(t.as_ref()))
                 }
             };
+            request.limit = HISTORY_BATCH_SIZE.into();
 
             room.messages(request).await
         })

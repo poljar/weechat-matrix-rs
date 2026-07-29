@@ -108,11 +108,15 @@ pub(super) fn active_room(room: &SharedRoom) -> Room {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum PrevBatch {
     Forward(String),
-    Backwards(String),
+    Backwards(Option<String>),
 }
 
 fn restored_prev_batch(prev_batch: Option<String>) -> Option<PrevBatch> {
-    prev_batch.map(PrevBatch::Backwards)
+    // A restored SDK room does not always have a sync pagination token in its
+    // store. Matrix permits a backward /messages request without `from`, which
+    // starts at the newest visible event. Keep that request representable so a
+    // freshly restored room can still populate its WeeChat buffer.
+    Some(PrevBatch::Backwards(prev_batch))
 }
 
 fn should_render_event(already_rendered: bool) -> bool {
@@ -388,9 +392,9 @@ impl RoomHandle {
             room_id: room_id.into(),
             connection: connection.clone(),
             config,
-            prev_batch: Rc::new(RefCell::new(
-                sdk_room.last_prev_batch().map(PrevBatch::Backwards),
-            )),
+            prev_batch: Rc::new(RefCell::new(restored_prev_batch(
+                sdk_room.last_prev_batch(),
+            ))),
             latest_event_id: Rc::new(RefCell::new(None)),
             latest_read_event_id: Rc::new(RefCell::new(None)),
             latest_thread_event_ids: Rc::new(RefCell::new(HashMap::new())),
@@ -1449,12 +1453,14 @@ impl MatrixRoom {
                 let mut prev_batch = self.prev_batch.borrow_mut();
 
                 if let Some(PrevBatch::Forward(t)) = prev_batch.as_ref() {
-                    *prev_batch = Some(PrevBatch::Backwards(t.to_owned()));
+                    *prev_batch =
+                        Some(PrevBatch::Backwards(Some(t.to_owned())));
                     self.buffer.sort_messages();
                 } else if r.chunk.is_empty() {
                     *prev_batch = None;
                 } else {
-                    *prev_batch = r.end.map(PrevBatch::Backwards);
+                    *prev_batch =
+                        r.end.map(|token| PrevBatch::Backwards(Some(token)));
                     self.buffer.sort_messages();
                 }
             }
@@ -1675,7 +1681,7 @@ impl MatrixRoom {
         if let Ok(buffer) = self.buffer_handle().upgrade() {
             if buffer.num_lines() == 0 {
                 *self.prev_batch.borrow_mut() =
-                    self.room().last_prev_batch().map(PrevBatch::Backwards);
+                    restored_prev_batch(self.room().last_prev_batch());
             }
         }
     }
@@ -1800,13 +1806,13 @@ mod tests {
     fn restored_rooms_fetch_history_backwards_from_prev_batch() {
         assert_eq!(
             restored_prev_batch(Some("token".to_owned())),
-            Some(PrevBatch::Backwards("token".to_owned()))
+            Some(PrevBatch::Backwards(Some("token".to_owned())))
         );
     }
 
     #[test]
-    fn restored_rooms_without_prev_batch_have_no_history_request() {
-        assert_eq!(restored_prev_batch(None), None);
+    fn restored_rooms_without_prev_batch_fetch_history_from_end() {
+        assert_eq!(restored_prev_batch(None), Some(PrevBatch::Backwards(None)));
     }
 
     #[test]
