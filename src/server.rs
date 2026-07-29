@@ -740,19 +740,34 @@ impl InnerServer {
 
     /// Set the display name for this account on the homeserver.
     pub async fn set_display_name(&self, name: Option<&str>) {
-        let Some(client) = self.get_client() else {
+        let Some(connection) = self.connection() else {
             self.print_error("Not connected to a server");
             return;
         };
-        if let Err(e) = client.account().set_display_name(name).await {
+
+        let client = connection.client().clone();
+        let name = name.map(str::to_owned);
+        let result = connection
+            .spawn(async move {
+                client.account().set_display_name(name.as_deref()).await
+            })
+            .await;
+
+        if let Err(e) = result {
             self.print_error(&format!("Failed to set display name: {}", e));
         }
     }
 
     /// Get the current display name for this account from the homeserver.
     pub async fn get_display_name(&self) -> Option<String> {
-        let client = self.get_client()?;
-        client.account().get_display_name().await.ok().flatten()
+        let connection = self.connection()?;
+        let client = connection.client().clone();
+
+        connection
+            .spawn(async move { client.account().get_display_name().await })
+            .await
+            .ok()
+            .flatten()
     }
 
     pub async fn restore_room_by_id(&self, room_id: OwnedRoomId) {
