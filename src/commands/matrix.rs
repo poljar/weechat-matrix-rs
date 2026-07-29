@@ -16,7 +16,7 @@ use super::{
     verification::VerificationCommand,
 };
 use crate::{
-    commands::{DevicesCommand, KeysCommand, MediaCommand},
+    commands::{DevicesCommand, KeysCommand, MediaCommand, VerifyCommand},
     config::ConfigHandle,
     MatrixServer, Servers, PLUGIN_NAME,
 };
@@ -40,6 +40,8 @@ impl MatrixCommand {
             .add_argument("devices delete|list|set-name")
             .add_argument("keys import|export <file> <passphrase>")
             .add_argument("media download <mxc-uri> [file]")
+            .add_argument("verify <contact> <device-id>")
+            .add_argument("verification info [contact]")
             .add_argument("disconnect <server-name>")
             .add_argument("reconnect <server-name>")
             .add_argument("sso-complete <server-name> <login-token>")
@@ -58,18 +60,21 @@ sso-complete: Finish SSO login with a copied loginToken.
      devices: {}
         keys: {}
        media: {}
+      verify: {}
 verification: {}
         help: Show detailed command help.\n
 Use /matrix [command] help to find out more.\n",
                 DevicesCommand::DESCRIPTION,
                 KeysCommand::DESCRIPTION,
                 MediaCommand::DESCRIPTION,
+                VerifyCommand::DESCRIPTION,
                 VerificationCommand::DESCRIPTION,
             ))
             .add_completion("server add|delete|list|listfull")
             .add_completion("devices list|delete|set-name %(matrix-users)")
             .add_completion(format!("keys {}", KeysCommand::COMPLETION))
             .add_completion(format!("media {}", MediaCommand::COMPLETION))
+            .add_completion("verify %(matrix-users)")
             .add_completion(format!(
                 "verification {}",
                 VerificationCommand::COMPLETION
@@ -79,7 +84,7 @@ Use /matrix [command] help to find out more.\n",
             .add_completion("reconnect %(matrix_servers)")
             .add_completion("sso-complete %(matrix_servers)")
             .add_completion(
-                "help server|connect|disconnect|reconnect|join|sso-complete|read|version|keys|devices|media|verification",
+                "help server|connect|disconnect|reconnect|join|sso-complete|read|version|keys|devices|media|verify|verification",
             );
 
         Command::new(
@@ -286,6 +291,9 @@ Use /matrix [command] help to find out more.\n",
             ("media", Some(subargs)) => {
                 MediaCommand::run(buffer, &self.servers, subargs)
             }
+            ("verify", Some(subargs)) => {
+                VerifyCommand::run(buffer, &self.servers, subargs)
+            }
             ("verification", Some(subargs)) => {
                 VerificationCommand::run(buffer, &self.servers, subargs)
             }
@@ -381,6 +389,7 @@ impl CommandCallback for MatrixCommand {
                     .settings(VerificationCommand::SETTINGS)
                     .subcommands(VerificationCommand::subcommands()),
             )
+            .subcommand(VerifyCommand::parser())
             .subcommand(
                 SubCommand::with_name("connect")
                     .about("Connect to Matrix servers.")

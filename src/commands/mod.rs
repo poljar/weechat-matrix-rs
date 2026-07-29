@@ -28,6 +28,7 @@ mod reply;
 mod topic;
 mod upload;
 mod verification;
+mod verify;
 
 use buffer_clear::BufferClearCommand;
 use buffer_switch::BufferSwitchCommand;
@@ -51,6 +52,7 @@ use redact::RedactCommand;
 use reply::ReplyCommand;
 use topic::TopicCommand;
 use upload::UploadCommand;
+use verify::VerifyCommand;
 
 pub struct Commands {
     _matrix: Command,

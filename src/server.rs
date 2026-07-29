@@ -70,7 +70,7 @@ use url::Url;
 use matrix_sdk::{
     self,
     deserialized_responses::AmbiguityChange,
-    encryption::RoomKeyImportResult,
+    encryption::{LocalTrust, RoomKeyImportResult},
     media::{MediaFormat, MediaRequestParameters},
     room::Room,
     ruma::{
@@ -1847,6 +1847,177 @@ impl InnerServer {
             Err(error) => self.print_error(&format!(
                 "Error starting verification with {}: {}",
                 user_id, error
+            )),
+        }
+    }
+
+    pub async fn mark_device_verified(
+        &self,
+        user_id: OwnedUserId,
+        device_id: OwnedDeviceId,
+    ) {
+        let Some(connection) = self.connection() else {
+            self.print_error("You must be connected to execute this command");
+            return;
+        };
+
+        let client = connection.client().clone();
+        let requested_user_id = user_id.clone();
+        let requested_device_id = device_id.clone();
+        let result = connection
+            .spawn(async move {
+                client
+                    .encryption()
+                    .request_user_identity(&requested_user_id)
+                    .await
+                    .map_err(|error| error.to_string())?;
+
+                let Some(device) = client
+                    .encryption()
+                    .get_device(&requested_user_id, &requested_device_id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                else {
+                    return Ok::<_, String>(false);
+                };
+
+                device
+                    .set_local_trust(LocalTrust::Verified)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>(true)
+            })
+            .await;
+
+        match result {
+            Ok(true) => self.print_network(&format!(
+                "Marked device {} of {} as locally verified on this client",
+                device_id, user_id
+            )),
+            Ok(false) => self.print_error(&format!(
+                "Device {} of {} was not found",
+                device_id, user_id
+            )),
+            Err(error) => self.print_error(&format!(
+                "Error marking device {} of {} as locally verified: {}",
+                device_id, user_id, error
+            )),
+        }
+    }
+
+    pub async fn verification_info(&self, user_id: Option<OwnedUserId>) {
+        let Some(connection) = self.connection() else {
+            self.print_error("You must be connected to execute this command");
+            return;
+        };
+
+        let client = connection.client().clone();
+        let result = connection
+            .spawn(async move {
+                let encryption = client.encryption();
+                let refresh_identity = user_id.is_some();
+                let mut users = if let Some(user_id) = user_id {
+                    vec![user_id]
+                } else {
+                    encryption
+                        .tracked_users()
+                        .await
+                        .map_err(|error| error.to_string())?
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                };
+                users.sort();
+
+                let mut report = Vec::new();
+
+                for user_id in users {
+                    let identity = if refresh_identity {
+                        encryption
+                            .request_user_identity(&user_id)
+                            .await
+                            .map_err(|error| error.to_string())?
+                    } else {
+                        encryption
+                            .get_user_identity(&user_id)
+                            .await
+                            .map_err(|error| error.to_string())?
+                    };
+                    let identity_state = match identity.as_ref() {
+                        Some(identity)
+                            if identity.has_verification_violation() =>
+                        {
+                            "verification violation"
+                        }
+                        Some(identity) if identity.is_verified() => "verified",
+                        Some(identity)
+                            if identity.was_previously_verified() =>
+                        {
+                            "previously verified"
+                        }
+                        Some(_) => "not verified",
+                        None => "no cross-signing identity",
+                    };
+
+                    report.push(format!("{}: {}", user_id, identity_state));
+
+                    let devices = encryption
+                        .get_user_devices(&user_id)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    let mut device_lines = devices
+                        .devices()
+                        .map(|device| {
+                            let state = if device
+                                .is_verified_with_cross_signing()
+                            {
+                                "verified by cross-signing"
+                            } else {
+                                match device.local_trust_state() {
+                                    LocalTrust::Verified => {
+                                        "locally trusted only"
+                                    }
+                                    LocalTrust::BlackListed => "blacklisted",
+                                    LocalTrust::Ignored => "ignored",
+                                    LocalTrust::Unset
+                                        if device.is_verified() =>
+                                    {
+                                        "verified"
+                                    }
+                                    LocalTrust::Unset => "not verified",
+                                }
+                            };
+                            let name = device
+                                .display_name()
+                                .map(|name| format!(" ({name})"))
+                                .unwrap_or_default();
+
+                            format!(
+                                "  {}{}: {}",
+                                device.device_id(),
+                                name,
+                                state
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    device_lines.sort();
+                    report.extend(device_lines);
+                }
+
+                Ok::<_, String>(report)
+            })
+            .await;
+
+        match result {
+            Ok(report) if report.is_empty() => self.print_error(
+                "No tracked Matrix contacts have verification information",
+            ),
+            Ok(report) => {
+                self.print_network("Matrix verification state:");
+                self.print(&report.join("\n"));
+            }
+            Err(error) => self.print_error(&format!(
+                "Error fetching Matrix verification state: {}",
+                error
             )),
         }
     }
