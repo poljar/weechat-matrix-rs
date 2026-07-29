@@ -16,6 +16,7 @@ use tracing::error;
 
 use matrix_sdk::{
     self,
+    authentication::matrix::MatrixSession,
     config::SyncSettings,
     deserialized_responses::AmbiguityChange,
     room::{Messages, MessagesOptions, Receipts, Room},
@@ -43,10 +44,13 @@ use matrix_sdk::{
             SyncStateEvent,
         },
         OwnedDeviceId, OwnedEventId, OwnedRoomId, OwnedTransactionId,
+        OwnedUserId,
     },
+    store::RoomLoadSettings,
     sync::State,
     utils::local_server::LocalServerBuilder,
-    Client, LoopCtrl, Result as MatrixResult, RoomMemberships,
+    Client, LoopCtrl, Result as MatrixResult, RoomMemberships, SessionMeta,
+    SessionTokens,
 };
 
 use weechat::{Task, Weechat};
@@ -76,6 +80,7 @@ impl InteractiveAuthInfo {
 
 pub enum ClientMessage {
     LoginMessage(LoginResponse),
+    SessionRestored(OwnedUserId),
     SsoLoginUrl(String),
     SyncState(OwnedRoomId, AnySyncStateEvent),
     SyncEvent(OwnedRoomId, AnySyncTimelineEvent),
@@ -173,6 +178,9 @@ impl Connection {
             tx,
             server.user_name(),
             server.password(),
+            server.access_token(),
+            server.refresh_token(),
+            server.device_id(),
             server_name.to_string(),
             server.get_server_path(),
         ));
@@ -362,6 +370,9 @@ impl Connection {
             match message {
                 Ok(message) => match message {
                     ClientMessage::LoginMessage(r) => server.receive_login(r),
+                    ClientMessage::SessionRestored(user_id) => {
+                        server.receive_restored_login(user_id)
+                    }
                     ClientMessage::SsoLoginUrl(url) => {
                         server.receive_sso_url(&url)
                     }
@@ -418,9 +429,76 @@ impl Connection {
         channel: Sender<Result<ClientMessage, String>>,
         username: String,
         password: String,
+        access_token: String,
+        refresh_token: String,
+        device_id: String,
         server_name: String,
         server_path: PathBuf,
     ) {
+        if !client.matrix_auth().logged_in() && !access_token.is_empty() {
+            let user_id = match username.parse::<OwnedUserId>() {
+                Ok(user_id) => user_id,
+                Err(error) => {
+                    let _ = channel
+                        .send(Err(format!(
+                            "Invalid Matrix user ID for restored session: {error}"
+                        )))
+                        .await;
+                    return;
+                }
+            };
+            if device_id.is_empty() {
+                let _ = channel
+                    .send(Err(
+                        "A device ID is required with a Matrix access token"
+                            .to_owned(),
+                    ))
+                    .await;
+                return;
+            }
+            let session = MatrixSession {
+                meta: SessionMeta {
+                    user_id: user_id.clone(),
+                    device_id: OwnedDeviceId::from(device_id),
+                },
+                tokens: SessionTokens {
+                    access_token,
+                    refresh_token: (!refresh_token.is_empty())
+                        .then_some(refresh_token),
+                },
+            };
+            if let Err(error) = client
+                .matrix_auth()
+                .restore_session(session, RoomLoadSettings::default())
+                .await
+            {
+                let _ = channel
+                    .send(Err(format!(
+                        "Failed to restore Matrix access-token session: {error}"
+                    )))
+                    .await;
+                return;
+            }
+            if channel
+                .send(Ok(ClientMessage::SessionRestored(user_id)))
+                .await
+                .is_err()
+            {
+                return;
+            }
+            for room in client.joined_rooms() {
+                if channel
+                    .send(Ok(ClientMessage::RestoredRoom(
+                        room.room_id().to_owned(),
+                    )))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }
+
         if !client.matrix_auth().logged_in() {
             let device_id_key = if username.is_empty() {
                 server_name.as_str()

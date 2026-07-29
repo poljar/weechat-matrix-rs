@@ -154,6 +154,9 @@ pub struct ServerSettings {
     pub autoconnect: bool,
     pub username: String,
     pub password: String,
+    pub access_token: String,
+    pub refresh_token: String,
+    pub device_id: String,
     pub ssl_verify: bool,
 }
 
@@ -166,6 +169,9 @@ impl Default for ServerSettings {
             homeserver: None,
             username: "".to_owned(),
             password: "".to_owned(),
+            access_token: "".to_owned(),
+            refresh_token: "".to_owned(),
+            device_id: "".to_owned(),
         }
     }
 }
@@ -568,6 +574,63 @@ impl MatrixServer {
             .expect("Can't create password option");
 
         let server = server_copy;
+        let server_copy = server.clone();
+
+        let access_token =
+            StringOptionSettings::new(format!("{}.access_token", server_name))
+                .set_change_callback(move |_, option| {
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
+
+                    server_ref.settings.borrow_mut().access_token =
+                        Weechat::eval_string_expression(&option.value())
+                            .expect("Can't evaluate access token");
+                });
+
+        server_section
+            .new_string_option(access_token)
+            .expect("Can't create access token option");
+
+        let server = server_copy;
+        let server_copy = server.clone();
+
+        let refresh_token =
+            StringOptionSettings::new(format!("{}.refresh_token", server_name))
+                .set_change_callback(move |_, option| {
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
+
+                    server_ref.settings.borrow_mut().refresh_token =
+                        Weechat::eval_string_expression(&option.value())
+                            .expect("Can't evaluate refresh token");
+                });
+
+        server_section
+            .new_string_option(refresh_token)
+            .expect("Can't create refresh token option");
+
+        let server = server_copy;
+        let server_copy = server.clone();
+
+        let device_id =
+            StringOptionSettings::new(format!("{}.device_id", server_name))
+                .set_change_callback(move |_, option| {
+                    let server_ref = server.upgrade().expect(
+                        "Server got deleted while server config is alive",
+                    );
+
+                    server_ref.settings.borrow_mut().device_id =
+                        Weechat::eval_string_expression(&option.value())
+                            .expect("Can't evaluate device id");
+                });
+
+        server_section
+            .new_string_option(device_id)
+            .expect("Can't create device id option");
+
+        let server = server_copy;
 
         let ssl_verify =
             BooleanOptionSettings::new(format!("{}.ssl_verify", server_name))
@@ -710,6 +773,9 @@ impl Drop for MatrixServer {
                 "autoconnect",
                 "homeserver",
                 "password",
+                "access_token",
+                "refresh_token",
+                "device_id",
                 "proxy",
                 "ssl_verify",
                 "username",
@@ -791,6 +857,18 @@ impl InnerServer {
 
     pub fn password(&self) -> String {
         self.settings.borrow().password.clone()
+    }
+
+    pub fn access_token(&self) -> String {
+        self.settings.borrow().access_token.clone()
+    }
+
+    pub fn refresh_token(&self) -> String {
+        self.settings.borrow().refresh_token.clone()
+    }
+
+    pub fn device_id(&self) -> String {
+        self.settings.borrow().device_id.clone()
     }
 
     pub fn user_id_domain(&self) -> Option<String> {
@@ -1256,6 +1334,16 @@ impl InnerServer {
         *self.login_state.borrow_mut() = Some(login_state);
     }
 
+    pub fn receive_restored_login(&self, user_id: OwnedUserId) {
+        *self.login_state.borrow_mut() = Some(LoginInfo { user_id });
+        self.print_network(&format!(
+            "Restored Element session for {}{}{}",
+            Weechat::color("chat_server"),
+            self.name(),
+            Weechat::color("reset"),
+        ));
+    }
+
     pub fn receive_sso_url(&self, url: &str) {
         self.print_network(&format!(
             "Open this URL to finish SSO login for {}{}{}: {}",
@@ -1313,6 +1401,7 @@ impl InnerServer {
 
         let mut client_builder = Client::builder()
             .homeserver_url(homeserver)
+            .handle_refresh_tokens()
             .sqlite_store_with_cache_path(
                 self.get_server_path(),
                 self.get_server_cache_path(),
