@@ -317,6 +317,17 @@ fn thread_root_from_event(
     })
 }
 
+fn rendered_root_to_seed<'a>(
+    event_id: Option<&'a EventId>,
+    thread_root: Option<&EventId>,
+) -> Option<&'a EventId> {
+    if thread_root.is_none() {
+        event_id
+    } else {
+        None
+    }
+}
+
 impl RoomHandle {
     pub fn new(
         server_name: &str,
@@ -857,6 +868,7 @@ impl MatrixRoom {
 
     fn print_rendered_event_for_relation(
         &self,
+        event_id: Option<&EventId>,
         thread_root: Option<&EventId>,
         rendered: RenderedEvent,
     ) {
@@ -870,6 +882,12 @@ impl MatrixRoom {
             }
         } else {
             self.buffer.print_rendered_event(rendered);
+
+            if let Some(thread_root) =
+                rendered_root_to_seed(event_id, thread_root)
+            {
+                self.buffer.seed_open_thread_buffer(thread_root);
+            }
         }
     }
 
@@ -926,6 +944,7 @@ impl MatrixRoom {
                     .render_with_prefix_for_echo(&sender, transaction_id, &())
                     .add_self_tags();
                 self.print_rendered_event_for_relation(
+                    None,
                     thread_root.as_deref(),
                     local_echo,
                 );
@@ -1454,6 +1473,7 @@ impl MatrixRoom {
             self.buffer.replace_local_echo(transaction_id, rendered);
         } else {
             self.print_rendered_event_for_relation(
+                Some(event_id),
                 thread_root.as_deref(),
                 rendered,
             );
@@ -1554,6 +1574,7 @@ impl MatrixRoom {
             }
 
             self.print_rendered_event_for_relation(
+                Some(event.event_id()),
                 thread_root.as_deref(),
                 rendered,
             );
@@ -1686,6 +1707,7 @@ impl MatrixRoom {
                         .await
                     {
                         self.buffer.print_rendered_event(rendered);
+                        self.buffer.seed_open_thread_buffer(event.event_id());
                     }
                 }
             }
@@ -1776,6 +1798,28 @@ mod tests {
             EventId::parse("$latest-thread-event:example.org").unwrap()
         );
         assert!(thread.is_falling_back);
+    }
+
+    #[test]
+    fn plain_event_can_seed_an_already_open_thread_buffer() {
+        let event_id = EventId::parse("$thread-root:example.org").unwrap();
+
+        assert_eq!(
+            rendered_root_to_seed(Some(&event_id), None),
+            Some(event_id.as_ref())
+        );
+    }
+
+    #[test]
+    fn thread_reply_is_not_treated_as_another_thread_root() {
+        let event_id = EventId::parse("$thread-reply:example.org").unwrap();
+        let thread_root = EventId::parse("$thread-root:example.org").unwrap();
+
+        assert_eq!(
+            rendered_root_to_seed(Some(&event_id), Some(&thread_root)),
+            None
+        );
+        assert_eq!(rendered_root_to_seed(None, Some(&thread_root)), None);
     }
 
     #[test]

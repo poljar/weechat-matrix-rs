@@ -177,9 +177,27 @@ impl RoomBuffer {
     ) -> bool {
         let event_id_tag = Cow::from(thread_root.to_tag());
 
+        if buffer_contains_tag(thread_buffer, &event_id_tag) {
+            return false;
+        }
+
         self.buffer_handle().upgrade().is_ok_and(|buffer| {
             copy_buffer_line_by_tag(&buffer, thread_buffer, &event_id_tag)
         })
+    }
+
+    /// Copy a newly rendered root event into its already-open thread buffer.
+    pub fn seed_open_thread_buffer(&self, thread_root: &EventId) -> bool {
+        let Some(handle) = self.thread_buffer(thread_root) else {
+            return false;
+        };
+
+        if let Ok(buffer) = handle.upgrade() {
+            self.seed_thread_buffer(thread_root, &buffer)
+        } else {
+            self.remove_thread_buffer(thread_root);
+            false
+        }
     }
 
     /// Replace the local echo of an event with a fully rendered one.
