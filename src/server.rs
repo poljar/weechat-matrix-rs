@@ -875,7 +875,13 @@ impl InnerServer {
             Ok(buffer) => {
                 let room_id = buffer.room_id().to_owned();
 
-                self.rooms.borrow_mut().insert(room_id, buffer);
+                self.rooms.borrow_mut().insert(room_id, buffer.clone());
+
+                // Relay-native frontends select buffers without triggering
+                // WeeChat's buffer_switch signal. Populate restored Matrix
+                // buffers proactively instead of waiting for a TUI-only hook.
+                Weechat::spawn(async move { buffer.get_messages().await })
+                    .detach();
             }
             Err(e) => self.print_error(&format!("Error restoring room: {}", e)),
         }
