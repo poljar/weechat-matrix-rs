@@ -74,7 +74,11 @@ use matrix_sdk::{
     media::{MediaFormat, MediaRequestParameters},
     room::Room,
     ruma::{
-        api::client::session::login::v3::Response as LoginResponse,
+        api::client::{
+            error::ErrorKind,
+            room::create_room::v3::Request as CreateRoomRequest,
+            session::login::v3::Response as LoginResponse,
+        },
         events::{
             room::{member::RoomMemberEventContent, MediaSource},
             AnySyncStateEvent, AnySyncTimelineEvent, AnyToDeviceEvent,
@@ -82,7 +86,7 @@ use matrix_sdk::{
         },
         DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
         OwnedDeviceId, OwnedMxcUri, OwnedRoomAliasId, OwnedRoomId,
-        OwnedRoomOrAliasId, OwnedServerName, OwnedUserId, RoomId, UserId,
+        OwnedRoomOrAliasId, OwnedUserId, RoomAliasId, RoomId, UserId,
     },
     Client, Error,
 };
@@ -265,11 +269,7 @@ impl MatrixServer {
         let result = connection
             .spawn(async move {
                 tokio::time::timeout(JOIN_ROOM_TIMEOUT, async move {
-                    let servers =
-                        resolve_alias_servers(&client, &room_id_or_alias).await;
-
-                    client
-                        .join_room_by_id_or_alias(&room_id_or_alias, &servers)
+                    join_room_or_create_local_alias(&client, &room_id_or_alias)
                         .await
                 })
                 .await
@@ -286,8 +286,7 @@ impl MatrixServer {
             Ok(Err(error)) => {
                 self.print_error(&format!(
                     "Failed to join {}: {}",
-                    target,
-                    format_join_error(&error, &target)
+                    target, error
                 ));
             }
             Err(error) => {
@@ -606,20 +605,88 @@ fn format_join_error(error: &Error, target: &str) -> String {
     }
 }
 
-async fn resolve_alias_servers(
+#[derive(Debug, Eq, PartialEq)]
+enum MissingAliasAction {
+    CreateRoom { alias_localpart: String },
+    RefuseForeignAlias,
+    RefuseUnknownAccountDomain,
+}
+
+fn missing_alias_action(
+    alias: &RoomAliasId,
+    account_user_id: Option<&UserId>,
+) -> MissingAliasAction {
+    match account_user_id {
+        Some(user_id) if alias.server_name() == user_id.server_name() => {
+            MissingAliasAction::CreateRoom {
+                alias_localpart: alias.alias().to_owned(),
+            }
+        }
+        Some(_) => MissingAliasAction::RefuseForeignAlias,
+        None => MissingAliasAction::RefuseUnknownAccountDomain,
+    }
+}
+
+fn create_room_request(alias_localpart: String) -> CreateRoomRequest {
+    let mut request = CreateRoomRequest::new();
+    request.room_alias_name = Some(alias_localpart);
+    request
+}
+
+async fn join_room_or_create_local_alias(
     client: &Client,
     room_id_or_alias: &OwnedRoomOrAliasId,
-) -> Vec<OwnedServerName> {
+) -> Result<Room, String> {
     let Ok(alias) = room_id_or_alias.as_str().parse::<OwnedRoomAliasId>()
     else {
-        return Vec::new();
+        return client
+            .join_room_by_id_or_alias(room_id_or_alias, &[])
+            .await
+            .map_err(|error| {
+                format_join_error(&error, room_id_or_alias.as_str())
+            });
     };
 
-    client
-        .resolve_room_alias(&alias)
-        .await
-        .map(|response| response.servers)
-        .unwrap_or_default()
+    match client.resolve_room_alias(&alias).await {
+        Ok(response) => client
+            .join_room_by_id_or_alias(room_id_or_alias, &response.servers)
+            .await
+            .map_err(|error| {
+                format_join_error(&error, room_id_or_alias.as_str())
+            }),
+        Err(error)
+            if error.client_api_error_kind() == Some(&ErrorKind::NotFound) =>
+        {
+            match missing_alias_action(&alias, client.user_id()) {
+                MissingAliasAction::CreateRoom { alias_localpart } => {
+                    // `room_alias_name` makes createRoom register the alias as
+                    // part of room creation, so a failed registration cannot
+                    // leave a newly created, unaliased room behind.
+                    client
+                        .create_room(create_room_request(alias_localpart))
+                        .await
+                        .map_err(|error| {
+                            format!(
+                                "Could not create local room with alias {}: {}",
+                                alias,
+                                format_join_error(&error, alias.as_str())
+                            )
+                        })
+                }
+                MissingAliasAction::RefuseForeignAlias => Err(format!(
+                    "Room alias {} was not found and is not local to your account; refusing to create it.",
+                    alias
+                )),
+                MissingAliasAction::RefuseUnknownAccountDomain => Err(format!(
+                    "Room alias {} was not found, and the account domain is unavailable; refusing to create it.",
+                    alias
+                )),
+            }
+        }
+        Err(error) => {
+            Err(format!("Could not resolve room alias {}: {}", alias, error))
+        }
+    }
 }
 
 impl Drop for MatrixServer {
@@ -1910,7 +1977,11 @@ impl InnerServer {
 
 #[cfg(test)]
 mod tests {
-    use super::{with_entered_runtime_until_drop, InnerServer};
+    use super::{
+        create_room_request, missing_alias_action,
+        with_entered_runtime_until_drop, InnerServer, MissingAliasAction,
+    };
+    use matrix_sdk::ruma::{OwnedRoomAliasId, OwnedUserId};
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::{
@@ -1978,5 +2049,56 @@ mod tests {
         );
 
         assert_eq!(drop_context.load(Ordering::SeqCst), DROPPED_INSIDE_RUNTIME);
+    }
+
+    #[test]
+    fn creates_only_missing_aliases_on_the_account_domain() {
+        let alias = "#new-room:example.org"
+            .parse::<OwnedRoomAliasId>()
+            .expect("valid room alias");
+        let user_id = "@alice:example.org"
+            .parse::<OwnedUserId>()
+            .expect("valid user ID");
+
+        assert_eq!(
+            missing_alias_action(&alias, Some(&user_id)),
+            MissingAliasAction::CreateRoom {
+                alias_localpart: "new-room".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn refuses_missing_foreign_aliases() {
+        let alias = "#new-room:elsewhere.example"
+            .parse::<OwnedRoomAliasId>()
+            .expect("valid room alias");
+        let user_id = "@alice:example.org"
+            .parse::<OwnedUserId>()
+            .expect("valid user ID");
+
+        assert_eq!(
+            missing_alias_action(&alias, Some(&user_id)),
+            MissingAliasAction::RefuseForeignAlias
+        );
+    }
+
+    #[test]
+    fn refuses_missing_alias_without_an_account_domain() {
+        let alias = "#new-room:example.org"
+            .parse::<OwnedRoomAliasId>()
+            .expect("valid room alias");
+
+        assert_eq!(
+            missing_alias_action(&alias, None),
+            MissingAliasAction::RefuseUnknownAccountDomain
+        );
+    }
+
+    #[test]
+    fn create_room_request_registers_the_alias_during_room_creation() {
+        let request = create_room_request("new-room".to_owned());
+
+        assert_eq!(request.room_alias_name.as_deref(), Some("new-room"));
     }
 }
