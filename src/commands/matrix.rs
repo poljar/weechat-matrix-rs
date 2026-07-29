@@ -79,7 +79,7 @@ Use /matrix [command] help to find out more.\n",
             .add_completion("reconnect %(matrix_servers)")
             .add_completion("sso-complete %(matrix_servers)")
             .add_completion(
-                "help server|connect|disconnect|reconnect|join|sso-complete|read|version|keys|devices|media",
+                "help server|connect|disconnect|reconnect|join|sso-complete|read|version|keys|devices|media|verification",
             );
 
         Command::new(
