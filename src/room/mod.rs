@@ -1475,6 +1475,12 @@ impl MatrixRoom {
 
         if echo {
             self.buffer.replace_local_echo(transaction_id, rendered);
+
+            if let Some(thread_root) =
+                rendered_root_to_seed(Some(event_id), thread_root.as_deref())
+            {
+                self.buffer.seed_open_thread_buffer(thread_root);
+            }
         } else {
             self.print_rendered_event_for_relation(
                 Some(event_id),

@@ -27,6 +27,26 @@ pub struct RoomBuffer {
     thread_buffers: Rc<RefCell<HashMap<OwnedEventId, BufferHandle>>>,
 }
 
+struct LineCopy {
+    date: isize,
+    date_printed: isize,
+    tags: Vec<String>,
+    prefix: String,
+    message: String,
+}
+
+impl<'a> From<BufferLine<'a>> for LineCopy {
+    fn from(line: BufferLine) -> Self {
+        Self {
+            date: line.date(),
+            date_printed: line.date_printed(),
+            message: line.message().to_string(),
+            prefix: line.prefix().to_string(),
+            tags: line.tags().iter().map(|t| t.to_string()).collect(),
+        }
+    }
+}
+
 impl RoomBuffer {
     pub fn new(room: SharedRoom, runtime: Handle) -> Self {
         Self {
@@ -244,27 +264,33 @@ impl RoomBuffer {
         let sender_tag = Cow::from(sender.to_tag());
         let event_id_tag = Cow::from(event_id.to_tag());
 
-        if self.buffer_handle().upgrade().is_ok_and(|buffer| {
+        let _ = self.buffer_handle().upgrade().is_ok_and(|buffer| {
             self.replace_edit_in_buffer(
                 &buffer,
                 &event_id_tag,
                 &sender_tag,
                 &event,
             )
-        }) {
-            return;
-        }
+        });
 
-        self.thread_buffers.borrow().values().any(|handle| {
-            handle.upgrade().is_ok_and(|buffer| {
-                self.replace_edit_in_buffer(
+        for handle in self.thread_buffers.borrow().values() {
+            if let Ok(buffer) = handle.upgrade() {
+                let replaced = self.replace_edit_in_buffer(
                     &buffer,
                     &event_id_tag,
                     &sender_tag,
                     &event,
-                )
-            })
-        });
+                );
+
+                if replaced
+                    && self
+                        .thread_root_for_buffer(&buffer)
+                        .is_some_and(|thread_root| thread_root == event_id)
+                {
+                    sort_buffer_lines(&buffer, Some(event_id_tag.as_ref()));
+                }
+            }
+        }
     }
 
     pub fn redact_event_lines<F, G>(
@@ -363,51 +389,15 @@ impl RoomBuffer {
                     buffer.print_date_tags(date, &tags, &message)
                 }
 
-                self.sort_messages()
+                sort_buffer_lines(buffer, None)
             }
             Ordering::Equal => (),
         }
     }
 
     pub fn sort_messages(&self) {
-        struct LineCopy {
-            date: isize,
-            date_printed: isize,
-            tags: Vec<String>,
-            prefix: String,
-            message: String,
-        }
-
-        impl<'a> From<BufferLine<'a>> for LineCopy {
-            fn from(line: BufferLine) -> Self {
-                Self {
-                    date: line.date(),
-                    date_printed: line.date_printed(),
-                    message: line.message().to_string(),
-                    prefix: line.prefix().to_string(),
-                    tags: line.tags().iter().map(|t| t.to_string()).collect(),
-                }
-            }
-        }
-
-        // TODO update the highlight once Weechat starts supporting it.
         if let Ok(buffer) = self.buffer_handle().upgrade() {
-            let mut lines: Vec<LineCopy> =
-                buffer.lines().map(|l| l.into()).collect();
-            lines.sort_by_key(|l| l.date);
-
-            for (line, new) in buffer.lines().zip(lines.drain(..)) {
-                let tags =
-                    new.tags.iter().map(|t| t.as_str()).collect::<Vec<&str>>();
-                let data = LineData {
-                    prefix: Some(&new.prefix),
-                    message: Some(&new.message),
-                    date: Some(new.date),
-                    date_printed: Some(new.date_printed),
-                    tags: Some(&tags),
-                };
-                line.update(data)
-            }
+            sort_buffer_lines(&buffer, None);
         }
     }
 
@@ -527,23 +517,63 @@ fn copy_buffer_line_by_tag(
     target: &Buffer,
     tag: &Cow<str>,
 ) -> bool {
-    let Some(line) = source.lines().rfind(|line| line.tags().contains(tag))
-    else {
+    let lines: Vec<LineCopy> = source
+        .lines()
+        .filter(|line| line.tags().contains(tag))
+        .map(Into::into)
+        .collect();
+
+    if lines.is_empty() {
         return false;
-    };
+    }
 
-    let prefix = line.prefix();
-    let message = if prefix.is_empty() {
-        line.message().to_string()
-    } else {
-        format!("{}\t{}", prefix, line.message())
-    };
-    let tags = line.tags();
-    let tags: Vec<&str> = tags.iter().map(|tag| tag.as_ref()).collect();
+    for line in lines {
+        let message = if line.prefix.is_empty() {
+            line.message
+        } else {
+            format!("{}\t{}", line.prefix, line.message)
+        };
+        let tags: Vec<&str> = line.tags.iter().map(String::as_str).collect();
 
-    target.print_date_tags(line.date(), &tags, &message);
+        target.print_date_tags(line.date, &tags, &message);
+    }
+
+    // A thread buffer may already contain the reply that caused its creation.
+    // Keep every line of the triggering event first even when Matrix timestamps
+    // have only second-level precision or the root arrived through a later sync.
+    sort_buffer_lines(target, Some(tag.as_ref()));
 
     true
+}
+
+fn line_sort_key(
+    date: isize,
+    tags: &[String],
+    priority_tag: Option<&str>,
+) -> (bool, isize) {
+    let is_priority =
+        priority_tag.is_some_and(|tag| tags.iter().any(|item| item == tag));
+
+    (!is_priority, date)
+}
+
+fn sort_buffer_lines(buffer: &Buffer, priority_tag: Option<&str>) {
+    let mut lines: Vec<LineCopy> = buffer.lines().map(Into::into).collect();
+    lines
+        .sort_by_key(|line| line_sort_key(line.date, &line.tags, priority_tag));
+
+    // TODO update the highlight once Weechat starts supporting it.
+    for (line, new) in buffer.lines().zip(lines.drain(..)) {
+        let tags = new.tags.iter().map(String::as_str).collect::<Vec<&str>>();
+        let data = LineData {
+            prefix: Some(&new.prefix),
+            message: Some(&new.message),
+            date: Some(new.date),
+            date_printed: Some(new.date_printed),
+            tags: Some(&tags),
+        };
+        line.update(data)
+    }
 }
 
 fn redact_event_lines_in_buffer<F, G>(
@@ -753,7 +783,7 @@ mod tests {
     use matrix_sdk::ruma::{event_id, user_id};
 
     use super::{
-        format_buffer_name, format_thread_buffer_name,
+        format_buffer_name, format_thread_buffer_name, line_sort_key,
         reply_sender_id_from_tags, sanitize_thread_id, RoomBuffer,
     };
 
@@ -772,6 +802,39 @@ mod tests {
         let tags = ["matrix_text", "matrix_reply"];
 
         assert_eq!(None, reply_sender_id_from_tags(&tags));
+    }
+
+    #[test]
+    fn thread_root_lines_sort_before_existing_replies() {
+        let root_tag = "matrix_id_$root:example.org";
+        let root_tags = vec![root_tag.to_owned(), "matrix_text".to_owned()];
+        let reply_tags = vec!["matrix_text".to_owned()];
+
+        assert!(
+            line_sort_key(200, &root_tags, Some(root_tag))
+                < line_sort_key(100, &reply_tags, Some(root_tag))
+        );
+    }
+
+    #[test]
+    fn thread_root_wins_same_timestamp_ties() {
+        let root_tag = "matrix_id_$root:example.org";
+        let root_tags = vec![root_tag.to_owned()];
+        let reply_tags = vec!["matrix_text".to_owned()];
+
+        assert!(
+            line_sort_key(100, &root_tags, Some(root_tag))
+                < line_sort_key(100, &reply_tags, Some(root_tag))
+        );
+    }
+
+    #[test]
+    fn ordinary_lines_remain_chronological() {
+        let tags = vec!["matrix_text".to_owned()];
+
+        assert!(
+            line_sort_key(100, &tags, None) < line_sort_key(200, &tags, None)
+        );
     }
 
     #[test]
