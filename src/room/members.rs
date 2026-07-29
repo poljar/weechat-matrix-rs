@@ -99,6 +99,37 @@ impl Members {
         self.nicks.insert(member.user_id().to_owned(), nick);
     }
 
+    pub(super) fn update_mentions_localvar(&self) {
+        let mut candidates: Vec<_> = self
+            .nicks
+            .iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "display_name": entry.value(),
+                    "user_id": entry.key().as_str(),
+                })
+            })
+            .collect();
+        candidates.sort_by(|left, right| {
+            left["display_name"]
+                .as_str()
+                .unwrap_or_default()
+                .to_lowercase()
+                .cmp(
+                    &right["display_name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_lowercase(),
+                )
+        });
+
+        if let Ok(buffer) = self.buffer.buffer_handle().upgrade() {
+            if let Ok(json) = serde_json::to_string(&candidates) {
+                buffer.set_localvar("matrix_mentions", &json);
+            }
+        }
+    }
+
     fn weechat_member(&self, member: RoomMember) -> WeechatRoomMember {
         let user_id = member.user_id();
         let sdk_room = active_room(&self.room);
@@ -215,6 +246,7 @@ impl Members {
         }
 
         self.update_member(user_id).await;
+        self.update_mentions_localvar();
     }
 
     /// Remove a Weechat room member by user ID.
@@ -251,6 +283,7 @@ impl Members {
         if let Some((_, nick)) = self.nicks.remove(user_id) {
             buffer.remove_nick(&nick);
         }
+        self.update_mentions_localvar();
     }
 
     /// Retrieve a reference to a Weechat room member by user ID.

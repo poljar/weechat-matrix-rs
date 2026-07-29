@@ -315,6 +315,16 @@ fn make_emote_message_content(
     content
 }
 
+fn with_mentions(
+    mut content: RoomMessageEventContent,
+    mentioned_user_ids: Vec<OwnedUserId>,
+) -> RoomMessageEventContent {
+    content.mentions = Some(matrix_sdk::ruma::events::Mentions::with_user_ids(
+        mentioned_user_ids,
+    ));
+    content
+}
+
 fn thread_root_from_buffer(buffer: &Buffer) -> Option<OwnedEventId> {
     buffer
         .get_localvar("thread_root")
@@ -529,6 +539,7 @@ impl RoomHandle {
             trace!("Restoring member {}", &user_id);
             room_buffer.members.restore_member(user_id).await;
         }
+        room_buffer.members.update_mentions_localvar();
 
         room_buffer.buffer.update_buffer_name();
         room_buffer.buffer.set_topic();
@@ -560,6 +571,27 @@ impl BufferInputCallbackAsync for MatrixRoom {
 }
 
 impl MatrixRoom {
+    pub(crate) fn mention_message_content(
+        &self,
+        buffer: &Buffer,
+        input: String,
+        mentioned_user_ids: Vec<OwnedUserId>,
+    ) -> RoomMessageEventContent {
+        let thread_root = thread_root_from_buffer(buffer);
+        let latest_thread_event = thread_root.as_ref().and_then(|root| {
+            self.latest_thread_event_ids.borrow().get(root).cloned()
+        });
+        with_mentions(
+            make_text_message_content(
+                input,
+                self.config.borrow().input().markdown_input(),
+                thread_root,
+                latest_thread_event,
+            ),
+            mentioned_user_ids,
+        )
+    }
+
     pub fn owns_buffer(&self, buffer: &Buffer) -> bool {
         self.buffer.owns_buffer(buffer)
     }
@@ -1808,6 +1840,24 @@ mod tests {
             restored_prev_batch(Some("token".to_owned())),
             Some(PrevBatch::Backwards(Some("token".to_owned())))
         );
+    }
+
+    #[test]
+    fn accepted_mentions_become_matrix_mentions() {
+        let user_id = UserId::parse("@ada:example.org").unwrap();
+        let content =
+            with_mentions(text_content("hello @Ada"), vec![user_id.clone()]);
+
+        let mentions = content.mentions.expect("m.mentions");
+        assert!(mentions.user_ids.contains(&user_id));
+        assert!(!mentions.room);
+
+        let json = serde_json::to_value(with_mentions(
+            text_content("hello @Ada"),
+            vec![user_id],
+        ))
+        .unwrap();
+        assert_eq!(json["m.mentions"]["user_ids"][0], "@ada:example.org");
     }
 
     #[test]
