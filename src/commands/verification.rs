@@ -1,6 +1,8 @@
 use clap::{
-    App as Argparse, AppSettings as ArgParseSettings, ArgMatches, SubCommand,
+    App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
+    SubCommand,
 };
+use matrix_sdk::ruma::{OwnedUserId, UserId};
 
 use weechat::{
     buffer::Buffer,
@@ -25,7 +27,8 @@ impl VerificationCommand {
     pub const DESCRIPTION: &'static str =
         "Control interactive verification flows";
 
-    pub const COMPLETION: &'static str = "accept|confirm|cancel";
+    pub const COMPLETION: &'static str =
+        "start %(matrix-users)|accept|confirm|cancel";
     pub const SETTINGS: &'static [ArgParseSettings] = &[
         ArgParseSettings::DisableHelpFlags,
         ArgParseSettings::DisableVersion,
@@ -36,9 +39,11 @@ impl VerificationCommand {
     pub fn create(servers: &Servers) -> Result<Command, ()> {
         let settings = CommandSettings::new("verification")
             .description(Self::DESCRIPTION)
+            .add_argument("verification start <contact>")
             .add_argument("verification accept|confirm|cancel")
             .arguments_description(
-                "accept: accept the verification request
+                "  start: start an interactive verification with a contact
+                accept: accept the verification request
                 confirm: confirm that the emojis match on both sides or \
                 confirm that the other side has scanned our QR code
                 cancel: cancel the verification flow or request",
@@ -77,8 +82,27 @@ impl VerificationCommand {
         }
     }
 
+    fn start(servers: &Servers, buffer: &Buffer, user_id: OwnedUserId) {
+        if let Some(server) = servers.find_server(buffer) {
+            Weechat::spawn(async move {
+                server.start_verification(user_id).await;
+            })
+            .detach();
+        } else {
+            Weechat::print("Must be executed on Matrix buffer")
+        }
+    }
+
     pub fn run(buffer: &Buffer, servers: &Servers, args: &ArgMatches) {
         match args.subcommand() {
+            ("start", Some(args)) => {
+                let user_id =
+                    UserId::parse(args.value_of("contact").expect(
+                        "Contact wasn't provided despite being required",
+                    ))
+                    .expect("Contact wasn't a valid Matrix user ID");
+                Self::start(servers, buffer, user_id);
+            }
             ("accept", _) => {
                 Self::verification(servers, buffer, CommandType::Accept)
             }
@@ -94,6 +118,16 @@ impl VerificationCommand {
 
     pub fn subcommands() -> Vec<Argparse<'static, 'static>> {
         vec![
+            SubCommand::with_name("start")
+                .about("Start an interactive verification with a contact")
+                .arg(Arg::with_name("contact").required(true).validator(
+                    |contact| {
+                        UserId::parse(contact).map(|_| ()).map_err(|_| {
+                            "The contact isn't a valid Matrix user ID"
+                                .to_owned()
+                        })
+                    },
+                )),
             SubCommand::with_name("accept")
                 .about("Accept a verification request"),
             SubCommand::with_name("confirm").about(
@@ -103,6 +137,38 @@ impl VerificationCommand {
             SubCommand::with_name("cancel")
                 .about("Cancel the verification flow"),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parser() -> Argparse<'static, 'static> {
+        Argparse::new("verification")
+            .settings(VerificationCommand::SETTINGS)
+            .subcommands(VerificationCommand::subcommands())
+    }
+
+    #[test]
+    fn parses_verification_start_contact() {
+        let matches = parser()
+            .get_matches_from_safe(vec![
+                "verification",
+                "start",
+                "@alice:example.org",
+            ])
+            .expect("valid verification start command");
+        let args = matches.subcommand_matches("start").expect("start args");
+
+        assert_eq!(args.value_of("contact"), Some("@alice:example.org"));
+    }
+
+    #[test]
+    fn rejects_invalid_verification_start_contact() {
+        assert!(parser()
+            .get_matches_from_safe(vec!["verification", "start", "alice"])
+            .is_err());
     }
 }
 

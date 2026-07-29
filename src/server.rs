@@ -1793,6 +1793,64 @@ impl InnerServer {
         }
     }
 
+    pub async fn start_verification(&self, user_id: OwnedUserId) {
+        let Some(connection) = self.connection() else {
+            self.print_error("You must be connected to execute this command");
+            return;
+        };
+
+        let client = connection.client().clone();
+        let requested_user_id = user_id.clone();
+        let result = connection
+            .spawn(async move {
+                let Some(identity) = client
+                    .encryption()
+                    .request_user_identity(&requested_user_id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                else {
+                    return Ok(None);
+                };
+
+                identity
+                    .request_verification()
+                    .await
+                    .map(Some)
+                    .map_err(|error| error.to_string())
+            })
+            .await;
+
+        match result {
+            Ok(Some(request)) => {
+                self.print_network(&format!(
+                    "Sent a verification request to {}",
+                    user_id
+                ));
+
+                if request.room_id().is_none() {
+                    let flow_id = request.flow_id().to_owned();
+                    let buffer = VerificationBuffer::new(
+                        &self.server_name,
+                        &user_id,
+                        request,
+                        self.connection.clone(),
+                    );
+                    self.verification_buffers
+                        .borrow_mut()
+                        .insert(flow_id, buffer);
+                }
+            }
+            Ok(None) => self.print_error(&format!(
+                "No cross-signing identity was found for {}",
+                user_id
+            )),
+            Err(error) => self.print_error(&format!(
+                "Error starting verification with {}: {}",
+                user_id, error
+            )),
+        }
+    }
+
     pub fn autoconnect(&self) -> bool {
         self.settings.borrow().autoconnect
     }
