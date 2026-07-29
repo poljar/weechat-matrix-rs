@@ -291,6 +291,26 @@ fn make_text_message_content(
     content
 }
 
+fn make_emote_message_content(
+    body: String,
+    thread_root: Option<OwnedEventId>,
+    latest_thread_event: Option<OwnedEventId>,
+) -> RoomMessageEventContent {
+    let mut content = RoomMessageEventContent::emote_plain(body);
+
+    if let Some(thread_root) = thread_root {
+        let latest_thread_event =
+            latest_thread_event.unwrap_or_else(|| thread_root.clone());
+
+        content.relates_to = Some(Relation::Thread(Thread::plain(
+            thread_root,
+            latest_thread_event,
+        )));
+    }
+
+    content
+}
+
 fn thread_root_from_buffer(buffer: &Buffer) -> Option<OwnedEventId> {
     buffer
         .get_localvar("thread_root")
@@ -538,6 +558,17 @@ impl BufferInputCallbackAsync for MatrixRoom {
 impl MatrixRoom {
     pub fn owns_buffer(&self, buffer: &Buffer) -> bool {
         self.buffer.owns_buffer(buffer)
+    }
+
+    pub async fn send_emote(&self, buffer: &Buffer<'_>, body: String) {
+        let thread_root = thread_root_from_buffer(buffer);
+        let latest_thread_event = thread_root.as_ref().and_then(|root| {
+            self.latest_thread_event_ids.borrow().get(root).cloned()
+        });
+        let content =
+            make_emote_message_content(body, thread_root, latest_thread_event);
+
+        self.send_message(content).await;
     }
 
     pub fn close_thread_buffer(&self, buffer: &Buffer) -> bool {
@@ -1797,6 +1828,31 @@ mod tests {
 
         let Some(Relation::Thread(thread)) = content.relates_to else {
             panic!("thread buffer input must send an m.thread relation");
+        };
+
+        assert_eq!(
+            thread.event_id,
+            EventId::parse("$thread-root:example.org").unwrap()
+        );
+        assert_eq!(
+            thread.in_reply_to.expect("fallback target").event_id,
+            EventId::parse("$latest-thread-event:example.org").unwrap()
+        );
+        assert!(thread.is_falling_back);
+    }
+
+    #[test]
+    fn thread_buffer_emote_sends_thread_relation() {
+        let content = make_emote_message_content(
+            "waves".to_owned(),
+            Some(EventId::parse("$thread-root:example.org").unwrap()),
+            Some(EventId::parse("$latest-thread-event:example.org").unwrap()),
+        );
+
+        assert!(matches!(content.msgtype, MessageType::Emote(_)));
+
+        let Some(Relation::Thread(thread)) = content.relates_to else {
+            panic!("thread buffer emote must send an m.thread relation");
         };
 
         assert_eq!(
