@@ -852,6 +852,10 @@ impl InnerServer {
                 &login_state.user_id,
             );
             self.rooms.borrow_mut().insert(room_id.to_owned(), buffer);
+
+            for room in self.rooms() {
+                room.refresh_space_children();
+            }
         }
 
         self.rooms.borrow().get(room_id).cloned().unwrap()
@@ -1353,6 +1357,7 @@ impl InnerServer {
         if refresh_parent_spaces {
             for room in self.rooms() {
                 room.update_parent_spaces();
+                room.refresh_space_children();
             }
         }
     }

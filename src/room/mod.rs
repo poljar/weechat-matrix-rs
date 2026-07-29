@@ -26,7 +26,7 @@ mod buffer;
 mod members;
 mod verification;
 
-use buffer::{print_rendered_event_to_buffer, RoomBuffer};
+use buffer::{print_rendered_event_to_buffer, RoomBuffer, SpaceChildSelection};
 use members::Members;
 pub use members::WeechatRoomMember;
 use tokio::runtime::Handle;
@@ -44,6 +44,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Mutex, MutexGuard,
     },
+    time::Duration,
 };
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -75,8 +76,8 @@ use matrix_sdk::{
         },
         serde::Raw,
         EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomAliasId,
-        OwnedRoomId, OwnedTransactionId, OwnedUserId, RoomId, TransactionId,
-        UInt, UserId,
+        OwnedRoomId, OwnedRoomOrAliasId, OwnedServerName, OwnedTransactionId,
+        OwnedUserId, RoomId, TransactionId, UInt, UserId,
     },
     StoreError,
 };
@@ -102,6 +103,8 @@ pub struct RoomHandle {
 }
 
 pub(super) type SharedRoom = Rc<RefCell<Option<Room>>>;
+
+const SPACE_JOIN_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub(super) fn maybe_active_room(room: &SharedRoom) -> Option<Room> {
     room.borrow().as_ref().cloned()
@@ -591,6 +594,14 @@ impl RoomHandle {
         *room.buffer.inner.borrow_mut() = Some(buffer_handle.clone());
         room.buffer.update_parent_spaces();
 
+        if room.room().is_space() {
+            buffer.disable_nicklist();
+            buffer.disable_nicklist_groups();
+            buffer.disable_multiline();
+            buffer.disable_log();
+            room.buffer.refresh_space_children();
+        }
+
         Self { inner: room }
     }
 
@@ -639,6 +650,7 @@ impl RoomHandle {
         room_buffer.buffer.update_buffer_name();
         room_buffer.buffer.set_topic();
         room_buffer.buffer.update_parent_spaces();
+        room_buffer.buffer.refresh_space_children();
 
         Ok(room_buffer)
     }
@@ -647,6 +659,30 @@ impl RoomHandle {
 #[async_trait(?Send)]
 impl BufferInputCallbackAsync for MatrixRoom {
     async fn callback(&mut self, buffer: BufferHandle, input: String) {
+        // Only the main Space buffer is a hierarchy selector. A thread buffer
+        // belonging to the same Matrix room keeps normal message semantics.
+        let space_buffer = buffer.upgrade().ok().filter(|buffer| {
+            self.room().is_space() && self.buffer.is_main_buffer(buffer)
+        });
+
+        if let Some(buffer) = space_buffer {
+            let Some(server_name) = buffer.get_localvar("server") else {
+                return;
+            };
+
+            match self.buffer.space_child_command(&input, &server_name) {
+                SpaceChildSelection::Open(command) => {
+                    let _ = buffer.run_command(&command);
+                }
+                SpaceChildSelection::Join { room_id, via } => {
+                    self.join_space_child(room_id, via).await;
+                }
+                SpaceChildSelection::NoMatch => {}
+            }
+
+            return;
+        }
+
         let thread_root = buffer
             .upgrade()
             .ok()
@@ -685,6 +721,49 @@ impl MatrixRoom {
             ),
             mentioned_user_ids,
         )
+    }
+
+    async fn join_space_child(
+        &self,
+        room_id: OwnedRoomId,
+        via: Vec<OwnedServerName>,
+    ) {
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        self.print_network(&format!("Joining room {}...", room_id));
+
+        let client = connection.client().clone();
+        let target = room_id.to_string();
+        let room_id_or_alias: OwnedRoomOrAliasId =
+            room_id.as_str().parse().expect("valid Matrix room ID");
+        let result = connection
+            .spawn(async move {
+                tokio::time::timeout(SPACE_JOIN_TIMEOUT, async move {
+                    client
+                        .join_room_by_id_or_alias(&room_id_or_alias, &via)
+                        .await
+                })
+                .await
+            })
+            .await;
+
+        match result {
+            Ok(Ok(room)) => self.print_network(&format!(
+                "Successfully joined room {}",
+                room.room_id()
+            )),
+            Ok(Err(error)) => self
+                .print_error(&format!("Failed to join {}: {}", target, error)),
+            Err(error) => self.print_error(&format!(
+                "Timed out joining {} after {} seconds: {}",
+                target,
+                SPACE_JOIN_TIMEOUT.as_secs(),
+                error
+            )),
+        }
     }
 
     pub fn owns_buffer(&self, buffer: &Buffer) -> bool {
@@ -785,6 +864,10 @@ impl MatrixRoom {
 
     pub fn update_parent_spaces(&self) {
         self.buffer.update_parent_spaces();
+    }
+
+    pub fn refresh_space_children(&self) {
+        self.buffer.refresh_space_children();
     }
 
     pub fn accept_verification(&self) {
@@ -1747,6 +1830,14 @@ impl MatrixRoom {
         }
     }
 
+    pub fn update_input(&self, buffer: &Buffer) {
+        if self.room().is_space() && self.buffer.is_main_buffer(buffer) {
+            self.buffer.render_space_children();
+        } else {
+            self.update_typing_notice();
+        }
+    }
+
     pub fn is_busy(&self) -> bool {
         self.messages_in_flight.locked()
     }
@@ -2245,6 +2336,9 @@ impl MatrixRoom {
             }
             AnySyncStateEvent::SpaceParent(_) => {
                 self.buffer.update_parent_spaces()
+            }
+            AnySyncStateEvent::SpaceChild(_) => {
+                self.buffer.refresh_space_children()
             }
             AnySyncStateEvent::RoomEncryption(_)
             | AnySyncStateEvent::RoomJoinRules(_) => {

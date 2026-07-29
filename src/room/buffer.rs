@@ -2,12 +2,14 @@ use std::{borrow::Cow, cell::RefCell, collections::HashMap, rc::Rc};
 
 use futures_util::StreamExt;
 use matrix_sdk::{
+    deserialized_responses::SyncOrStrippedState,
     room::ParentSpace,
     ruma::{
-        EventId, OwnedEventId, OwnedRoomAliasId, OwnedUserId, TransactionId,
-        UserId,
+        events::{space::child::SpaceChildEventContent, SyncStateEvent},
+        EventId, OwnedEventId, OwnedRoomAliasId, OwnedRoomId, OwnedServerName,
+        OwnedUserId, TransactionId, UserId,
     },
-    Error, Room,
+    Error, Room, RoomState,
 };
 use tokio::runtime::Handle;
 use weechat::{
@@ -25,6 +27,7 @@ pub struct RoomBuffer {
     runtime: Handle,
     pub(super) inner: Rc<RefCell<Option<BufferHandle>>>,
     thread_buffers: Rc<RefCell<HashMap<OwnedEventId, BufferHandle>>>,
+    space_children: Rc<RefCell<Vec<SpaceChildInfo>>>,
 }
 
 struct LineCopy {
@@ -54,6 +57,7 @@ impl RoomBuffer {
             runtime,
             inner: Rc::new(RefCell::new(None)),
             thread_buffers: Rc::new(RefCell::new(HashMap::new())),
+            space_children: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -112,13 +116,7 @@ impl RoomBuffer {
     }
 
     pub fn owns_buffer(&self, buffer: &Buffer) -> bool {
-        if self
-            .inner
-            .borrow()
-            .as_ref()
-            .and_then(|b| b.upgrade().ok())
-            .is_some_and(|b| &b == buffer)
-        {
+        if self.is_main_buffer(buffer) {
             return true;
         }
 
@@ -126,6 +124,14 @@ impl RoomBuffer {
             .borrow()
             .values()
             .any(|handle| handle.upgrade().is_ok_and(|b| &b == buffer))
+    }
+
+    pub fn is_main_buffer(&self, buffer: &Buffer) -> bool {
+        self.inner
+            .borrow()
+            .as_ref()
+            .and_then(|b| b.upgrade().ok())
+            .is_some_and(|b| &b == buffer)
     }
 
     pub fn thread_root_for_buffer(
@@ -536,6 +542,81 @@ impl RoomBuffer {
         }
     }
 
+    pub fn refresh_space_children(&self) {
+        let Some(room) = maybe_active_room(&self.room) else {
+            return;
+        };
+
+        if !room.is_space() {
+            return;
+        }
+
+        match self.runtime.block_on(space_children(room)) {
+            Ok(children) => {
+                *self.space_children.borrow_mut() = children;
+                self.render_space_children();
+            }
+            Err(error) => {
+                Weechat::print(&format!(
+                    "{}: Error fetching space children from the store: {}",
+                    Weechat::prefix(Prefix::Error),
+                    error,
+                ));
+            }
+        }
+    }
+
+    /// Reuse the room buffer input as a live filter, like WeeChat's `/fset`.
+    ///
+    /// The stable numbers refer to the unfiltered hierarchy so narrowing and
+    /// selecting never changes the target underneath the user.
+    pub fn render_space_children(&self) {
+        let buffer_handle = self.buffer_handle();
+        let Ok(buffer) = buffer_handle.upgrade() else {
+            return;
+        };
+
+        let input = buffer.input();
+        let children = self.space_children.borrow();
+        let visible = filter_space_children(&children, &input);
+
+        buffer.clear();
+        buffer.set_title(&format!(
+            "Space rooms: showing {} of {}. Type to filter; press Enter on a \
+             number or unique name to open/join.",
+            visible.len(),
+            children.len(),
+        ));
+
+        if visible.is_empty() {
+            buffer.print("No rooms match this filter.");
+            return;
+        }
+
+        for (index, child) in visible {
+            let action = if child.joined { "open" } else { "join" };
+            let kind = if child.is_space { "space" } else { "room" };
+
+            buffer.print(&format!(
+                "{:>3}  [{action} {kind}] {}  {}",
+                index + 1,
+                child.name,
+                child.room_id,
+            ));
+        }
+    }
+
+    pub fn space_child_command(
+        &self,
+        input: &str,
+        server_name: &str,
+    ) -> SpaceChildSelection {
+        select_space_child(&self.space_children.borrow(), input)
+            .map_or(SpaceChildSelection::NoMatch, |child| {
+                space_child_selection(server_name, child)
+            })
+    }
+
     fn alias(&self) -> Option<OwnedRoomAliasId> {
         maybe_active_room(&self.room).and_then(|room| room.canonical_alias())
     }
@@ -576,6 +657,83 @@ impl RoomBuffer {
 
     pub fn thread_buffer_suffix(thread_root: &EventId) -> String {
         sanitize_thread_id(thread_root)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SpaceChildInfo {
+    room_id: OwnedRoomId,
+    name: String,
+    joined: bool,
+    is_space: bool,
+    order: Option<String>,
+    via: Vec<OwnedServerName>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum SpaceChildSelection {
+    Open(String),
+    Join {
+        room_id: OwnedRoomId,
+        via: Vec<OwnedServerName>,
+    },
+    NoMatch,
+}
+
+fn filter_space_children<'a>(
+    children: &'a [SpaceChildInfo],
+    input: &str,
+) -> Vec<(usize, &'a SpaceChildInfo)> {
+    let query = input.trim().to_lowercase();
+
+    children
+        .iter()
+        .enumerate()
+        .filter(|(_, child)| {
+            query.is_empty()
+                || child.name.to_lowercase().contains(&query)
+                || child.room_id.as_str().to_lowercase().contains(&query)
+        })
+        .collect()
+}
+
+fn select_space_child<'a>(
+    children: &'a [SpaceChildInfo],
+    input: &str,
+) -> Option<&'a SpaceChildInfo> {
+    let input = input.trim();
+
+    if input.is_empty() {
+        return None;
+    }
+
+    if let Ok(index) = input.parse::<usize>() {
+        return index.checked_sub(1).and_then(|index| children.get(index));
+    }
+
+    let matches = filter_space_children(children, input);
+
+    if matches.len() == 1 {
+        matches.first().map(|(_, child)| *child)
+    } else {
+        None
+    }
+}
+
+fn space_child_selection(
+    server_name: &str,
+    child: &SpaceChildInfo,
+) -> SpaceChildSelection {
+    if child.joined {
+        SpaceChildSelection::Open(format!(
+            "/buffer {}.{}",
+            server_name, child.room_id
+        ))
+    } else {
+        SpaceChildSelection::Join {
+            room_id: child.room_id.clone(),
+            via: child.via.clone(),
+        }
     }
 }
 
@@ -896,12 +1054,29 @@ fn replace_local_echo_in_buffer(
 
 #[cfg(test)]
 mod tests {
-    use matrix_sdk::ruma::{event_id, user_id};
+    use matrix_sdk::ruma::{event_id, room_id, user_id};
 
     use super::{
-        format_buffer_name, format_thread_buffer_name, line_sort_key,
-        reply_sender_id_from_tags, sanitize_thread_id, RoomBuffer,
+        filter_space_children, format_buffer_name, format_thread_buffer_name,
+        line_sort_key, reply_sender_id_from_tags, sanitize_thread_id,
+        select_space_child, space_child_selection, RoomBuffer, SpaceChildInfo,
+        SpaceChildSelection,
     };
+
+    fn space_child(
+        room_id: &matrix_sdk::ruma::RoomId,
+        name: &str,
+        joined: bool,
+    ) -> SpaceChildInfo {
+        SpaceChildInfo {
+            room_id: room_id.to_owned(),
+            name: name.to_owned(),
+            joined,
+            is_space: false,
+            order: None,
+            via: vec!["example.org".parse().unwrap()],
+        }
+    }
 
     #[test]
     fn reply_sender_uses_matrix_sender_tag() {
@@ -986,6 +1161,64 @@ mod tests {
     }
 
     #[test]
+    fn filters_space_children_by_name_or_room_id() {
+        let children = [
+            space_child(room_id!("!alpha:example.org"), "Alpha", true),
+            space_child(room_id!("!beta:example.org"), "Release room", false),
+        ];
+
+        let by_name = filter_space_children(&children, "RELEASE");
+        let by_id = filter_space_children(&children, "!ALPHA");
+
+        assert_eq!(by_name.len(), 1);
+        assert_eq!(by_name[0].1.room_id, room_id!("!beta:example.org"));
+        assert_eq!(by_id.len(), 1);
+        assert_eq!(by_id[0].1.room_id, room_id!("!alpha:example.org"));
+    }
+
+    #[test]
+    fn selects_space_child_by_number_or_unique_filter() {
+        let children = [
+            space_child(room_id!("!alpha:example.org"), "Alpha", true),
+            space_child(room_id!("!alpine:example.org"), "Alpine", false),
+            space_child(room_id!("!beta:example.org"), "Beta", false),
+        ];
+
+        assert_eq!(
+            select_space_child(&children, "2")
+                .map(|child| child.room_id.as_ref()),
+            Some(room_id!("!alpine:example.org")),
+        );
+        assert_eq!(
+            select_space_child(&children, "bet")
+                .map(|child| child.room_id.as_ref()),
+            Some(room_id!("!beta:example.org")),
+        );
+        assert!(select_space_child(&children, "alp").is_none());
+    }
+
+    #[test]
+    fn opens_joined_space_children_and_joins_other_children() {
+        let joined =
+            space_child(room_id!("!joined:example.org"), "Joined", true);
+        let left = space_child(room_id!("!left:example.org"), "Left", false);
+
+        assert_eq!(
+            space_child_selection("matrix", &joined),
+            SpaceChildSelection::Open(
+                "/buffer matrix.!joined:example.org".to_owned()
+            ),
+        );
+        assert_eq!(
+            space_child_selection("matrix", &left),
+            SpaceChildSelection::Join {
+                room_id: room_id!("!left:example.org").to_owned(),
+                via: vec!["example.org".parse().unwrap()],
+            },
+        );
+    }
+
+    #[test]
     fn sanitizes_thread_event_id_for_buffer_name() {
         assert_eq!(
             sanitize_thread_id(event_id!("$abc/def:example.org")),
@@ -1048,4 +1281,72 @@ async fn parent_spaces(room: Room) -> Result<Vec<ParentSpaceInfo>, Error> {
     }
 
     Ok(spaces)
+}
+
+async fn space_children(room: Room) -> Result<Vec<SpaceChildInfo>, Error> {
+    let client = room.client();
+    let mut children = Vec::new();
+
+    for raw_event in room
+        .get_state_events_static::<SpaceChildEventContent>()
+        .await?
+    {
+        let event =
+            match raw_event.deserialize() {
+                Ok(SyncOrStrippedState::Sync(SyncStateEvent::Original(
+                    event,
+                ))) if !event.content.via.is_empty() => event,
+                Ok(_) => continue,
+                Err(error) => {
+                    tracing::warn!(
+                        room_id = ?room.room_id(),
+                        "Could not deserialize m.space.child: {error}"
+                    );
+                    continue;
+                }
+            };
+
+        let room_id = event.state_key;
+        let order = event.content.order.map(|order| order.to_string());
+
+        let (name, joined, is_space) =
+            if let Some(child_room) = client.get_room(&room_id) {
+                let joined = child_room.state() == RoomState::Joined;
+                let is_space = child_room.is_space();
+                let name = child_room
+                    .display_name()
+                    .await
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(|_| room_id.to_string());
+
+                (name, joined, is_space)
+            } else {
+                // The local state store knows the hierarchy relation but not a
+                // summary for rooms we have never joined. The room ID remains
+                // a useful, selectable fallback.
+                (room_id.to_string(), false, false)
+            };
+
+        children.push(SpaceChildInfo {
+            room_id,
+            name,
+            joined,
+            is_space,
+            order,
+            via: event.content.via,
+        });
+    }
+
+    children.sort_by(|left, right| {
+        left.order
+            .is_none()
+            .cmp(&right.order.is_none())
+            .then_with(|| left.order.cmp(&right.order))
+            .then_with(|| {
+                left.name.to_lowercase().cmp(&right.name.to_lowercase())
+            })
+            .then_with(|| left.room_id.cmp(&right.room_id))
+    });
+
+    Ok(children)
 }
