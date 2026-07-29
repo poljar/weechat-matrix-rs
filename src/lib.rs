@@ -190,7 +190,7 @@ impl SignalCallback for Servers {
                         })
                         .detach();
                     }
-                    "input_text_changed" => room.update_typing_notice(),
+                    "input_text_changed" => room.update_input(&buffer),
                     _ => (),
                 }
             }
