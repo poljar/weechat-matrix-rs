@@ -12,7 +12,7 @@ SOURCES := $(wildcard src/*.rs src/bar_items/*.rs src/commands/*.rs src/room/*.r
 
 PROFILE ?= release
 
-.PHONY: install install-user uninstall uninstall-user install-dir install-user-dir lint check all help deb
+.PHONY: install install-user uninstall uninstall-user install-dir install-user-dir lint check clean all help deb
 
 all: help
 
@@ -48,6 +48,11 @@ lint: ## Lint issues with clippy
 
 check: ## Run test suite
 	cargo test --release
+
+clean: ## Remove build artifacts
+	cargo clean
+	rm -rf target/debian
+	-find src -name '*.rs.bk' -delete 2>/dev/null || true
 
 # Get the base package version from Cargo.toml (fallback when no git tags are found)
 CARGO_VERSION := $(shell grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
