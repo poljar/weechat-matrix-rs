@@ -88,7 +88,7 @@ use matrix_sdk::{
         OwnedDeviceId, OwnedMxcUri, OwnedRoomAliasId, OwnedRoomId,
         OwnedRoomOrAliasId, OwnedUserId, RoomAliasId, RoomId, UserId,
     },
-    Client, Error,
+    Client, Error, SessionTokens,
 };
 
 use weechat::{
@@ -1342,6 +1342,85 @@ impl InnerServer {
             self.name(),
             Weechat::color("reset"),
         ));
+    }
+
+    pub fn receive_session_tokens(&self, tokens: SessionTokens) {
+        let secure_prefix: String = self
+            .server_name
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() {
+                    character
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let access_name = format!("{secure_prefix}_access_token");
+        let refresh_name = format!("{secure_prefix}_refresh_token");
+
+        let buffer_handle = {
+            let mut server_buffer = self.server_buffer.borrow_mut();
+            self.get_or_create_buffer(&mut server_buffer).clone()
+        };
+        let Ok(buffer) = buffer_handle.upgrade() else {
+            self.print_error("Unable to persist refreshed Matrix session");
+            return;
+        };
+
+        let quote = |value: &str| {
+            format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+        };
+
+        let commands = [
+            format!(
+                "/secure set {access_name} {}",
+                quote(&tokens.access_token)
+            ),
+            format!(
+                "/set matrix-rust.server.{}.access_token \
+                 \"${{sec.data.{access_name}}}\"",
+                self.server_name
+            ),
+        ];
+
+        for command in commands {
+            if buffer.run_command(&command).is_err() {
+                self.print_error(
+                    "Unable to persist refreshed Matrix access token",
+                );
+                return;
+            }
+        }
+
+        if let Some(refresh_token) = tokens.refresh_token {
+            let commands = [
+                format!("/secure set {refresh_name} {}", quote(&refresh_token)),
+                format!(
+                    "/set matrix-rust.server.{}.refresh_token \
+                     \"${{sec.data.{refresh_name}}}\"",
+                    self.server_name
+                ),
+            ];
+
+            for command in commands {
+                if buffer.run_command(&command).is_err() {
+                    self.print_error(
+                        "Unable to persist refreshed Matrix refresh token",
+                    );
+                    return;
+                }
+            }
+        }
+
+        if buffer.run_command("/save sec").is_err()
+            || buffer.run_command("/save matrix-rust").is_err()
+        {
+            self.print_error("Unable to save refreshed Matrix session");
+            return;
+        }
+
+        self.print_network("Persisted refreshed Matrix session");
     }
 
     pub fn receive_sso_url(&self, url: &str) {

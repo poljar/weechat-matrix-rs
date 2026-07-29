@@ -49,8 +49,8 @@ use matrix_sdk::{
     store::RoomLoadSettings,
     sync::State,
     utils::local_server::LocalServerBuilder,
-    Client, LoopCtrl, Result as MatrixResult, RoomMemberships, SessionMeta,
-    SessionTokens,
+    Client, LoopCtrl, Result as MatrixResult, RoomMemberships, SessionChange,
+    SessionMeta, SessionTokens,
 };
 
 use weechat::{Task, Weechat};
@@ -81,6 +81,7 @@ impl InteractiveAuthInfo {
 pub enum ClientMessage {
     LoginMessage(LoginResponse),
     SessionRestored(OwnedUserId),
+    SessionTokensRefreshed(SessionTokens),
     SsoLoginUrl(String),
     SyncState(OwnedRoomId, AnySyncStateEvent),
     SyncEvent(OwnedRoomId, AnySyncTimelineEvent),
@@ -373,6 +374,9 @@ impl Connection {
                     ClientMessage::SessionRestored(user_id) => {
                         server.receive_restored_login(user_id)
                     }
+                    ClientMessage::SessionTokensRefreshed(tokens) => {
+                        server.receive_session_tokens(tokens)
+                    }
                     ClientMessage::SsoLoginUrl(url) => {
                         server.receive_sso_url(&url)
                     }
@@ -637,6 +641,56 @@ impl Connection {
                 }
             }
         }
+
+        // Refresh tokens can be rotated by the homeserver. Persist every
+        // rotated pair on the WeeChat thread so a later restart does not try
+        // the now-invalid token from the original login.
+        let mut session_changes = client.subscribe_to_session_changes();
+        let session_client = client.clone();
+        let session_channel = channel.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = session_channel.closed() => return,
+                    change = session_changes.recv() => {
+                        match change {
+                            Ok(SessionChange::TokensRefreshed) => {
+                                let Some(tokens) =
+                                    session_client.session_tokens()
+                                else {
+                                    continue;
+                                };
+
+                                if session_channel
+                                    .send(Ok(
+                                        ClientMessage::SessionTokensRefreshed(
+                                            tokens,
+                                        ),
+                                    ))
+                                    .await
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                            }
+                            Ok(SessionChange::UnknownToken { .. }) => {}
+                            Err(
+                                tokio::sync::broadcast::error::RecvError::Lagged(
+                                    _,
+                                ),
+                            ) => {
+                                // The current client tokens are authoritative;
+                                // the next refresh notification will persist
+                                // their latest value.
+                            }
+                            Err(
+                                tokio::sync::broadcast::error::RecvError::Closed,
+                            ) => return,
+                        }
+                    }
+                }
+            }
+        });
 
         let filter = client
             .get_or_upload_filter("sync", Connection::sync_filter())
