@@ -41,6 +41,10 @@ impl JoinCommand {
         });
 
         if let Some(server) = server {
+            let domain = server.user_id_domain();
+            let room_id_or_alias =
+                qualify_local_room_alias(&room_id_or_alias, domain.as_deref());
+
             Weechat::spawn(async move {
                 server.join_room(room_id_or_alias).await;
             })
@@ -51,6 +55,19 @@ impl JoinCommand {
             false
         }
     }
+}
+
+fn qualify_local_room_alias(
+    room_id_or_alias: &str,
+    default_domain: Option<&str>,
+) -> String {
+    if room_id_or_alias.starts_with('#') && !room_id_or_alias.contains(':') {
+        if let Some(default_domain) = default_domain {
+            return format!("{}:{}", room_id_or_alias, default_domain);
+        }
+    }
+
+    room_id_or_alias.to_owned()
 }
 
 impl CommandRunCallback for JoinCommand {
@@ -89,4 +106,47 @@ pub fn print_no_join_server_error() {
         Weechat::prefix(Prefix::Error),
         PLUGIN_NAME
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::qualify_local_room_alias;
+
+    #[test]
+    fn appends_current_domain_to_local_room_alias() {
+        assert_eq!(
+            qualify_local_room_alias("#project-room", Some("matrix.org")),
+            "#project-room:matrix.org"
+        );
+    }
+
+    #[test]
+    fn preserves_fully_qualified_room_alias() {
+        assert_eq!(
+            qualify_local_room_alias(
+                "#project-room:example.org",
+                Some("matrix.org")
+            ),
+            "#project-room:example.org"
+        );
+    }
+
+    #[test]
+    fn preserves_room_id() {
+        assert_eq!(
+            qualify_local_room_alias(
+                "!opaque-room-id:example.org",
+                Some("matrix.org")
+            ),
+            "!opaque-room-id:example.org"
+        );
+    }
+
+    #[test]
+    fn leaves_local_alias_unqualified_without_a_current_domain() {
+        assert_eq!(
+            qualify_local_room_alias("#project-room", None),
+            "#project-room"
+        );
+    }
 }
