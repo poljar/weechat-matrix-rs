@@ -126,6 +126,16 @@ impl ReplyCommand {
         }
     }
 
+    fn parser() -> Argparse<'static, 'static> {
+        Argparse::new("reply")
+            .settings(&[
+                ArgParseSettings::AllowLeadingHyphen,
+                ArgParseSettings::DisableHelpFlags,
+                ArgParseSettings::DisableVersion,
+            ])
+            .arg(Arg::with_name("arguments").multiple(true))
+    }
+
     fn reply(&self, buffer: &Buffer, event_id: OwnedEventId, message: String) {
         if let Some(room) = self.servers.find_room(buffer) {
             Weechat::spawn(async move {
@@ -142,20 +152,20 @@ impl ReplyCommand {
 
 impl CommandCallback for ReplyCommand {
     fn callback(&mut self, _: &Weechat, buffer: &Buffer, arguments: Args) {
-        let argparse = Argparse::new("reply")
-            .setting(ArgParseSettings::NoBinaryName)
-            .arg(Arg::with_name("arguments").multiple(true));
-
-        parse_and_run(argparse, arguments, |args| match Self::parse_arguments(
-            buffer,
-            args.values_of("arguments").map(|v| v.collect()),
-        ) {
-            Ok((event_id, message)) => self.reply(buffer, event_id, message),
-            Err(error) => buffer.print(&format!(
-                "{}matrix: {}",
-                Weechat::prefix(Prefix::Error),
-                error
-            )),
+        parse_and_run(Self::parser(), arguments, |args| {
+            match Self::parse_arguments(
+                buffer,
+                args.values_of("arguments").map(|v| v.collect()),
+            ) {
+                Ok((event_id, message)) => {
+                    self.reply(buffer, event_id, message)
+                }
+                Err(error) => buffer.print(&format!(
+                    "{}matrix: {}",
+                    Weechat::prefix(Prefix::Error),
+                    error
+                )),
+            }
         });
     }
 }
@@ -197,5 +207,31 @@ mod tests {
         };
 
         assert_eq!(event_id, in_reply_to.event_id);
+    }
+
+    #[test]
+    fn command_parser_discards_the_hook_command_name() {
+        let matches = ReplyCommand::parser()
+            .get_matches_from_safe(vec![
+                "reply",
+                "$chosen:example.org",
+                "message",
+            ])
+            .unwrap();
+        let arguments: Vec<_> =
+            matches.values_of("arguments").unwrap().collect();
+
+        assert_eq!(vec!["$chosen:example.org", "message"], arguments);
+    }
+
+    #[test]
+    fn command_parser_accepts_negative_reply_indexes() {
+        let matches = ReplyCommand::parser()
+            .get_matches_from_safe(vec!["reply", "-2", "message"])
+            .unwrap();
+        let arguments: Vec<_> =
+            matches.values_of("arguments").unwrap().collect();
+
+        assert_eq!(vec!["-2", "message"], arguments);
     }
 }
