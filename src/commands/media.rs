@@ -50,7 +50,7 @@ impl MediaCommand {
 
                 let file = args
                     .value_of("file")
-                    .map(|file| PathBuf::from(Weechat::expand_home(file)))
+                    .map(normalize_download_file)
                     .or_else(|| default_download_file(&uri, &download_prefix));
                 let file = match file {
                     Some(file) => file,
@@ -94,6 +94,22 @@ impl MediaCommand {
         ArgParseSettings::VersionlessSubcommands,
         ArgParseSettings::SubcommandRequiredElseHelp,
     ];
+}
+
+fn normalize_download_file(file: &str) -> PathBuf {
+    PathBuf::from(Weechat::expand_home(strip_download_file_quotes(file)))
+}
+
+fn strip_download_file_quotes(file: &str) -> &str {
+    let file = file.trim();
+    file
+        .strip_prefix('"')
+        .and_then(|file| file.strip_suffix('"'))
+        .or_else(|| {
+            file.strip_prefix('\'')
+                .and_then(|file| file.strip_suffix('\''))
+        })
+        .unwrap_or(file)
 }
 
 fn default_download_file(uri: &MxcUri, prefix: &str) -> Option<PathBuf> {
@@ -179,6 +195,18 @@ mod tests {
         assert_eq!(
             Some(PathBuf::from("matrix-media-some-media-id")),
             default_download_file(&uri, "matrix-media-")
+        );
+    }
+
+    #[test]
+    fn strips_weechat_preserved_quotes_from_download_file() {
+        assert_eq!(
+            "/tmp/a path/image.png",
+            strip_download_file_quotes("\"/tmp/a path/image.png\"")
+        );
+        assert_eq!(
+            "/tmp/a path/image.png",
+            strip_download_file_quotes("'/tmp/a path/image.png'")
         );
     }
 
