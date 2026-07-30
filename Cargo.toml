@@ -32,6 +32,7 @@ crate-type = ["cdylib"]
 default = []
 
 [dependencies]
+base64 = "0.22"
 clap = "2.34.0"
 base64 = "0.22"
 chrono = "0.4.22"
