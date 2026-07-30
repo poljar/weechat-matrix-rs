@@ -44,6 +44,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Mutex, MutexGuard,
     },
+    time::Duration,
 };
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -53,10 +54,11 @@ use matrix_sdk::{
     async_trait,
     attachment::{AttachmentConfig, AttachmentInfo, BaseFileInfo},
     deserialized_responses::AmbiguityChange,
-    room::Room,
+    room::{IncludeRelations, RelationsOptions, Room},
     ruma::{
+        api::Direction,
         events::{
-            relation::Thread,
+            relation::{RelationType, Thread},
             room::{
                 member::RoomMemberEventContent,
                 message::{
@@ -187,6 +189,8 @@ pub struct MatrixRoom {
     latest_event_id: Rc<RefCell<Option<OwnedEventId>>>,
     latest_read_event_id: Rc<RefCell<Option<OwnedEventId>>>,
     latest_thread_event_ids: Rc<RefCell<HashMap<OwnedEventId, OwnedEventId>>>,
+    thread_history_in_flight: Rc<RefCell<HashSet<OwnedEventId>>>,
+    thread_history_loaded: Rc<RefCell<HashSet<OwnedEventId>>>,
 
     outgoing_messages: MessageQueue,
 
@@ -352,6 +356,29 @@ fn rendered_root_to_seed<'a>(
     }
 }
 
+fn thread_root_from_timeline_event(
+    event: &AnyTimelineEvent,
+) -> Option<OwnedEventId> {
+    match event {
+        AnyTimelineEvent::MessageLike(event) => {
+            event.original_content().and_then(|content| match content {
+                AnyMessageLikeEventContent::RoomMessage(content) => {
+                    thread_root_from_content(&content).map(ToOwned::to_owned)
+                }
+                _ => None,
+            })
+        }
+        AnyTimelineEvent::State(_) => None,
+    }
+}
+
+fn thread_history_page_is_complete(
+    event_count: usize,
+    next_batch_token: Option<&str>,
+) -> bool {
+    event_count == 0 || next_batch_token.is_none()
+}
+
 impl RoomHandle {
     pub fn new(
         server_name: &str,
@@ -398,6 +425,8 @@ impl RoomHandle {
             latest_event_id: Rc::new(RefCell::new(None)),
             latest_read_event_id: Rc::new(RefCell::new(None)),
             latest_thread_event_ids: Rc::new(RefCell::new(HashMap::new())),
+            thread_history_in_flight: Rc::new(RefCell::new(HashSet::new())),
+            thread_history_loaded: Rc::new(RefCell::new(HashSet::new())),
             own_user_id: own_user_id.into(),
             members,
             buffer,
@@ -575,8 +604,27 @@ impl MatrixRoom {
         self.send_message(content).await;
     }
 
+    pub fn open_thread_buffer(
+        &self,
+        thread_root: &EventId,
+    ) -> Option<BufferHandle> {
+        if !self.buffer.contains_event(thread_root) {
+            return None;
+        }
+
+        self.get_or_create_thread_buffer(thread_root)
+    }
+
     pub fn close_thread_buffer(&self, buffer: &Buffer) -> bool {
-        if self.buffer.remove_thread_buffer_for_buffer(buffer) {
+        if let Some(thread_root) = self.buffer.thread_root_for_buffer(buffer) {
+            self.buffer.remove_thread_buffer(&thread_root);
+            self.thread_history_in_flight
+                .borrow_mut()
+                .remove(&thread_root);
+            self.thread_history_loaded.borrow_mut().remove(&thread_root);
+            self.latest_thread_event_ids
+                .borrow_mut()
+                .remove(&thread_root);
             buffer.close();
             true
         } else {
@@ -843,6 +891,16 @@ impl MatrixRoom {
     ) -> Option<BufferHandle> {
         if let Some(handle) = self.buffer.thread_buffer(thread_root) {
             if handle.upgrade().is_ok() {
+                self.buffer.seed_open_thread_buffer(thread_root);
+                self.buffer.sort_thread_messages(thread_root);
+                if !self.thread_history_loaded.borrow().contains(thread_root)
+                    && !self
+                        .thread_history_in_flight
+                        .borrow()
+                        .contains(thread_root)
+                {
+                    self.fetch_thread_history(thread_root.to_owned());
+                }
                 return Some(handle);
             }
 
@@ -902,7 +960,17 @@ impl MatrixRoom {
         self.buffer
             .set_thread_buffer(thread_root.to_owned(), buffer_handle.clone());
 
+        self.fetch_thread_history(thread_root.to_owned());
+
         Some(buffer_handle)
+    }
+
+    fn fetch_thread_history(&self, thread_root: OwnedEventId) {
+        let room = self.clone();
+        Weechat::spawn(async move {
+            room.get_thread_messages(thread_root).await;
+        })
+        .detach();
     }
 
     fn print_rendered_event_for_relation(
@@ -1483,6 +1551,185 @@ impl MatrixRoom {
         }
     }
 
+    pub async fn get_thread_messages(&self, thread_root: OwnedEventId) {
+        if self.thread_history_loaded.borrow().contains(&thread_root)
+            || !self
+                .thread_history_in_flight
+                .borrow_mut()
+                .insert(thread_root.clone())
+        {
+            return;
+        }
+
+        let mut from = None;
+        let mut seen_tokens = HashSet::new();
+        let mut seen_event_ids = HashSet::new();
+        let mut newest_event_id = None;
+        let mut completed = false;
+        let mut request_attempts = 0u8;
+        let Some(connection) = self.connection.borrow().as_ref().cloned()
+        else {
+            self.thread_history_in_flight
+                .borrow_mut()
+                .remove(&thread_root);
+            return;
+        };
+
+        loop {
+            let options = RelationsOptions {
+                from: from.clone(),
+                dir: Direction::Backward,
+                limit: Some(UInt::from(100u8)),
+                include_relations: IncludeRelations::RelationsOfType(
+                    RelationType::Thread,
+                ),
+                recurse: false,
+            };
+
+            let room = self.room();
+            let relation_root = thread_root.clone();
+            let relations = match connection
+                .spawn(
+                    async move { room.relations(relation_root, options).await },
+                )
+                .await
+            {
+                Ok(relations) => relations,
+                Err(error) => {
+                    request_attempts += 1;
+                    if request_attempts < 3 {
+                        let delay = Duration::from_millis(
+                            250 * u64::from(request_attempts),
+                        );
+                        connection
+                            .spawn(
+                                async move { tokio::time::sleep(delay).await },
+                            )
+                            .await;
+                        continue;
+                    }
+                    Weechat::print(&format!(
+                            "{}: Error fetching thread history for {} after {} attempts: {}",
+                            Weechat::prefix(Prefix::Error),
+                            thread_root,
+                            request_attempts,
+                            error,
+                        ));
+                    break;
+                }
+            };
+            request_attempts = 0;
+
+            let room_id = self.room_id.as_ref().to_owned();
+            let mut new_event_count = 0;
+            for event in relations
+                .chunk
+                .iter()
+                .filter_map(|event| event.raw().deserialize().ok())
+            {
+                let event = event.into_full_event(room_id.clone());
+                if !seen_event_ids.insert(event.event_id().to_owned()) {
+                    continue;
+                }
+                new_event_count += 1;
+                if newest_event_id.is_none() {
+                    newest_event_id = Some(event.event_id().to_owned());
+                }
+                self.handle_thread_history_event(&thread_root, &event).await;
+            }
+
+            if thread_history_page_is_complete(
+                new_event_count,
+                relations.next_batch_token.as_deref(),
+            ) {
+                completed = true;
+                break;
+            }
+
+            let Some(next) = relations.next_batch_token else {
+                completed = true;
+                break;
+            };
+            if !seen_tokens.insert(next.clone()) {
+                Weechat::print(&format!(
+                    "{}: Thread history pagination repeated a token for {}",
+                    Weechat::prefix(Prefix::Error),
+                    thread_root,
+                ));
+                break;
+            }
+            from = Some(next);
+        }
+
+        self.thread_history_in_flight
+            .borrow_mut()
+            .remove(&thread_root);
+
+        if completed {
+            self.thread_history_loaded
+                .borrow_mut()
+                .insert(thread_root.clone());
+            if let Some(event_id) = newest_event_id {
+                self.latest_thread_event_ids
+                    .borrow_mut()
+                    .entry(thread_root.clone())
+                    .or_insert(event_id);
+            }
+            self.buffer.seed_open_thread_buffer(&thread_root);
+            self.buffer.sort_thread_messages(&thread_root);
+        }
+    }
+
+    async fn handle_thread_history_event(
+        &self,
+        thread_root: &EventId,
+        event: &AnyTimelineEvent,
+    ) {
+        if thread_root_from_timeline_event(event).as_deref()
+            != Some(thread_root)
+        {
+            return;
+        }
+
+        let AnyTimelineEvent::MessageLike(event) = event else {
+            return;
+        };
+
+        if event.is_edit()
+            || !should_render_event(
+                self.buffer
+                    .thread_contains_event(thread_root, event.event_id()),
+            )
+        {
+            return;
+        }
+
+        let sender =
+            self.members.get(event.sender()).await.expect(
+                "Rendering a message but the sender isn't in the nicklist",
+            );
+        let Some(content) = event.original_content() else {
+            tracing::error!("Unhandled redacted event: {event:?}");
+            return;
+        };
+
+        if let Some(rendered) = self
+            .render_message_content(
+                event.event_id(),
+                event.origin_server_ts(),
+                &sender,
+                &content,
+            )
+            .await
+        {
+            self.print_rendered_event_for_relation(
+                Some(event.event_id()),
+                Some(thread_root),
+                rendered,
+            );
+        }
+    }
+
     async fn handle_outgoing_message(
         &self,
         transaction_id: &TransactionId,
@@ -1720,15 +1967,23 @@ impl MatrixRoom {
     }
 
     pub async fn handle_room_event(&self, event: &AnyTimelineEvent) {
+        let thread_root = thread_root_from_timeline_event(event);
+
         match &event {
             AnyTimelineEvent::MessageLike(event) => {
+                let already_rendered = thread_root.as_ref().map_or_else(
+                    || self.buffer.contains_event(event.event_id()),
+                    |thread_root| {
+                        self.buffer.thread_contains_event(
+                            thread_root,
+                            event.event_id(),
+                        )
+                    },
+                );
+
                 // TODO: Only print out historical events if they aren't edits of
                 // other events.
-                if !event.is_edit()
-                    && should_render_event(
-                        self.buffer.contains_event(event.event_id()),
-                    )
-                {
+                if !event.is_edit() && should_render_event(already_rendered) {
                     let sender = self.members.get(event.sender()).await.expect(
                     "Rendering a message but the sender isn't in the nicklist",
                 );
@@ -1753,8 +2008,11 @@ impl MatrixRoom {
                         )
                         .await
                     {
-                        self.buffer.print_rendered_event(rendered);
-                        self.buffer.seed_open_thread_buffer(event.event_id());
+                        self.print_rendered_event_for_relation(
+                            Some(event.event_id()),
+                            thread_root.as_deref(),
+                            rendered,
+                        );
                     }
                 }
             }
@@ -1883,6 +2141,37 @@ mod tests {
     }
 
     #[test]
+    fn historical_thread_event_keeps_its_root() {
+        let event: AnyTimelineEvent =
+            serde_json::from_value(serde_json::json!({
+                "type": "m.room.message",
+                "room_id": "!room:example.org",
+                "sender": "@alice:example.org",
+                "origin_server_ts": 1,
+                "event_id": "$reply:example.org",
+                "content": {
+                    "msgtype": "m.text",
+                    "body": "thread reply",
+                    "m.relates_to": {
+                        "rel_type": "m.thread",
+                        "event_id": "$root:example.org",
+                        "is_falling_back": true,
+                        "m.in_reply_to": {
+                            "event_id": "$root:example.org"
+                        }
+                    }
+                },
+                "unsigned": {}
+            }))
+            .unwrap();
+
+        assert_eq!(
+            thread_root_from_timeline_event(&event).as_deref(),
+            Some(EventId::parse("$root:example.org").unwrap().as_ref())
+        );
+    }
+
+    #[test]
     fn thread_reply_is_not_treated_as_another_thread_root() {
         let event_id = EventId::parse("$thread-reply:example.org").unwrap();
         let thread_root = EventId::parse("$thread-root:example.org").unwrap();
@@ -1892,6 +2181,14 @@ mod tests {
             None
         );
         assert_eq!(rendered_root_to_seed(None, Some(&thread_root)), None);
+    }
+
+    #[test]
+    fn empty_thread_history_page_finishes_pagination() {
+        assert!(thread_history_page_is_complete(0, Some("next")));
+        assert!(thread_history_page_is_complete(0, None));
+        assert!(thread_history_page_is_complete(8, None));
+        assert!(!thread_history_page_is_complete(8, Some("next")));
     }
 
     #[test]
