@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use url::Url;
 
 use matrix_sdk::{
@@ -525,9 +526,33 @@ fn media_download_message<C: HasUrlOrFile>(content: &C) -> Option<String> {
     })
 }
 
+fn media_tags<C: HasUrlOrFile>(content: &C) -> Vec<String> {
+    let mut tags = vec![
+        "matrix_media".to_owned(),
+        format!("matrix_media_kind_{}", content.media_kind()),
+        format!(
+            "matrix_media_name_{}",
+            URL_SAFE_NO_PAD.encode(content.body())
+        ),
+    ];
+
+    if let MediaSource::Plain(uri) = content.source() {
+        tags.push(format!(
+            "matrix_media_uri_{}",
+            URL_SAFE_NO_PAD.encode(uri.as_str())
+        ));
+    }
+
+    tags
+}
+
 impl<C: HasUrlOrFile> Render for C {
     type RenderContext = Url;
     const TAGS: &'static [&'static str] = &["matrix_media"];
+
+    fn tags(&self) -> Vec<String> {
+        media_tags(self)
+    }
 
     fn render(&self, homeserver: &Self::RenderContext) -> RenderedContent {
         // Convert MXC to HTTP(s) or EMXC, but fallback to MXC if unable to.
@@ -1317,6 +1342,8 @@ has_formatted_body!(TextMessageEventContent);
 pub trait HasUrlOrFile {
     fn body(&self) -> &str;
 
+    fn media_kind(&self) -> &'static str;
+
     #[inline]
     fn resolve_url(&self) -> &MxcUri {
         match self.source() {
@@ -1333,10 +1360,14 @@ pub trait HasUrlOrFile {
 // Same as above: a simple macro to implement the trait for structs with `url`
 // and `file` fields.
 macro_rules! has_url_or_file {
-    ($content: ident) => {
+    ($content: ident, $kind: literal) => {
         impl HasUrlOrFile for $content {
             fn body(&self) -> &str {
                 &self.body
+            }
+
+            fn media_kind(&self) -> &'static str {
+                $kind
             }
 
             fn source(&self) -> &MediaSource {
@@ -1353,10 +1384,10 @@ macro_rules! has_url_or_file {
     };
 }
 
-has_url_or_file!(AudioMessageEventContent);
-has_url_or_file!(FileMessageEventContent);
-has_url_or_file!(ImageMessageEventContent);
-has_url_or_file!(VideoMessageEventContent);
+has_url_or_file!(AudioMessageEventContent, "audio");
+has_url_or_file!(FileMessageEventContent, "file");
+has_url_or_file!(ImageMessageEventContent, "image");
+has_url_or_file!(VideoMessageEventContent, "video");
 
 /// Rendering implementation for membership events (joins, leaves, bans, profile
 /// changes, etc).
@@ -1594,6 +1625,24 @@ mod tests {
                     .to_owned()
             ),
             media_download_message(&content)
+        );
+    }
+
+    #[test]
+    fn plain_image_exposes_structured_media_tags() {
+        let content = ImageMessageEventContent::plain(
+            "image.png".to_owned(),
+            OwnedMxcUri::from("mxc://matrix.org/some-media-id"),
+        );
+
+        assert_eq!(
+            vec![
+                "matrix_media",
+                "matrix_media_kind_image",
+                "matrix_media_name_aW1hZ2UucG5n",
+                "matrix_media_uri_bXhjOi8vbWF0cml4Lm9yZy9zb21lLW1lZGlhLWlk",
+            ],
+            content.tags()
         );
     }
 
