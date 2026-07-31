@@ -91,7 +91,7 @@ Use /matrix [command] help to find out more.\n",
             .add_completion("sso-complete %(matrix_servers)")
             .add_completion("thread")
             .add_completion(
-                "help server|connect|disconnect|reconnect|join|sso-complete|read|thread|version|keys|devices|media|verify|verification",
+                "help server|connect|disconnect|reconnect|join|sso-complete|history|read|thread|version|keys|devices|media|verify|verification",
             );
 
         Command::new(
