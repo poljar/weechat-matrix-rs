@@ -198,6 +198,29 @@ pub struct MatrixRoom {
     verification: Verification,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct ResolvedReplyContext {
+    sender: String,
+    body: Option<String>,
+}
+
+fn reply_event_details(
+    event: AnySyncTimelineEvent,
+) -> Option<(OwnedUserId, Option<String>)> {
+    let AnySyncTimelineEvent::MessageLike(event) = event else {
+        return None;
+    };
+    let sender = event.sender().to_owned();
+    let body = match event {
+        AnySyncMessageLikeEvent::RoomMessage(
+            SyncMessageLikeEvent::Original(event),
+        ) => Some(event.content.msgtype.body().to_owned()),
+        _ => None,
+    };
+
+    Some((sender, body))
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MessageQueue {
     queue: Rc<
@@ -825,7 +848,7 @@ impl MatrixRoom {
                             None => None,
                         };
 
-                        Some((&in_reply_to.event_id, sender))
+                        Some((in_reply_to.event_id.clone(), sender))
                     }
                     _ => None,
                 };
@@ -873,8 +896,34 @@ impl MatrixRoom {
                     _ => return None,
                 };
 
-                if let Some((event_id, sender)) = reply_to {
-                    rendered.add_reply_context(event_id, sender.as_deref())
+                if let Some((event_id, mut reply_sender)) = reply_to {
+                    let needs_remote_context = reply_sender.is_none()
+                        || !rendered.has_reply_fallback();
+                    let remote_context = if needs_remote_context {
+                        self.load_reply_context(&event_id).await
+                    } else {
+                        None
+                    };
+
+                    if reply_sender.is_none() {
+                        reply_sender = remote_context
+                            .as_ref()
+                            .map(|context| context.sender.clone());
+                    }
+
+                    let fetched_body = if rendered.has_reply_fallback() {
+                        None
+                    } else {
+                        remote_context
+                            .as_ref()
+                            .and_then(|context| context.body.as_deref())
+                    };
+
+                    rendered.add_reply_context(
+                        &event_id,
+                        reply_sender.as_deref(),
+                        fetched_body,
+                    )
                 } else {
                     rendered
                 }
@@ -883,6 +932,24 @@ impl MatrixRoom {
         };
 
         Some(rendered)
+    }
+
+    async fn load_reply_context(
+        &self,
+        event_id: &EventId,
+    ) -> Option<ResolvedReplyContext> {
+        let timeline_event =
+            self.room().load_or_fetch_event(event_id, None).await.ok()?;
+        let event = timeline_event.raw().deserialize().ok()?;
+        let (sender_id, body) = reply_event_details(event)?;
+        let sender = self
+            .members
+            .get(&sender_id)
+            .await
+            .map(|member| member.nick())
+            .unwrap_or_else(|| sender_id.as_str().to_owned());
+
+        Some(ResolvedReplyContext { sender, body })
     }
 
     fn get_or_create_thread_buffer(
@@ -2077,6 +2144,32 @@ mod tests {
     fn already_rendered_events_are_not_printed_again() {
         assert!(should_render_event(false));
         assert!(!should_render_event(true));
+    }
+
+    #[test]
+    fn reply_event_details_extract_sender_and_body() {
+        let event: AnySyncTimelineEvent = serde_json::from_value(
+            serde_json::json!({
+                "type": "m.room.message",
+                "event_id": "$original:example.org",
+                "sender": "@alice:example.org",
+                "origin_server_ts": 1,
+                "content": {
+                    "msgtype": "m.text",
+                    "body": "original message"
+                },
+                "unsigned": {}
+            }),
+        )
+        .expect("valid Matrix event");
+
+        assert_eq!(
+            reply_event_details(event),
+            Some((
+                UserId::parse("@alice:example.org").unwrap(),
+                Some("original message".to_owned())
+            ))
+        );
     }
 
     #[test]

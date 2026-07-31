@@ -81,6 +81,7 @@ impl RenderedEvent {
         mut self,
         event_id: &EventId,
         sender: Option<&str>,
+        fetched_body: Option<&str>,
     ) -> Self {
         let reply_fallback = self.content.reply_fallback.take();
         let reply_sender = sender
@@ -98,33 +99,66 @@ impl RenderedEvent {
             .map(|line| line.tags.clone())
             .unwrap_or_default();
         tags.push("matrix_reply".to_owned());
+        tags.push(format!(
+            "matrix_reply_sender_hex_{}",
+            hex_encode(reply_sender.as_bytes())
+        ));
+        tags.push(format!("matrix_reply_id_{}", event_id.as_str()));
 
-        let mut context_lines = match reply_fallback {
-            Some(fallback) => {
+        let quoted_body = reply_fallback
+            .as_ref()
+            .map(|fallback| fallback.body.as_str())
+            .or(fetched_body);
+        let mut context_lines = match quoted_body {
+            Some(body) => {
+                let mut header_tags = tags.clone();
+                header_tags.push("matrix_reply_header".to_owned());
                 let mut lines = vec![RenderedLine {
-                    tags: tags.clone(),
+                    tags: header_tags,
                     message: format!("Reply to {}:", reply_sender),
                 }];
 
-                lines.extend(reply_quote_lines(&fallback.body).map(
-                    |message| RenderedLine {
-                        tags: tags.clone(),
+                lines.extend(reply_quote_lines(body).map(|message| {
+                    let mut quote_tags = tags.clone();
+                    quote_tags.push("matrix_reply_quote".to_owned());
+
+                    RenderedLine {
+                        tags: quote_tags,
                         message,
-                    },
-                ));
+                    }
+                }));
 
                 lines
             }
-            None => vec![RenderedLine {
-                tags,
-                message: format!("Reply to {}", reply_sender),
-            }],
+            None => {
+                tags.push("matrix_reply_header".to_owned());
+                vec![RenderedLine {
+                    tags,
+                    message: format!("Reply to {}", reply_sender),
+                }]
+            }
         };
 
         self.content.lines.splice(0..0, context_lines.drain(..));
 
         self
     }
+
+    pub fn has_reply_fallback(&self) -> bool {
+        self.content.reply_fallback.is_some()
+    }
+}
+
+fn hex_encode(input: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(input.len() * 2);
+
+    for byte in input {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+
+    encoded
 }
 
 #[derive(Debug)]
@@ -1631,13 +1665,22 @@ mod tests {
                 message: "reply body".to_owned(),
             }]),
         }
-        .add_reply_context(&event_id, Some("Alice"));
+        .add_reply_context(&event_id, Some("Alice"), None);
 
         assert_eq!(2, rendered.content.lines.len());
         assert_eq!("Reply to Alice", rendered.content.lines[0].message);
         assert!(rendered.content.lines[0]
             .tags
             .contains(&"matrix_reply".to_owned()));
+        assert!(rendered.content.lines[0]
+            .tags
+            .contains(&"matrix_reply_header".to_owned()));
+        assert!(rendered.content.lines[0]
+            .tags
+            .contains(&"matrix_reply_sender_hex_416c696365".to_owned()));
+        assert!(rendered.content.lines[0]
+            .tags
+            .contains(&"matrix_reply_id_$replyevent:example.org".to_owned()));
         assert_eq!("reply body", rendered.content.lines[1].message);
     }
 
@@ -1653,7 +1696,7 @@ mod tests {
                 message: "reply body".to_owned(),
             }]),
         }
-        .add_reply_context(&event_id, None);
+        .add_reply_context(&event_id, None, None);
 
         assert_eq!(
             "Reply to $replyevent:example.org",
@@ -1685,7 +1728,7 @@ mod tests {
             prefix: "bob\t".to_owned(),
             content: content.render(&()),
         }
-        .add_reply_context(&event_id, Some("Alice"));
+        .add_reply_context(&event_id, Some("Alice"), None);
 
         assert_eq!(3, rendered.content.lines.len());
         assert_eq!("Reply to Alice:", rendered.content.lines[0].message);
@@ -1716,7 +1759,7 @@ mod tests {
             prefix: "bob\t".to_owned(),
             content: content.render(&()),
         }
-        .add_reply_context(&event_id, None);
+        .add_reply_context(&event_id, None, None);
 
         assert_eq!(
             "Reply to @alice:example.org:",
@@ -1745,7 +1788,7 @@ mod tests {
             prefix: "bob\t".to_owned(),
             content: content.render(&()),
         }
-        .add_reply_context(&event_id, Some("Alice"));
+        .add_reply_context(&event_id, Some("Alice"), None);
 
         let messages = rendered
             .content
@@ -1757,6 +1800,38 @@ mod tests {
         assert_eq!(
             vec!["Reply to Alice:", "> line one", "> line two", "new message"],
             messages
+        );
+        assert!(rendered.content.lines[1]
+            .tags
+            .contains(&"matrix_reply_quote".to_owned()));
+    }
+
+    #[test]
+    fn reply_context_uses_fetched_body_without_matrix_fallback() {
+        let event_id =
+            matrix_sdk::ruma::owned_event_id!("$replyevent:example.org");
+        let rendered = RenderedEvent {
+            message_timestamp: 0,
+            prefix: "bob\t".to_owned(),
+            content: RenderedContent::new(vec![RenderedLine {
+                tags: vec!["matrix_text".to_owned()],
+                message: "new message".to_owned(),
+            }]),
+        }
+        .add_reply_context(
+            &event_id,
+            Some("Alice"),
+            Some("previous message"),
+        );
+
+        assert_eq!(
+            vec!["Reply to Alice:", "> previous message", "new message"],
+            rendered
+                .content
+                .lines
+                .iter()
+                .map(|line| line.message.as_str())
+                .collect::<Vec<_>>()
         );
     }
 
