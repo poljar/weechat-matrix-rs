@@ -143,7 +143,10 @@ const HISTORY_PAGE_TAGS: [&str; 2] =
     ["matrix_history_page", "matrix_smart_filter"];
 const RESTORED_HISTORY_BATCH_SIZE: u16 = 25;
 const INTERACTIVE_HISTORY_BATCH_SIZE: u16 = 25;
-const RESTORED_HISTORY_TARGET_LINES: i32 = 100;
+// Restore one current page eagerly. Further pages are user-driven so a noisy
+// room cannot monopolize its history lock while the GUI is asking for older
+// messages in the room the user is actually viewing.
+const RESTORED_HISTORY_TARGET_LINES: i32 = 1;
 const RESTORED_HISTORY_MAX_PAGES: usize = 10;
 
 fn restored_prev_batch(_prev_batch: Option<String>) -> Option<PrevBatch> {
@@ -3278,10 +3281,9 @@ mod tests {
     }
 
     #[test]
-    fn restored_history_keeps_paging_until_it_is_useful() {
-        assert!(should_continue_restored_history(0, 13, true));
-        assert!(should_continue_restored_history(87, 99, true));
-        assert!(!should_continue_restored_history(99, 112, true));
+    fn restored_history_releases_the_lock_after_one_useful_page() {
+        assert!(!should_continue_restored_history(0, 13, true));
+        assert!(!should_continue_restored_history(87, 99, true));
         assert!(!should_continue_restored_history(13, 13, true));
         assert!(!should_continue_restored_history(0, 13, false));
     }
