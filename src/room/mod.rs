@@ -113,12 +113,12 @@ pub enum PrevBatch {
     Backwards(Option<String>),
 }
 
-fn restored_prev_batch(prev_batch: Option<String>) -> Option<PrevBatch> {
-    // A restored SDK room does not always have a sync pagination token in its
-    // store. Matrix permits a backward /messages request without `from`, which
-    // starts at the newest visible event. Keep that request representable so a
-    // freshly restored room can still populate its WeeChat buffer.
-    Some(PrevBatch::Backwards(prev_batch))
+fn restored_prev_batch(_prev_batch: Option<String>) -> Option<PrevBatch> {
+    // The SDK does not replay the stored sync timeline when a room is restored.
+    // Its last_prev_batch token points before that timeline, so using it here
+    // skips the newest messages entirely. Start at the current room end; the
+    // response's end token will drive older backward pagination afterwards.
+    Some(PrevBatch::Backwards(None))
 }
 
 fn should_render_event(already_rendered: bool) -> bool {
@@ -2128,10 +2128,10 @@ mod tests {
     }
 
     #[test]
-    fn restored_rooms_fetch_history_backwards_from_prev_batch() {
+    fn restored_rooms_fetch_newest_history_before_older_pages() {
         assert_eq!(
             restored_prev_batch(Some("token".to_owned())),
-            Some(PrevBatch::Backwards(Some("token".to_owned())))
+            Some(PrevBatch::Backwards(None))
         );
     }
 
@@ -2148,8 +2148,8 @@ mod tests {
 
     #[test]
     fn reply_event_details_extract_sender_and_body() {
-        let event: AnySyncTimelineEvent = serde_json::from_value(
-            serde_json::json!({
+        let event: AnySyncTimelineEvent =
+            serde_json::from_value(serde_json::json!({
                 "type": "m.room.message",
                 "event_id": "$original:example.org",
                 "sender": "@alice:example.org",
@@ -2159,9 +2159,8 @@ mod tests {
                     "body": "original message"
                 },
                 "unsigned": {}
-            }),
-        )
-        .expect("valid Matrix event");
+            }))
+            .expect("valid Matrix event");
 
         assert_eq!(
             reply_event_details(event),
