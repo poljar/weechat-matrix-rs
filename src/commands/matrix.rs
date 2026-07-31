@@ -323,7 +323,7 @@ Use /matrix [command] help to find out more.\n",
                 }
 
                 Weechat::spawn(async move {
-                    let result = room.get_messages().await;
+                    let result = room.get_interactive_history_page().await;
                     room.print_history_page_result(result);
                 })
                 .detach();
