@@ -113,12 +113,25 @@ pub enum PrevBatch {
     Backwards(Option<String>),
 }
 
+const RESTORED_HISTORY_TARGET_LINES: i32 = 100;
+const RESTORED_HISTORY_MAX_PAGES: usize = 10;
+
 fn restored_prev_batch(_prev_batch: Option<String>) -> Option<PrevBatch> {
     // The SDK does not replay the stored sync timeline when a room is restored.
     // Its last_prev_batch token points before that timeline, so using it here
     // skips the newest messages entirely. Start at the current room end; the
     // response's end token will drive older backward pagination afterwards.
     Some(PrevBatch::Backwards(None))
+}
+
+fn should_continue_restored_history(
+    lines_before: i32,
+    lines_after: i32,
+    has_older_page: bool,
+) -> bool {
+    has_older_page
+        && lines_after > lines_before
+        && lines_after < RESTORED_HISTORY_TARGET_LINES
 }
 
 fn should_render_event(already_rendered: bool) -> bool {
@@ -1618,6 +1631,35 @@ impl MatrixRoom {
         }
     }
 
+    pub async fn preload_restored_messages(&self) {
+        for _ in 0..RESTORED_HISTORY_MAX_PAGES {
+            let buffer_handle = self.buffer_handle();
+            let Ok(buffer) = buffer_handle.upgrade() else {
+                return;
+            };
+            let lines_before = buffer.num_lines();
+            drop(buffer);
+
+            self.get_messages().await;
+
+            let buffer_handle = self.buffer_handle();
+            let Ok(buffer) = buffer_handle.upgrade() else {
+                return;
+            };
+            let lines_after = buffer.num_lines();
+            drop(buffer);
+
+            let has_older_page = self.prev_batch.borrow().is_some();
+            if !should_continue_restored_history(
+                lines_before,
+                lines_after,
+                has_older_page,
+            ) {
+                break;
+            }
+        }
+    }
+
     pub async fn get_thread_messages(&self, thread_root: OwnedEventId) {
         if self.thread_history_loaded.borrow().contains(&thread_root)
             || !self
@@ -2138,6 +2180,15 @@ mod tests {
     #[test]
     fn restored_rooms_without_prev_batch_fetch_history_from_end() {
         assert_eq!(restored_prev_batch(None), Some(PrevBatch::Backwards(None)));
+    }
+
+    #[test]
+    fn restored_history_keeps_paging_until_it_is_useful() {
+        assert!(should_continue_restored_history(0, 13, true));
+        assert!(should_continue_restored_history(87, 99, true));
+        assert!(!should_continue_restored_history(99, 112, true));
+        assert!(!should_continue_restored_history(13, 13, true));
+        assert!(!should_continue_restored_history(0, 13, false));
     }
 
     #[test]
