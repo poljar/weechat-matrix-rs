@@ -50,7 +50,10 @@ ruma-html = { version = "0.5.0", features = ["matrix"] }
 # Auto-select version from matrix-sdk
 qrcode = { version = "*", default-features = false }
 image = { version = "*", default-features = false, features = ["jpeg"] }
+base64 = "0.22"
+mime = "0.3"
 mime_guess = "2.0"
+sha2 = "0.10"
 
 [dependencies.weechat]
 git = "https://github.com/poljar/rust-weechat"

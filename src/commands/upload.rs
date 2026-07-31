@@ -6,7 +6,7 @@ use weechat::{
     ReturnCode, Weechat,
 };
 
-use crate::Servers;
+use crate::{room::thread_root_from_buffer, Servers};
 
 pub struct UploadCommand {
     servers: Servers,
@@ -47,8 +47,11 @@ impl CommandRunCallback for UploadCommand {
         }
 
         let path = PathBuf::from(Weechat::expand_home(path));
-        Weechat::spawn(async move { room.send_attachment(path).await })
-            .detach();
+        let thread_root = thread_root_from_buffer(buffer);
+        Weechat::spawn(
+            async move { room.send_attachment(path, thread_root).await },
+        )
+        .detach();
 
         ReturnCode::Ok
     }
