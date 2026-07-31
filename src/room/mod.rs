@@ -130,6 +130,8 @@ pub enum HistoryPageResult {
 
 const HISTORY_PAGE_TAGS: [&str; 2] =
     ["matrix_history_page", "matrix_smart_filter"];
+const RESTORED_HISTORY_BATCH_SIZE: u16 = 25;
+const INTERACTIVE_HISTORY_BATCH_SIZE: u16 = 25;
 
 fn restored_prev_batch(prev_batch: Option<String>) -> Option<PrevBatch> {
     // A restored SDK room does not always have a sync pagination token in its
@@ -1953,6 +1955,16 @@ impl MatrixRoom {
     }
 
     pub async fn get_messages(&self) -> HistoryPageResult {
+        self.get_messages_with_limit(RESTORED_HISTORY_BATCH_SIZE)
+            .await
+    }
+
+    pub async fn get_interactive_history_page(&self) -> HistoryPageResult {
+        self.get_messages_with_limit(INTERACTIVE_HISTORY_BATCH_SIZE)
+            .await
+    }
+
+    async fn get_messages_with_limit(&self, limit: u16) -> HistoryPageResult {
         let messages_lock = self.messages_in_flight.clone();
 
         let connection = self.connection.borrow().as_ref().cloned();
@@ -1977,7 +1989,9 @@ impl MatrixRoom {
             let room = self.room();
             let room_id = room.room_id().to_owned();
 
-            if let Ok(r) = connection.room_messages(room, prev_batch).await {
+            if let Ok(r) =
+                connection.room_messages(room, prev_batch, limit).await
+            {
                 let added = r.chunk.len();
                 let exhausted = r.chunk.is_empty() || r.end.is_none();
 
@@ -2468,6 +2482,12 @@ mod tests {
         assert!(has_history_page(&Some(PrevBatch::Forward(
             "token".to_owned()
         ))));
+    }
+
+    #[test]
+    fn interactive_history_pages_are_bounded() {
+        assert_eq!(INTERACTIVE_HISTORY_BATCH_SIZE, 25);
+        assert_eq!(RESTORED_HISTORY_BATCH_SIZE, 25);
     }
 
     #[test]
