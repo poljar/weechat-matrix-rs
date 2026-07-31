@@ -188,6 +188,30 @@ fn should_continue_restored_history(
         && lines_after < RESTORED_HISTORY_TARGET_LINES
 }
 
+fn has_history_page(prev_batch: &Option<PrevBatch>) -> bool {
+    prev_batch.is_some()
+}
+
+fn history_page_marker(result: &HistoryPageResult) -> String {
+    match result {
+        HistoryPageResult::Page { added, exhausted } => format!(
+            "matrix_history_page added={} exhausted={}",
+            added,
+            u8::from(*exhausted),
+        ),
+        HistoryPageResult::Unavailable => {
+            "matrix_history_page added=0 exhausted=1 state=unavailable"
+                .to_owned()
+        }
+        HistoryPageResult::Busy => {
+            "matrix_history_page added=0 exhausted=0 state=busy".to_owned()
+        }
+        HistoryPageResult::Failed => {
+            "matrix_history_page added=0 exhausted=0 state=failed".to_owned()
+        }
+    }
+}
+
 fn should_render_event(already_rendered: bool) -> bool {
     !already_rendered
 }
@@ -3260,6 +3284,37 @@ mod tests {
         assert!(!should_continue_restored_history(99, 112, true));
         assert!(!should_continue_restored_history(13, 13, true));
         assert!(!should_continue_restored_history(0, 13, false));
+    }
+
+    #[test]
+    fn history_paging_requires_an_available_cursor() {
+        assert!(!has_history_page(&None));
+        assert!(has_history_page(&Some(PrevBatch::Backwards(None))));
+        assert!(has_history_page(&Some(PrevBatch::Backwards(Some(
+            "token".to_owned()
+        )))));
+        assert!(has_history_page(&Some(PrevBatch::Forward(
+            "token".to_owned()
+        ))));
+    }
+
+    #[test]
+    fn history_page_markers_are_machine_readable_and_hideable() {
+        assert_eq!(
+            HISTORY_PAGE_TAGS,
+            ["matrix_history_page", "matrix_smart_filter"]
+        );
+        assert_eq!(
+            history_page_marker(&HistoryPageResult::Page {
+                added: 25,
+                exhausted: false,
+            }),
+            "matrix_history_page added=25 exhausted=0"
+        );
+        assert_eq!(
+            history_page_marker(&HistoryPageResult::Unavailable),
+            "matrix_history_page added=0 exhausted=1 state=unavailable"
+        );
     }
 
     #[test]
