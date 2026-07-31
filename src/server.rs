@@ -973,7 +973,7 @@ impl InnerServer {
                 // WeeChat's buffer_switch signal. Populate restored Matrix
                 // buffers proactively instead of waiting for a TUI-only hook.
                 Weechat::spawn(async move {
-                    buffer.get_messages().await;
+                    buffer.preload_restored_messages().await;
                     buffer.recover_logged_encrypted_events().await;
                 })
                 .detach();
