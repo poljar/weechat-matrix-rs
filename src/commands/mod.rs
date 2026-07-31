@@ -16,6 +16,7 @@ mod invite;
 mod join;
 mod keys;
 mod matrix;
+mod matrix_upload;
 mod me;
 mod media;
 mod moderation;
@@ -41,6 +42,7 @@ use invite::InviteCommand;
 use join::JoinCommand;
 use keys::KeysCommand;
 use matrix::MatrixCommand;
+use matrix_upload::MatrixUploadCommand;
 use me::MeCommand;
 use media::MediaCommand;
 use moderation::ModerationCommand;
@@ -56,6 +58,7 @@ use verify::VerifyCommand;
 
 pub struct Commands {
     _matrix: Command,
+    _matrix_upload: CommandRun,
     _keys: Command,
     _devices: Command,
     _invite: Command,
@@ -87,6 +90,7 @@ impl Commands {
     ) -> Result<Commands, ()> {
         Ok(Commands {
             _matrix: MatrixCommand::create(servers, config)?,
+            _matrix_upload: MatrixUploadCommand::create(servers)?,
             _devices: DevicesCommand::create(servers)?,
             _invite: InviteCommand::create(servers)?,
             _ignore: IgnoreCommand::create()?,

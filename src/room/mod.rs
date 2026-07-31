@@ -51,17 +51,22 @@ use url::Url;
 
 use matrix_sdk::{
     async_trait,
-    attachment::{AttachmentConfig, AttachmentInfo, BaseFileInfo},
+    attachment::{
+        AttachmentConfig, AttachmentInfo, BaseFileInfo, BaseImageInfo,
+    },
     deserialized_responses::AmbiguityChange,
-    room::Room,
+    room::{
+        reply::{EnforceThread, Reply},
+        Room,
+    },
     ruma::{
         events::{
             relation::Thread,
             room::{
                 member::RoomMemberEventContent,
                 message::{
-                    MessageType, Relation, RoomMessageEventContent,
-                    TextMessageEventContent,
+                    MessageType, Relation, ReplyWithinThread,
+                    RoomMessageEventContent, TextMessageEventContent,
                 },
                 redaction::SyncRoomRedactionEvent,
             },
@@ -315,10 +320,26 @@ fn make_emote_message_content(
     content
 }
 
-fn thread_root_from_buffer(buffer: &Buffer) -> Option<OwnedEventId> {
+pub(crate) fn thread_root_from_buffer(buffer: &Buffer) -> Option<OwnedEventId> {
     buffer
         .get_localvar("thread_root")
         .and_then(|thread_root| EventId::parse(thread_root.as_ref()).ok())
+}
+
+fn attachment_config(
+    info: AttachmentInfo,
+    thread_root: Option<OwnedEventId>,
+) -> AttachmentConfig {
+    let config = AttachmentConfig::new().info(info);
+
+    if let Some(event_id) = thread_root {
+        config.reply(Some(Reply {
+            event_id,
+            enforce_thread: EnforceThread::Threaded(ReplyWithinThread::No),
+        }))
+    } else {
+        config
+    }
 }
 
 fn thread_root_from_content(
@@ -1232,7 +1253,11 @@ impl MatrixRoom {
         }
     }
 
-    pub async fn send_attachment(&self, path: PathBuf) {
+    pub async fn send_attachment(
+        &self,
+        path: PathBuf,
+        thread_root: Option<OwnedEventId>,
+    ) {
         let Some(filename) = path
             .file_name()
             .and_then(|f| f.to_str())
@@ -1256,8 +1281,10 @@ impl MatrixRoom {
 
         let content_type = mime_guess::from_path(&path).first_or_octet_stream();
         let size = UInt::new(data.len() as u64);
-        let config = AttachmentConfig::new()
-            .info(AttachmentInfo::File(BaseFileInfo { size }));
+        let config = attachment_config(
+            AttachmentInfo::File(BaseFileInfo { size }),
+            thread_root,
+        );
 
         let Some(connection) = self.connection.borrow().clone() else {
             self.print_error("Not connected. Please connect first.");
@@ -1282,6 +1309,47 @@ impl MatrixRoom {
                     e
                 ));
             }
+        }
+    }
+
+    pub async fn send_attachment_bytes(
+        &self,
+        filename: String,
+        content_type: mime::Mime,
+        data: Vec<u8>,
+        thread_root: Option<OwnedEventId>,
+    ) {
+        let size = UInt::new(data.len() as u64);
+        let info = if content_type.type_() == mime::IMAGE {
+            AttachmentInfo::Image(BaseImageInfo {
+                size,
+                ..Default::default()
+            })
+        } else {
+            AttachmentInfo::File(BaseFileInfo { size })
+        };
+        let config = attachment_config(info, thread_root);
+
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        match connection
+            .spawn({
+                let room = self.room();
+                async move {
+                    room.send_attachment(filename, &content_type, data, config)
+                        .await
+                }
+            })
+            .await
+        {
+            Ok(_) => (),
+            Err(e) => self.print_error(&format!(
+                "Failed to upload Matrix attachment: {}",
+                e
+            )),
         }
     }
 
@@ -1819,6 +1887,39 @@ mod tests {
     fn already_rendered_events_are_not_printed_again() {
         assert!(should_render_event(false));
         assert!(!should_render_event(true));
+    }
+
+    #[test]
+    fn room_image_attachment_has_native_image_metadata_without_reply() {
+        let config = attachment_config(
+            AttachmentInfo::Image(BaseImageInfo {
+                size: UInt::new(42),
+                ..Default::default()
+            }),
+            None,
+        );
+
+        assert!(matches!(config.info, Some(AttachmentInfo::Image(_))));
+        assert!(config.reply.is_none());
+    }
+
+    #[test]
+    fn thread_image_attachment_targets_the_thread_root() {
+        let thread_root = EventId::parse("$thread-root:example.org").unwrap();
+        let config = attachment_config(
+            AttachmentInfo::Image(BaseImageInfo {
+                size: UInt::new(42),
+                ..Default::default()
+            }),
+            Some(thread_root.to_owned()),
+        );
+
+        let reply = config.reply.expect("thread image must carry a reply");
+        assert_eq!(reply.event_id, thread_root);
+        assert_eq!(
+            reply.enforce_thread,
+            EnforceThread::Threaded(ReplyWithinThread::No)
+        );
     }
 
     #[test]

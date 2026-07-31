@@ -4698,16 +4698,19 @@ dependencies = [
 name = "weechat-matrix"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chrono",
  "clap",
  "dashmap",
  "futures-util",
  "image",
  "matrix-sdk",
+ "mime",
  "mime_guess",
  "qrcode",
  "ruma-html",
  "serde_json",
+ "sha2",
  "strum",
  "tokio",
  "tracing",
