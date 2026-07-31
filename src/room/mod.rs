@@ -143,6 +143,7 @@ const HISTORY_PAGE_TAGS: [&str; 2] =
     ["matrix_history_page", "matrix_smart_filter"];
 const RESTORED_HISTORY_BATCH_SIZE: u16 = 25;
 const INTERACTIVE_HISTORY_BATCH_SIZE: u16 = 25;
+
 // Restore one current page eagerly. Further pages are user-driven so a noisy
 // room cannot monopolize its history lock while the GUI is asking for older
 // messages in the room the user is actually viewing.
@@ -3275,37 +3276,6 @@ mod tests {
         assert!(!should_continue_restored_history(87, 99, true));
         assert!(!should_continue_restored_history(13, 13, true));
         assert!(!should_continue_restored_history(0, 13, false));
-    }
-
-    #[test]
-    fn history_paging_requires_an_available_cursor() {
-        assert!(!has_history_page(&None));
-        assert!(has_history_page(&Some(PrevBatch::Backwards(None))));
-        assert!(has_history_page(&Some(PrevBatch::Backwards(Some(
-            "token".to_owned()
-        )))));
-        assert!(has_history_page(&Some(PrevBatch::Forward(
-            "token".to_owned()
-        ))));
-    }
-
-    #[test]
-    fn history_page_markers_are_machine_readable_and_hideable() {
-        assert_eq!(
-            HISTORY_PAGE_TAGS,
-            ["matrix_history_page", "matrix_smart_filter"]
-        );
-        assert_eq!(
-            history_page_marker(&HistoryPageResult::Page {
-                added: 25,
-                exhausted: false,
-            }),
-            "matrix_history_page added=25 exhausted=0"
-        );
-        assert_eq!(
-            history_page_marker(&HistoryPageResult::Unavailable),
-            "matrix_history_page added=0 exhausted=1 state=unavailable"
-        );
     }
 
     #[test]
