@@ -126,6 +126,17 @@ pub enum PrevBatch {
     Backwards(Option<String>),
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub enum HistoryPageResult {
+    Page { added: usize, exhausted: bool },
+    Unavailable,
+    Busy,
+    Failed,
+}
+
+const HISTORY_PAGE_TAGS: [&str; 2] =
+    ["matrix_history_page", "matrix_smart_filter"];
+
 const RESTORED_HISTORY_TARGET_LINES: i32 = 100;
 const RESTORED_HISTORY_MAX_PAGES: usize = 10;
 
@@ -145,6 +156,30 @@ fn should_continue_restored_history(
     has_older_page
         && lines_after > lines_before
         && lines_after < RESTORED_HISTORY_TARGET_LINES
+}
+
+fn has_history_page(prev_batch: &Option<PrevBatch>) -> bool {
+    prev_batch.is_some()
+}
+
+fn history_page_marker(result: &HistoryPageResult) -> String {
+    match result {
+        HistoryPageResult::Page { added, exhausted } => format!(
+            "matrix_history_page added={} exhausted={}",
+            added,
+            u8::from(*exhausted),
+        ),
+        HistoryPageResult::Unavailable => {
+            "matrix_history_page added=0 exhausted=1 state=unavailable"
+                .to_owned()
+        }
+        HistoryPageResult::Busy => {
+            "matrix_history_page added=0 exhausted=0 state=busy".to_owned()
+        }
+        HistoryPageResult::Failed => {
+            "matrix_history_page added=0 exhausted=0 state=failed".to_owned()
+        }
+    }
 }
 
 fn should_render_event(already_rendered: bool) -> bool {
@@ -2209,6 +2244,10 @@ impl MatrixRoom {
         self.messages_in_flight.locked()
     }
 
+    pub fn has_history_page(&self) -> bool {
+        has_history_page(&self.prev_batch.borrow())
+    }
+
     pub fn reset_prev_batch(&self) {
         // TODO: we'll want to be able to scroll up again after we clear the
         // buffer.
@@ -2278,7 +2317,7 @@ impl MatrixRoom {
         self.mark_latest_event_as_read(false);
     }
 
-    pub async fn get_messages(&self) {
+    pub async fn get_messages(&self) -> HistoryPageResult {
         let messages_lock = self.messages_in_flight.clone();
 
         let connection = self.connection.borrow().as_ref().cloned();
@@ -2287,23 +2326,25 @@ impl MatrixRoom {
             if let Some(p) = self.prev_batch.borrow().as_ref().cloned() {
                 p
             } else {
-                return;
+                return HistoryPageResult::Unavailable;
             };
 
         let guard = if let Ok(l) = messages_lock.try_lock() {
             l
         } else {
-            return;
+            return HistoryPageResult::Busy;
         };
 
         Weechat::bar_item_update("buffer_modes");
         Weechat::bar_item_update("matrix_modes");
 
-        if let Some(connection) = connection {
+        let result = if let Some(connection) = connection {
             let room = self.room();
             let room_id = room.room_id().to_owned();
 
             if let Ok(r) = connection.room_messages(room, prev_batch).await {
+                let added = r.chunk.len();
+                let exhausted = r.chunk.is_empty() || r.end.is_none();
                 for event in
                     r.chunk.iter().filter_map(|e| e.raw().deserialize().ok())
                 {
@@ -2335,13 +2376,31 @@ impl MatrixRoom {
                         r.end.map(|token| PrevBatch::Backwards(Some(token)));
                     self.buffer.sort_messages();
                 }
+
+                HistoryPageResult::Page { added, exhausted }
+            } else {
+                HistoryPageResult::Failed
             }
-        }
+        } else {
+            HistoryPageResult::Failed
+        };
 
         drop(guard);
 
         Weechat::bar_item_update("buffer_modes");
         Weechat::bar_item_update("matrix_modes");
+
+        result
+    }
+
+    pub fn print_history_page_result(&self, result: HistoryPageResult) {
+        if let Ok(buffer) = self.buffer.buffer_handle().upgrade() {
+            buffer.print_date_tags(
+                0,
+                &HISTORY_PAGE_TAGS,
+                &history_page_marker(&result),
+            );
+        }
     }
 
     pub async fn get_messages_if_empty(&self) {
@@ -2985,6 +3044,37 @@ mod tests {
         assert!(!should_continue_restored_history(99, 112, true));
         assert!(!should_continue_restored_history(13, 13, true));
         assert!(!should_continue_restored_history(0, 13, false));
+    }
+
+    #[test]
+    fn history_paging_requires_an_available_cursor() {
+        assert!(!has_history_page(&None));
+        assert!(has_history_page(&Some(PrevBatch::Backwards(None))));
+        assert!(has_history_page(&Some(PrevBatch::Backwards(Some(
+            "token".to_owned()
+        )))));
+        assert!(has_history_page(&Some(PrevBatch::Forward(
+            "token".to_owned()
+        ))));
+    }
+
+    #[test]
+    fn history_page_markers_are_machine_readable_and_hideable() {
+        assert_eq!(
+            HISTORY_PAGE_TAGS,
+            ["matrix_history_page", "matrix_smart_filter"]
+        );
+        assert_eq!(
+            history_page_marker(&HistoryPageResult::Page {
+                added: 25,
+                exhausted: false,
+            }),
+            "matrix_history_page added=25 exhausted=0"
+        );
+        assert_eq!(
+            history_page_marker(&HistoryPageResult::Unavailable),
+            "matrix_history_page added=0 exhausted=1 state=unavailable"
+        );
     }
 
     #[test]
