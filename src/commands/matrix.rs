@@ -18,6 +18,7 @@ use super::{
 use crate::{
     commands::{DevicesCommand, KeysCommand, MediaCommand, VerifyCommand},
     config::ConfigHandle,
+    room::HistoryPageResult,
     MatrixServer, Servers, PLUGIN_NAME,
 };
 
@@ -45,6 +46,7 @@ impl MatrixCommand {
             .add_argument("disconnect <server-name>")
             .add_argument("reconnect <server-name>")
             .add_argument("sso-complete <server-name> <login-token>")
+            .add_argument("history")
             .add_argument("read")
             .add_argument("version")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
@@ -55,6 +57,7 @@ impl MatrixCommand {
    reconnect: Reconnect to server(s).
         join: Join a Matrix room by ID or alias.
 sso-complete: Finish SSO login with a copied loginToken.
+     history: Load an older page of messages in the current room.
         read: Mark the current room as read.
      version: Show version information about weechat-matrix.
      devices: {}
@@ -302,6 +305,29 @@ Use /matrix [command] help to find out more.\n",
                     room.mark_as_read();
                 }
             }
+            ("history", _) => {
+                let Some(room) = self.servers.find_room(buffer) else {
+                    Weechat::print(&format!(
+                        "{}{}: /matrix history needs to be run in a Matrix room buffer.",
+                        Weechat::prefix(Prefix::Error),
+                        PLUGIN_NAME,
+                    ));
+                    return;
+                };
+
+                if !room.has_history_page() {
+                    room.print_history_page_result(
+                        HistoryPageResult::Unavailable,
+                    );
+                    return;
+                }
+
+                Weechat::spawn(async move {
+                    let result = room.get_messages().await;
+                    room.print_history_page_result(result);
+                })
+                .detach();
+            }
             ("version", _) => {
                 Weechat::print(&format!(
                     "{}: weechat-matrix version {} ({})",
@@ -435,6 +461,11 @@ impl CommandCallback for MatrixCommand {
             .subcommand(
                 SubCommand::with_name("read")
                     .about("Mark the current room as read."),
+            )
+            .subcommand(
+                SubCommand::with_name("history").about(
+                    "Load an older page of messages in the current room.",
+                ),
             )
             .subcommand(
                 SubCommand::with_name("version")
