@@ -36,9 +36,36 @@ pub struct Members {
     pub(super) runtime: Handle,
     ambiguity_map: Rc<DashMap<OwnedUserId, bool>>,
     nicks: Rc<DashMap<OwnedUserId, String>>,
+    profiles: Rc<DashMap<OwnedUserId, MatrixMemberProfile>>,
     last_active: Rc<DashMap<OwnedUserId, MilliSecondsSinceUnixEpoch>>,
     config: Rc<RefCell<Config>>,
     buffer: RoomBuffer,
+}
+
+const MEMBER_PROFILE_LIMIT: usize = 512;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MatrixMemberProfile {
+    user_id: String,
+    display_name: String,
+    nick: String,
+    membership: String,
+    role: String,
+    power_level: Option<i64>,
+    avatar_mxc: Option<String>,
+}
+
+fn bounded_member_profiles(
+    mut profiles: Vec<MatrixMemberProfile>,
+) -> Vec<MatrixMemberProfile> {
+    profiles.sort_by(|left, right| {
+        left.display_name
+            .to_lowercase()
+            .cmp(&right.display_name.to_lowercase())
+            .then_with(|| left.user_id.cmp(&right.user_id))
+    });
+    profiles.truncate(MEMBER_PROFILE_LIMIT);
+    profiles
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +93,7 @@ impl Members {
             room,
             runtime,
             nicks: DashMap::new().into(),
+            profiles: DashMap::new().into(),
             ambiguity_map: DashMap::new().into(),
             last_active: DashMap::new().into(),
             config,
@@ -99,7 +127,7 @@ impl Members {
         self.nicks.insert(member.user_id().to_owned(), nick);
     }
 
-    pub(super) fn update_mentions_localvar(&self) {
+    pub(super) fn update_member_localvars(&self) {
         let mut candidates: Vec<_> = self
             .nicks
             .iter()
@@ -126,6 +154,30 @@ impl Members {
         if let Ok(buffer) = self.buffer.buffer_handle().upgrade() {
             if let Ok(json) = serde_json::to_string(&candidates) {
                 buffer.set_localvar("matrix_mentions", &json);
+            }
+
+            let profiles: Vec<_> = self
+                .profiles
+                .iter()
+                .map(|entry| entry.value().clone())
+                .collect();
+            let profiles = bounded_member_profiles(profiles);
+            let profiles: Vec<_> = profiles
+                .into_iter()
+                .map(|profile| {
+                    serde_json::json!({
+                        "user_id": profile.user_id,
+                        "display_name": profile.display_name,
+                        "nick": profile.nick,
+                        "membership": profile.membership,
+                        "role": profile.role,
+                        "power_level": profile.power_level,
+                        "avatar_mxc": profile.avatar_mxc,
+                    })
+                })
+                .collect();
+            if let Ok(json) = serde_json::to_string(&profiles) {
+                buffer.set_localvar("matrix_members_v1", &json);
             }
         }
     }
@@ -192,6 +244,8 @@ impl Members {
         }
 
         let member = self.weechat_member(member);
+        self.profiles
+            .insert(member.user_id().to_owned(), member.profile());
         self.add_nick(&buffer, &member);
     }
 
@@ -246,7 +300,7 @@ impl Members {
         }
 
         self.update_member(user_id).await;
-        self.update_mentions_localvar();
+        self.update_member_localvars();
     }
 
     /// Remove a Weechat room member by user ID.
@@ -283,7 +337,8 @@ impl Members {
         if let Some((_, nick)) = self.nicks.remove(user_id) {
             buffer.remove_nick(&nick);
         }
-        self.update_mentions_localvar();
+        self.profiles.remove(user_id);
+        self.update_member_localvars();
     }
 
     /// Retrieve a reference to a Weechat room member by user ID.
@@ -461,7 +516,56 @@ impl Members {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile(index: usize, display_name: &str) -> MatrixMemberProfile {
+        MatrixMemberProfile {
+            user_id: format!("@user{index}:example.org"),
+            display_name: display_name.to_owned(),
+            nick: display_name.to_owned(),
+            membership: "join".to_owned(),
+            role: "member".to_owned(),
+            power_level: Some(0),
+            avatar_mxc: Some(format!("mxc://example.org/avatar{index}")),
+        }
+    }
+
+    #[test]
+    fn profile_export_is_sorted_and_bounded() {
+        let profiles = (0..MEMBER_PROFILE_LIMIT + 20)
+            .rev()
+            .map(|index| profile(index, &format!("Member {index:04}")))
+            .collect();
+        let profiles = bounded_member_profiles(profiles);
+        assert_eq!(profiles.len(), MEMBER_PROFILE_LIMIT);
+        assert_eq!(profiles.first().unwrap().display_name, "Member 0000");
+        assert_eq!(profiles.last().unwrap().display_name, "Member 0511");
+    }
+}
+
 impl WeechatRoomMember {
+    fn profile(&self) -> MatrixMemberProfile {
+        let power_level = match self.inner.power_level() {
+            UserPowerLevel::Infinite => None,
+            UserPowerLevel::Int(level) => Some(level.into()),
+            _ => None,
+        };
+        MatrixMemberProfile {
+            user_id: self.user_id().as_str().to_owned(),
+            display_name: self.inner.name().to_owned(),
+            nick: self.nick(),
+            membership: self.inner.membership().as_str().to_owned(),
+            role: self.role().to_owned(),
+            power_level,
+            avatar_mxc: self
+                .inner
+                .avatar_url()
+                .map(|uri| uri.as_str().to_owned()),
+        }
+    }
+
     pub fn user_id(&self) -> &UserId {
         self.inner.user_id()
     }
@@ -485,6 +589,16 @@ impl WeechatRoomMember {
             p if p >= Int::from(50) => "001|h",
             p if p > Int::from(0) => "002|v",
             _ => "999|...",
+        }
+    }
+
+    fn role(&self) -> &'static str {
+        match self.inner.normalized_power_level() {
+            UserPowerLevel::Infinite => "admin",
+            p if p >= Int::from(100) => "admin",
+            p if p >= Int::from(50) => "moderator",
+            p if p > Int::from(0) => "power user",
+            _ => "member",
         }
     }
 

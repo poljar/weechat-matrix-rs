@@ -539,7 +539,7 @@ impl RoomHandle {
             trace!("Restoring member {}", &user_id);
             room_buffer.members.restore_member(user_id).await;
         }
-        room_buffer.members.update_mentions_localvar();
+        room_buffer.members.update_member_localvars();
 
         room_buffer.buffer.update_buffer_name();
         room_buffer.buffer.set_topic();
