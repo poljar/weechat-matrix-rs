@@ -4543,6 +4543,7 @@ dependencies = [
  "mime_guess",
  "qrcode",
  "ruma-html",
+ "serde",
  "serde_json",
  "sha2",
  "strum",
