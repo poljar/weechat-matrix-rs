@@ -99,6 +99,8 @@ use crate::{
     config::{Config, RedactionStyle},
     connection::Connection,
     render::{Render, RenderedEvent, ReplyContext},
+    server::{InnerServer, MatrixServer, ThreadRoute},
+    thread_continuation::ThreadKey,
     utils::{Edit, VerificationEvent},
     PLUGIN_NAME,
 };
@@ -203,6 +205,7 @@ pub struct MatrixRoom {
     room_id: Rc<RoomId>,
     own_user_id: Rc<UserId>,
     room: SharedRoom,
+    server: std::rc::Weak<InnerServer>,
     buffer: RoomBuffer,
 
     config: Rc<RefCell<Config>>,
@@ -456,6 +459,7 @@ fn thread_root_from_content(
     }
 }
 
+<<<<<<< HEAD
 fn thread_root_from_encrypted_content(
     content: &RoomEncryptedEventContent,
 ) -> Option<&EventId> {
@@ -463,6 +467,16 @@ fn thread_root_from_encrypted_content(
         Some(EncryptedRelation::Thread(thread)) => Some(&thread.event_id),
         _ => None,
     }
+}
+
+fn retarget_thread_content(
+    content: &mut RoomMessageEventContent,
+    thread_root: OwnedEventId,
+) {
+    content.relates_to = Some(Relation::Thread(Thread::plain(
+        thread_root.clone(),
+        thread_root,
+    )));
 }
 
 fn thread_root_from_event(
@@ -517,6 +531,7 @@ impl RoomHandle {
     pub fn new(
         server_name: &str,
         runtime: Handle,
+        server: std::rc::Weak<InnerServer>,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
         room: Room,
@@ -570,6 +585,7 @@ impl RoomHandle {
             outgoing_messages: MessageQueue::new(),
             messages_in_flight: IntMutex::new(),
             room,
+            server,
         };
 
         let buffer_name = format!("{}.{}", server_name, room_id);
@@ -683,6 +699,7 @@ impl RoomHandle {
     pub async fn restore(
         server_name: &str,
         runtime: Handle,
+        server: std::rc::Weak<InnerServer>,
         room: Room,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
@@ -696,6 +713,7 @@ impl RoomHandle {
         let room_buffer = Self::new(
             server_name,
             runtime.clone(),
+            server,
             connection,
             config,
             room_clone,
@@ -733,10 +751,12 @@ impl RoomHandle {
 #[async_trait(?Send)]
 impl BufferInputCallbackAsync for MatrixRoom {
     async fn callback(&mut self, buffer: BufferHandle, input: String) {
-        let thread_root = buffer
-            .upgrade()
-            .ok()
-            .and_then(|buffer| thread_root_from_buffer(&buffer));
+        let thread_root = buffer.upgrade().ok().and_then(|buffer| {
+            buffer
+                .get_localvar("matrix_continuation_source_thread_root")
+                .and_then(|root| EventId::parse(root.as_ref()).ok())
+                .or_else(|| thread_root_from_buffer(&buffer))
+        });
         let latest_thread_event = thread_root.as_ref().and_then(|root| {
             self.latest_thread_event_ids.borrow().get(root).cloned()
         });
@@ -752,6 +772,40 @@ impl BufferInputCallbackAsync for MatrixRoom {
 }
 
 impl MatrixRoom {
+    fn server(&self) -> Option<MatrixServer> {
+        self.server.upgrade().map(|inner| MatrixServer { inner })
+    }
+
+    fn adopt_thread_buffer(
+        &self,
+        source_root: &EventId,
+        target: &RoomHandle,
+        target_root: &EventId,
+    ) {
+        let Some(handle) = self.buffer.thread_buffer(source_root) else {
+            return;
+        };
+        self.buffer.remove_thread_buffer(source_root);
+        target
+            .buffer
+            .set_thread_buffer(target_root.to_owned(), handle.clone());
+        if let Ok(buffer) = handle.upgrade() {
+            buffer.set_localvar(
+                "matrix_continuation_source_room_id",
+                self.room_id.as_str(),
+            );
+            buffer.set_localvar(
+                "matrix_continuation_source_thread_root",
+                source_root.as_str(),
+            );
+            buffer.set_localvar("room_id", target.room_id().as_str());
+            buffer.set_localvar("thread_root", target_root.as_str());
+            target.buffer.seed_thread_buffer(target_root, &buffer);
+            target.buffer.sort_thread_messages(target_root);
+        }
+        target.fetch_thread_history(target_root.to_owned());
+    }
+
     pub(crate) fn mention_message_content(
         &self,
         buffer: &Buffer,
@@ -796,7 +850,33 @@ impl MatrixRoom {
             return None;
         }
 
-        self.get_or_create_thread_buffer(thread_root)
+        let buffer = self.get_or_create_thread_buffer(thread_root);
+        if buffer.is_some() {
+            self.resume_thread_continuation(thread_root.to_owned());
+        }
+        buffer
+    }
+
+    fn resume_thread_continuation(&self, source_root: OwnedEventId) {
+        let source = RoomHandle {
+            inner: self.clone(),
+        };
+        Weechat::spawn(async move {
+            let Some(server) = source.server() else {
+                return;
+            };
+            let _guard = server.thread_continuation_send_guard().await;
+            let Ok(ThreadRoute::Current { room, thread_root }) =
+                server.resolve_thread_route(&source, &source_root).await
+            else {
+                return;
+            };
+            if room.room_id() != source.room_id() || thread_root != source_root
+            {
+                source.adopt_thread_buffer(&source_root, &room, &thread_root);
+            }
+        })
+        .detach();
     }
 
     pub fn close_thread_buffer(&self, buffer: &Buffer) -> bool {
@@ -1587,7 +1667,98 @@ impl MatrixRoom {
     ///
     /// buffer.send_message(content).await
     /// ```
-    pub async fn send_message(&self, content: RoomMessageEventContent) {
+    pub async fn send_message(&self, mut content: RoomMessageEventContent) {
+        let Some(source_root) =
+            thread_root_from_content(&content).map(ToOwned::to_owned)
+        else {
+            if let Err(error) = self.send_message_direct(content).await {
+                self.print_error(&error);
+            }
+            return;
+        };
+        let Some(server) = self.server() else {
+            if let Err(error) = self.send_message_direct(content).await {
+                self.print_error(&error);
+            }
+            return;
+        };
+        let _guard = server.thread_continuation_send_guard().await;
+        let route = match server
+            .resolve_thread_route(
+                &RoomHandle {
+                    inner: self.clone(),
+                },
+                &source_root,
+            )
+            .await
+        {
+            Ok(route) => route,
+            Err(error) => {
+                self.print_error(&format!(
+                    "Failed to continue archived Matrix thread: {error}"
+                ));
+                return;
+            }
+        };
+        match route {
+            ThreadRoute::Current { room, thread_root } => {
+                if room.room_id() != self.room_id()
+                    || thread_root != source_root
+                {
+                    self.adopt_thread_buffer(&source_root, &room, &thread_root);
+                    retarget_thread_content(&mut content, thread_root);
+                }
+                if let Err(error) = room.send_message_direct(content).await {
+                    self.print_error(&error);
+                }
+            }
+            ThreadRoute::CreateRoot {
+                room,
+                continuation_source,
+            } => {
+                if let Err(error) =
+                    server.verify_thread_continuation_store().await
+                {
+                    self.print_error(&format!(
+                        "Cannot persist Matrix thread continuation: {error}"
+                    ));
+                    return;
+                }
+                content.relates_to = None;
+                // Matrix assigns the event ID. The SDK store is proven writable
+                // before sending, but the homeserver event and local mapping
+                // cannot be committed atomically without persisting the full
+                // arbitrary user payload as a recovery journal.
+                match room.send_message_direct(content).await {
+                    Ok(target_root) => {
+                        let target_key =
+                            ThreadKey::new(room.room_id(), &target_root);
+                        if let Err(error) = server
+                            .persist_thread_continuation(
+                                continuation_source,
+                                target_key,
+                            )
+                            .await
+                        {
+                            self.print_error(&format!("Sent continuation root but failed to persist it: {error}"));
+                            return;
+                        }
+                        self.adopt_thread_buffer(
+                            &source_root,
+                            &room,
+                            &target_root,
+                        );
+                    }
+                    Err(error) => self.print_error(&error),
+                }
+            }
+        }
+    }
+
+    async fn send_message_direct(
+        &self,
+        content: RoomMessageEventContent,
+    ) -> Result<OwnedEventId, String> {
         let transaction_id = TransactionId::new();
 
         let connection = self.connection.borrow().clone();
@@ -1616,15 +1787,17 @@ impl MatrixRoom {
                         .await;
                         self.outgoing_messages.finish_response(&r.event_id);
                     }
+                    Ok(r.event_id)
                 }
-                Err(_e) => {
+                Err(error) => {
                     // TODO: print out an error, remember to modify the local
                     // echo line if there is one.
                     self.outgoing_messages.remove(&transaction_id);
+                    Err(format!("Failed to send Matrix message: {error}"))
                 }
             }
-        } else if let Ok(buffer) = self.buffer_handle().upgrade() {
-            buffer.print("Error not connected");
+        } else {
+            Err("Matrix server is not connected".to_owned())
         }
     }
 
@@ -1829,34 +2002,21 @@ impl MatrixRoom {
 
         let content_type = mime_guess::from_path(&path).first_or_octet_stream();
         let size = UInt::new(data.len() as u64);
-        let config = attachment_config(
-            AttachmentInfo::File(BaseFileInfo { size }),
-            thread_root,
-        );
-
-        let Some(connection) = self.connection.borrow().clone() else {
-            self.print_error("Not connected. Please connect first.");
-            return;
-        };
-
-        match connection
-            .spawn({
-                let room = self.room();
-                async move {
-                    room.send_attachment(filename, &content_type, data, config)
-                        .await
-                }
-            })
+        let info = AttachmentInfo::File(BaseFileInfo { size });
+        if let Err(error) = self
+            .send_attachment_routed(
+                filename,
+                content_type,
+                data,
+                info,
+                thread_root,
+            )
             .await
         {
-            Ok(_) => (),
-            Err(e) => {
-                self.print_error(&format!(
-                    "Failed to upload attachment {}: {}",
-                    path.display(),
-                    e
-                ));
-            }
+            self.print_error(&format!(
+                "Failed to upload attachment {}: {error}",
+                path.display()
+            ));
         }
     }
 
@@ -1876,14 +2036,116 @@ impl MatrixRoom {
         } else {
             AttachmentInfo::File(BaseFileInfo { size })
         };
-        let config = attachment_config(info, thread_root);
+        if let Err(error) = self
+            .send_attachment_routed(
+                filename,
+                content_type,
+                data,
+                info,
+                thread_root,
+            )
+            .await
+        {
+            self.print_error(&format!(
+                "Failed to upload Matrix attachment: {error}"
+            ));
+        }
+    }
 
-        let Some(connection) = self.connection.borrow().clone() else {
-            self.print_error("Not connected. Please connect first.");
-            return;
+    async fn send_attachment_routed(
+        &self,
+        filename: String,
+        content_type: mime::Mime,
+        data: Vec<u8>,
+        info: AttachmentInfo,
+        source_root: Option<OwnedEventId>,
+    ) -> Result<(), String> {
+        let Some(source_root) = source_root else {
+            self.send_attachment_direct(
+                filename,
+                content_type,
+                data,
+                info,
+                None,
+            )
+            .await?;
+            return Ok(());
         };
+        let Some(server) = self.server() else {
+            self.send_attachment_direct(
+                filename,
+                content_type,
+                data,
+                info,
+                Some(source_root),
+            )
+            .await?;
+            return Ok(());
+        };
+        let _guard = server.thread_continuation_send_guard().await;
+        match server
+            .resolve_thread_route(
+                &RoomHandle {
+                    inner: self.clone(),
+                },
+                &source_root,
+            )
+            .await?
+        {
+            ThreadRoute::Current { room, thread_root } => {
+                if room.room_id() != self.room_id()
+                    || thread_root != source_root
+                {
+                    self.adopt_thread_buffer(&source_root, &room, &thread_root);
+                }
+                room.send_attachment_direct(
+                    filename,
+                    content_type,
+                    data,
+                    info,
+                    Some(thread_root),
+                )
+                .await?;
+            }
+            ThreadRoute::CreateRoot {
+                room,
+                continuation_source,
+            } => {
+                server.verify_thread_continuation_store().await?;
+                let target_root = room
+                    .send_attachment_direct(
+                        filename,
+                        content_type,
+                        data,
+                        info,
+                        None,
+                    )
+                    .await?;
+                server
+                    .persist_thread_continuation(
+                        continuation_source,
+                        ThreadKey::new(room.room_id(), &target_root),
+                    )
+                    .await?;
+                self.adopt_thread_buffer(&source_root, &room, &target_root);
+            }
+        }
+        Ok(())
+    }
 
-        match connection
+    async fn send_attachment_direct(
+        &self,
+        filename: String,
+        content_type: mime::Mime,
+        data: Vec<u8>,
+        info: AttachmentInfo,
+        thread_root: Option<OwnedEventId>,
+    ) -> Result<OwnedEventId, String> {
+        let config = attachment_config(info, thread_root);
+        let Some(connection) = self.connection.borrow().clone() else {
+            return Err("Matrix server is not connected".to_owned());
+        };
+        connection
             .spawn({
                 let room = self.room();
                 async move {
@@ -1892,13 +2154,8 @@ impl MatrixRoom {
                 }
             })
             .await
-        {
-            Ok(_) => (),
-            Err(e) => self.print_error(&format!(
-                "Failed to upload Matrix attachment: {}",
-                e
-            )),
-        }
+            .map(|response| response.event_id)
+            .map_err(|error| error.to_string())
     }
 
     /// Send out a typing notice.
@@ -2869,6 +3126,29 @@ mod tests {
         assert_eq!(
             rendered_root_to_seed(Some(&event_id), None),
             Some(event_id.as_ref())
+        );
+    }
+
+    #[test]
+    fn continued_thread_text_targets_only_the_successor_root() {
+        let old_root = EventId::parse("$old-root:example.org").unwrap();
+        let new_root = EventId::parse("$new-root:example.org").unwrap();
+        let mut content = make_text_message_content(
+            "continued body".to_owned(),
+            false,
+            Some(old_root),
+            None,
+        );
+
+        retarget_thread_content(&mut content, new_root.clone());
+
+        let Some(Relation::Thread(thread)) = content.relates_to else {
+            panic!("continued text must remain a proper Matrix thread reply");
+        };
+        assert_eq!(thread.event_id, new_root);
+        assert_eq!(
+            thread.in_reply_to.expect("fallback target").event_id,
+            new_root
         );
     }
 

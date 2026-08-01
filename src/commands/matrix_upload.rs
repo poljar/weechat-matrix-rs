@@ -6,7 +6,7 @@ use std::{
 };
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use matrix_sdk::ruma::OwnedRoomId;
+use matrix_sdk::ruma::{EventId, OwnedEventId, OwnedRoomId, RoomId};
 use sha2::{Digest, Sha256};
 use weechat::{
     buffer::Buffer,
@@ -131,10 +131,16 @@ impl MediaUpload {
 
 struct PendingMediaUpload {
     room: RoomHandle,
-    room_id: OwnedRoomId,
-    thread_root: Option<matrix_sdk::ruma::OwnedEventId>,
+    thread_root: Option<OwnedEventId>,
+    identity: UploadIdentity,
     upload: MediaUpload,
     last_activity: Instant,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct UploadIdentity {
+    room_id: OwnedRoomId,
+    thread_root: Option<OwnedEventId>,
 }
 
 #[derive(Default)]
@@ -177,24 +183,31 @@ impl MatrixUploadCommand {
     fn current_context(
         &self,
         buffer: &Buffer,
-    ) -> Result<
-        (RoomHandle, Option<matrix_sdk::ruma::OwnedEventId>),
-        &'static str,
-    > {
+    ) -> Result<(RoomHandle, Option<OwnedEventId>, UploadIdentity), &'static str>
+    {
         let room = self
             .servers
             .find_room(buffer)
             .ok_or("command must be run in a Matrix room or thread buffer")?;
-        Ok((room, thread_root_from_buffer(buffer)))
+        let thread_root = thread_root_from_buffer(buffer);
+        let identity = upload_identity(
+            room.room_id(),
+            thread_root.as_deref(),
+            buffer
+                .get_localvar("matrix_continuation_source_room_id")
+                .as_deref(),
+            buffer
+                .get_localvar("matrix_continuation_source_thread_root")
+                .as_deref(),
+        );
+        Ok((room, thread_root, identity))
     }
 
     fn matches_pending(
         pending: &PendingMediaUpload,
-        room: &RoomHandle,
-        thread_root: &Option<matrix_sdk::ruma::OwnedEventId>,
+        identity: &UploadIdentity,
     ) -> bool {
-        pending.room_id == room.room_id()
-            && pending.thread_root.as_ref() == thread_root.as_ref()
+        pending.identity == *identity
     }
 
     fn begin(&self, buffer: &Buffer, args: &[&str]) {
@@ -211,7 +224,8 @@ impl MatrixUploadCommand {
             return;
         }
 
-        let Ok((room, thread_root)) = self.current_context(buffer) else {
+        let Ok((room, thread_root, identity)) = self.current_context(buffer)
+        else {
             Self::report_error(
                 buffer,
                 "command must be run in a Matrix room or thread buffer",
@@ -242,9 +256,9 @@ impl MatrixUploadCommand {
         state.pending.insert(
             args[1].to_owned(),
             PendingMediaUpload {
-                room_id: room.room_id().to_owned(),
                 room,
                 thread_root,
+                identity,
                 upload,
                 last_activity: Instant::now(),
             },
@@ -267,7 +281,8 @@ impl MatrixUploadCommand {
             return;
         }
 
-        let Ok((room, thread_root)) = self.current_context(buffer) else {
+        let Ok((_room, _thread_root, identity)) = self.current_context(buffer)
+        else {
             Self::report_error(buffer, "command must be run in the Matrix buffer that began the upload");
             return;
         };
@@ -280,7 +295,7 @@ impl MatrixUploadCommand {
                 return;
             };
 
-            if !Self::matches_pending(pending, &room, &thread_root) {
+            if !Self::matches_pending(pending, &identity) {
                 Self::report_error(
                     buffer,
                     "upload buffer or thread does not match transfer id",
@@ -314,7 +329,8 @@ impl MatrixUploadCommand {
             return;
         }
 
-        let Ok((room, thread_root)) = self.current_context(buffer) else {
+        let Ok((_room, _thread_root, identity)) = self.current_context(buffer)
+        else {
             Self::report_error(buffer, "command must be run in the Matrix buffer that began the upload");
             return;
         };
@@ -326,7 +342,7 @@ impl MatrixUploadCommand {
                 Self::report_error(buffer, "no active upload");
                 return;
             };
-            if !Self::matches_pending(pending, &room, &thread_root) {
+            if !Self::matches_pending(pending, &identity) {
                 Self::report_error(
                     buffer,
                     "upload buffer or thread does not match transfer id",
@@ -370,7 +386,8 @@ impl MatrixUploadCommand {
             return;
         }
 
-        let Ok((room, thread_root)) = self.current_context(buffer) else {
+        let Ok((_room, _thread_root, identity)) = self.current_context(buffer)
+        else {
             Self::report_error(buffer, "command must be run in the Matrix buffer that began the upload");
             return;
         };
@@ -381,7 +398,7 @@ impl MatrixUploadCommand {
             Self::report_error(buffer, "no active upload");
             return;
         };
-        if !Self::matches_pending(pending, &room, &thread_root) {
+        if !Self::matches_pending(pending, &identity) {
             Self::report_error(
                 buffer,
                 "upload buffer or thread does not match transfer id",
@@ -390,6 +407,31 @@ impl MatrixUploadCommand {
         }
 
         state.pending.remove(args[1]);
+    }
+}
+
+fn upload_identity(
+    current_room_id: &RoomId,
+    current_thread_root: Option<&EventId>,
+    source_room_id: Option<&str>,
+    source_thread_root: Option<&str>,
+) -> UploadIdentity {
+    let source = source_room_id
+        .and_then(|room_id| RoomId::parse(room_id).ok())
+        .zip(
+            source_thread_root
+                .and_then(|event_id| EventId::parse(event_id).ok()),
+        );
+
+    match source {
+        Some((room_id, thread_root)) => UploadIdentity {
+            room_id,
+            thread_root: Some(thread_root),
+        },
+        None => UploadIdentity {
+            room_id: current_room_id.to_owned(),
+            thread_root: current_thread_root.map(ToOwned::to_owned),
+        },
     }
 }
 
@@ -604,5 +646,55 @@ mod tests {
             started + UPLOAD_IDLE_TIMEOUT - Duration::from_millis(1)
         ));
         assert!(upload_is_expired(started, started + UPLOAD_IDLE_TIMEOUT));
+    }
+
+    #[test]
+    fn adopted_thread_keeps_its_original_upload_identity() {
+        let source_room = RoomId::parse("!old:example.org").unwrap();
+        let source_root = EventId::parse("$old-root:example.org").unwrap();
+        let target_room = RoomId::parse("!new:example.org").unwrap();
+        let target_root = EventId::parse("$new-root:example.org").unwrap();
+
+        let before = upload_identity(
+            &source_room,
+            Some(source_root.as_ref()),
+            None,
+            None,
+        );
+        let after = upload_identity(
+            &target_room,
+            Some(target_root.as_ref()),
+            Some(source_room.as_str()),
+            Some(source_root.as_str()),
+        );
+
+        assert_eq!(before, after);
+        assert_ne!(after.room_id, target_room);
+        assert_ne!(after.thread_root.as_deref(), Some(target_root.as_ref()));
+    }
+
+    #[test]
+    fn incomplete_or_invalid_adoption_metadata_falls_back_safely() {
+        let room = RoomId::parse("!room:example.org").unwrap();
+        let root = EventId::parse("$root:example.org").unwrap();
+
+        for (source_room, source_root) in [
+            (Some("!old:example.org"), None),
+            (None, Some("$old-root:example.org")),
+            (Some("not-a-room"), Some("$old-root:example.org")),
+        ] {
+            assert_eq!(
+                upload_identity(
+                    &room,
+                    Some(root.as_ref()),
+                    source_room,
+                    source_root,
+                ),
+                UploadIdentity {
+                    room_id: room.clone(),
+                    thread_root: Some(root.clone()),
+                }
+            );
+        }
     }
 }
