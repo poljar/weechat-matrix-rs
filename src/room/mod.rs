@@ -483,6 +483,24 @@ impl RoomHandle {
                 .unwrap_or_default(),
         );
         buffer.set_localvar("room_id", room.room_id().as_str());
+        buffer.set_localvar("matrix_upload_v1", "1");
+        let sdk_room = room.room();
+        buffer.set_localvar(
+            "matrix_predecessor_room_id",
+            sdk_room
+                .predecessor_room()
+                .as_ref()
+                .map(|predecessor| predecessor.room_id.as_str())
+                .unwrap_or_default(),
+        );
+        buffer.set_localvar(
+            "matrix_replacement_room_id",
+            sdk_room
+                .successor_room()
+                .as_ref()
+                .map(|successor| successor.room_id.as_str())
+                .unwrap_or_default(),
+        );
         let room_avatar = room.room().avatar_url();
         buffer.set_localvar(
             "matrix_avatar_mxc",
@@ -1839,6 +1857,18 @@ impl MatrixRoom {
             AnySyncStateEvent::RoomCanonicalAlias(_) => {
                 self.buffer.set_alias();
                 self.buffer.update_buffer_name();
+            }
+            AnySyncStateEvent::RoomTombstone(_) => {
+                if let Ok(buffer) = self.buffer.buffer_handle().upgrade() {
+                    buffer.set_localvar(
+                        "matrix_replacement_room_id",
+                        self.room()
+                            .successor_room()
+                            .as_ref()
+                            .map(|successor| successor.room_id.as_str())
+                            .unwrap_or_default(),
+                    );
+                }
             }
             AnySyncStateEvent::SpaceParent(_) => {
                 self.buffer.update_parent_spaces()
