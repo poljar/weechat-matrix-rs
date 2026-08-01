@@ -1,10 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use matrix_sdk::{
-    ruma::{EventId, OwnedEventId, OwnedRoomId, RoomId},
-    Client,
-};
+use matrix_sdk::ruma::{EventId, OwnedEventId, OwnedRoomId, RoomId};
 use serde::{Deserialize, Serialize};
+
+use crate::connection::Connection;
 
 const STORE_KEY: &[u8] = b"org.weechat.matrix.thread_continuations.v1";
 const MAX_UPGRADE_DEPTH: usize = 32;
@@ -36,12 +35,10 @@ pub(crate) struct ThreadContinuationState {
 }
 
 impl ThreadContinuationState {
-    pub(crate) async fn load(client: &Client) -> Result<Self, String> {
-        let Some(bytes) = client
-            .state_store()
-            .get_custom_value(STORE_KEY)
-            .await
-            .map_err(|error| error.to_string())?
+    pub(crate) async fn load(connection: &Connection) -> Result<Self, String> {
+        let Some(bytes) = connection
+            .get_custom_store_value(STORE_KEY.to_vec())
+            .await?
         else {
             return Ok(Self::default());
         };
@@ -53,15 +50,16 @@ impl ThreadContinuationState {
         Ok(state)
     }
 
-    pub(crate) async fn save(&self, client: &Client) -> Result<(), String> {
+    pub(crate) async fn save(
+        &self,
+        connection: &Connection,
+    ) -> Result<(), String> {
         self.validate()?;
         let bytes =
             serde_json::to_vec(self).map_err(|error| error.to_string())?;
-        client
-            .state_store()
-            .set_custom_value_no_read(STORE_KEY, bytes)
+        connection
+            .set_custom_store_value(STORE_KEY.to_vec(), bytes)
             .await
-            .map_err(|error| error.to_string())
     }
 
     pub(crate) fn resolve(

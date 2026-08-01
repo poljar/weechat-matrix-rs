@@ -138,6 +138,65 @@ impl Connection {
             .expect("Tokio error while sending a message")
     }
 
+    async fn try_spawn<F>(&self, future: F) -> Result<F::Output, String>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.runtime()
+            .spawn(future)
+            .await
+            .map_err(|error| format!("Matrix runtime task failed: {error}"))
+    }
+
+    /// Read plugin-owned data from the Matrix state store on its Tokio runtime.
+    ///
+    /// Matrix SDK stores may use Tokio-backed pools internally. Keeping this
+    /// operation here prevents callers running on WeeChat's local executor from
+    /// polling those futures directly and aborting across the plugin FFI boundary.
+    pub async fn get_custom_store_value(
+        &self,
+        key: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let client = self.client().clone();
+        self.try_spawn(async move {
+            client
+                .state_store()
+                .get_custom_value(&key)
+                .await
+                .map_err(|error| error.to_string())
+        })
+        .await?
+    }
+
+    /// Persist plugin-owned data on the Matrix SDK Tokio runtime.
+    pub async fn set_custom_store_value(
+        &self,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> Result<(), String> {
+        let client = self.client().clone();
+        self.try_spawn(async move {
+            client
+                .state_store()
+                .set_custom_value_no_read(&key, value)
+                .await
+                .map_err(|error| error.to_string())
+        })
+        .await?
+    }
+
+    /// Join a room on the Matrix SDK Tokio runtime.
+    pub async fn join_room_on_runtime(
+        &self,
+        room_id: OwnedRoomId,
+    ) -> Result<Room, String> {
+        let client = self.client().clone();
+        self.try_spawn(async move { client.join_room_by_id(&room_id).await })
+            .await?
+            .map_err(|error| error.to_string())
+    }
+
     pub fn shutdown(&self) {
         let runtime = self.runtime();
 
@@ -872,5 +931,75 @@ impl Drop for Connection {
             let _guard = handle.enter();
             drop(runtime);
         }
+    }
+}
+
+#[cfg(test)]
+mod runtime_boundary_tests {
+    use std::{cell::RefCell, fs, path::Path, rc::Rc};
+
+    use tokio::runtime::Runtime;
+
+    use super::Connection;
+
+    fn rust_sources(path: &Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in fs::read_dir(path).expect("source directory is readable") {
+            let path = entry.expect("source entry is readable").path();
+            if path.is_dir() {
+                rust_sources(&path, files);
+            } else if path
+                .extension()
+                .is_some_and(|extension| extension == "rs")
+            {
+                files.push(path);
+            }
+        }
+    }
+
+    #[test]
+    fn matrix_sdk_async_io_is_owned_by_connection_runtime() {
+        let source_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let connection = source_root.join("connection.rs");
+        let mut files = Vec::new();
+        rust_sources(&source_root, &mut files);
+
+        for path in files {
+            if path == connection {
+                continue;
+            }
+            let source =
+                fs::read_to_string(&path).expect("Rust source is readable");
+            let compact = source
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>();
+            for forbidden in [".state_store()", ".join_room_by_id("] {
+                assert!(
+                    !compact.contains(forbidden),
+                    "{} calls {forbidden} outside connection.rs; route Matrix SDK async I/O through Connection",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fallible_runtime_boundary_contains_task_panics() {
+        let runtime = Rc::new(Runtime::new().expect("test runtime starts"));
+        let connection = Connection {
+            receiver_task: Rc::new(RefCell::new(None)),
+            sync_task: Rc::new(RefCell::new(None)),
+            client: None,
+            runtime: Some(runtime.clone()),
+        };
+
+        let error =
+            runtime
+                .block_on(connection.try_spawn(async {
+                    panic!("simulated Matrix SDK task panic")
+                }))
+                .expect_err("task panic becomes an error");
+
+        assert!(error.contains("task") && error.contains("panicked"));
     }
 }

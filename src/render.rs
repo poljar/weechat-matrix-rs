@@ -64,6 +64,8 @@ pub enum ReplyContext {
 
 impl RenderedEvent {
     const MSG_TAGS: &'static [&'static str] = &["notify_message"];
+    const BACKLOG_TAGS: &'static [&'static str] =
+        &["notify_none", "no_highlight"];
     const SELF_TAGS: &'static [&'static str] =
         &["notify_none", "no_highlight", "self_msg"];
 
@@ -73,6 +75,10 @@ impl RenderedEvent {
 
     pub fn add_msg_tags(self) -> Self {
         self.add_tags(Self::MSG_TAGS)
+    }
+
+    pub fn add_backlog_tags(self) -> Self {
+        self.add_tags(Self::BACKLOG_TAGS)
     }
 
     fn add_tags(mut self, tags: &[&str]) -> Self {
@@ -1939,5 +1945,28 @@ mod tests {
 
         assert_eq!(rendered.lines.len(), 1);
         assert_eq!(rendered.lines[0].message, "literal <b> text");
+    }
+
+    #[test]
+    fn backlog_tags_suppress_notifications_and_highlights() {
+        let rendered = RenderedEvent {
+            message_timestamp: 0,
+            prefix: "alice\t".to_owned(),
+            content: RenderedContent::new(vec![RenderedLine {
+                tags: vec!["matrix_text".to_owned()],
+                message: "old mention of Darafei".to_owned(),
+            }]),
+        }
+        .add_backlog_tags();
+
+        assert!(rendered.content.lines[0]
+            .tags
+            .contains(&"notify_none".to_owned()));
+        assert!(rendered.content.lines[0]
+            .tags
+            .contains(&"no_highlight".to_owned()));
+        assert!(!rendered.content.lines[0]
+            .tags
+            .contains(&"notify_message".to_owned()));
     }
 }
