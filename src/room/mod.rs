@@ -167,6 +167,26 @@ fn has_history_page(prev_batch: &Option<PrevBatch>) -> bool {
     prev_batch.is_some()
 }
 
+fn next_history_page_state(
+    current: &PrevBatch,
+    end: Option<String>,
+    _added: usize,
+) -> (Option<PrevBatch>, bool) {
+    if let PrevBatch::Forward(token) = current {
+        return (Some(PrevBatch::Backwards(Some(token.clone()))), false);
+    }
+
+    let repeated_cursor = matches!(
+        (current, end.as_deref()),
+        (PrevBatch::Backwards(Some(current)), Some(next)) if current == next
+    );
+    if end.is_none() || repeated_cursor {
+        (None, true)
+    } else {
+        (Some(PrevBatch::Backwards(end)), false)
+    }
+}
+
 fn history_page_marker(result: &HistoryPageResult) -> String {
     match result {
         HistoryPageResult::Page { added, exhausted } => format!(
@@ -2357,11 +2377,13 @@ impl MatrixRoom {
             let room = self.room();
             let room_id = room.room_id().to_owned();
 
-            if let Ok(r) =
-                connection.room_messages(room, prev_batch, limit).await
+            if let Ok(r) = connection
+                .room_messages(room, prev_batch.clone(), limit)
+                .await
             {
                 let added = r.chunk.len();
-                let exhausted = r.chunk.is_empty() || r.end.is_none();
+                let (next_prev_batch, exhausted) =
+                    next_history_page_state(&prev_batch, r.end.clone(), added);
                 for event in
                     r.chunk.iter().filter_map(|e| e.raw().deserialize().ok())
                 {
@@ -2382,16 +2404,14 @@ impl MatrixRoom {
 
                 let mut prev_batch = self.prev_batch.borrow_mut();
 
-                if let Some(PrevBatch::Forward(t)) = prev_batch.as_ref() {
-                    *prev_batch =
-                        Some(PrevBatch::Backwards(Some(t.to_owned())));
+                if matches!(prev_batch.as_ref(), Some(PrevBatch::Forward(_))) {
+                    *prev_batch = next_prev_batch;
                     self.buffer.sort_messages();
-                } else if r.chunk.is_empty() {
-                    *prev_batch = None;
                 } else {
-                    *prev_batch =
-                        r.end.map(|token| PrevBatch::Backwards(Some(token)));
-                    self.buffer.sort_messages();
+                    *prev_batch = next_prev_batch;
+                    if added > 0 {
+                        self.buffer.sort_messages();
+                    }
                 }
 
                 HistoryPageResult::Page { added, exhausted }
@@ -3072,6 +3092,45 @@ mod tests {
         assert!(has_history_page(&Some(PrevBatch::Forward(
             "token".to_owned()
         ))));
+    }
+
+    #[test]
+    fn empty_history_page_keeps_a_new_cursor() {
+        assert_eq!(
+            next_history_page_state(
+                &PrevBatch::Backwards(Some("cursor-1".to_owned())),
+                Some("cursor-2".to_owned()),
+                0,
+            ),
+            (
+                Some(PrevBatch::Backwards(Some("cursor-2".to_owned()))),
+                false,
+            ),
+        );
+    }
+
+    #[test]
+    fn empty_history_page_stops_on_a_repeated_cursor() {
+        assert_eq!(
+            next_history_page_state(
+                &PrevBatch::Backwards(Some("cursor-1".to_owned())),
+                Some("cursor-1".to_owned()),
+                0,
+            ),
+            (None, true),
+        );
+    }
+
+    #[test]
+    fn non_empty_history_page_also_stops_on_a_repeated_cursor() {
+        assert_eq!(
+            next_history_page_state(
+                &PrevBatch::Backwards(Some("cursor-1".to_owned())),
+                Some("cursor-1".to_owned()),
+                25,
+            ),
+            (None, true),
+        );
     }
 
     #[test]
