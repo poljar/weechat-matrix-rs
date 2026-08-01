@@ -419,6 +419,22 @@ impl RoomBuffer {
         }
     }
 
+    pub fn update_avatar(&self) {
+        let Some(room) = maybe_active_room(&self.room) else {
+            return;
+        };
+
+        if let Ok(buffer) = self.buffer_handle().upgrade() {
+            buffer.set_localvar(
+                "matrix_avatar_mxc",
+                room.avatar_url()
+                    .as_ref()
+                    .map(|uri| uri.as_str())
+                    .unwrap_or_default(),
+            );
+        }
+    }
+
     pub fn update_parent_spaces(&self) {
         let Some(room) = maybe_active_room(&self.room) else {
             return;

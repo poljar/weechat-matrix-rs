@@ -68,6 +68,31 @@ fn bounded_member_profiles(
     profiles
 }
 
+fn resolved_room_avatar_mxc(
+    explicit_room_avatar: Option<String>,
+    is_direct: bool,
+    own_user_id: &str,
+    profiles: &[MatrixMemberProfile],
+) -> Option<String> {
+    if explicit_room_avatar.is_some() || !is_direct {
+        return explicit_room_avatar;
+    }
+
+    let mut joined_peers = profiles.iter().filter(|profile| {
+        profile.membership == MembershipState::Join.as_str()
+            && profile.user_id != own_user_id
+    });
+    let peer = joined_peers.next()?;
+
+    // An m.direct room is not necessarily a two-person conversation. Avoid
+    // assigning one arbitrary member's face to a multi-user direct room.
+    if joined_peers.next().is_some() {
+        return None;
+    }
+
+    peer.avatar_mxc.clone()
+}
+
 #[derive(Clone, Debug)]
 pub struct WeechatRoomMember {
     inner: RoomMember,
@@ -162,6 +187,19 @@ impl Members {
                 .map(|entry| entry.value().clone())
                 .collect();
             let profiles = bounded_member_profiles(profiles);
+            let room = active_room(&self.room);
+            let room_avatar = resolved_room_avatar_mxc(
+                room.avatar_url().map(|uri| uri.as_str().to_owned()),
+                buffer
+                    .get_localvar("type")
+                    .is_some_and(|kind| kind == "private"),
+                room.own_user_id().as_str(),
+                &profiles,
+            );
+            buffer.set_localvar(
+                "matrix_avatar_mxc",
+                room_avatar.as_deref().unwrap_or_default(),
+            );
             let profiles: Vec<_> = profiles
                 .into_iter()
                 .map(|profile| {
@@ -542,6 +580,57 @@ mod tests {
         assert_eq!(profiles.len(), MEMBER_PROFILE_LIMIT);
         assert_eq!(profiles.first().unwrap().display_name, "Member 0000");
         assert_eq!(profiles.last().unwrap().display_name, "Member 0511");
+    }
+
+    #[test]
+    fn explicit_room_avatar_wins_for_rooms_and_direct_chats() {
+        let profiles = vec![profile(1, "Peer")];
+        let explicit = Some("mxc://example.org/room-avatar".to_owned());
+
+        assert_eq!(
+            resolved_room_avatar_mxc(
+                explicit.clone(),
+                false,
+                "@me:example.org",
+                &profiles,
+            ),
+            explicit,
+        );
+    }
+
+    #[test]
+    fn one_to_one_direct_chat_uses_the_other_members_avatar() {
+        let mut own = profile(0, "Me");
+        own.user_id = "@me:example.org".to_owned();
+        own.avatar_mxc = Some("mxc://example.org/me".to_owned());
+        let peer = profile(1, "Peer");
+
+        assert_eq!(
+            resolved_room_avatar_mxc(
+                None,
+                true,
+                "@me:example.org",
+                &[own, peer],
+            )
+            .as_deref(),
+            Some("mxc://example.org/avatar1"),
+        );
+    }
+
+    #[test]
+    fn multi_user_direct_room_does_not_choose_an_arbitrary_avatar() {
+        let mut own = profile(0, "Me");
+        own.user_id = "@me:example.org".to_owned();
+
+        assert_eq!(
+            resolved_room_avatar_mxc(
+                None,
+                true,
+                "@me:example.org",
+                &[own, profile(1, "One"), profile(2, "Two")],
+            ),
+            None,
+        );
     }
 }
 
