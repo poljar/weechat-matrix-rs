@@ -1187,14 +1187,14 @@ impl MatrixRoom {
                         .reply_full_quote_threshold();
                     let context = reply_context_for_distance(
                         threshold,
-                        self.buffer.reply_line_distance(event_id),
+                        self.buffer.reply_line_distance(&event_id),
                     );
 
                     let needs_remote_context = reply_sender.is_none()
                         || (context == ReplyContext::Full
                             && !rendered.has_reply_fallback());
                     let remote_context = if needs_remote_context {
-                        self.load_reply_context(event_id).await
+                        self.load_reply_context(&event_id).await
                     } else {
                         None
                     };
@@ -1216,7 +1216,7 @@ impl MatrixRoom {
                     };
 
                     rendered.add_reply_context(
-                        event_id,
+                        &event_id,
                         reply_sender.as_deref(),
                         context,
                         fetched_body,
@@ -1235,8 +1235,15 @@ impl MatrixRoom {
         &self,
         event_id: &EventId,
     ) -> Option<ResolvedReplyContext> {
-        let timeline_event =
-            self.room().load_or_fetch_event(event_id, None).await.ok()?;
+        let connection = self.connection.borrow().as_ref().cloned()?;
+        let room = self.room();
+        let event_id = event_id.to_owned();
+        let timeline_event = connection
+            .spawn(
+                async move { room.load_or_fetch_event(&event_id, None).await },
+            )
+            .await
+            .ok()?;
         let event = timeline_event.raw().deserialize().ok()?;
         let (sender_id, body) = reply_event_details(event)?;
         let sender = self
