@@ -958,8 +958,11 @@ impl InnerServer {
                 // Relay-native frontends select buffers without triggering
                 // WeeChat's buffer_switch signal. Populate restored Matrix
                 // buffers proactively instead of waiting for a TUI-only hook.
-                Weechat::spawn(async move { buffer.get_messages().await })
-                    .detach();
+                Weechat::spawn(async move {
+                    buffer.get_messages().await;
+                    buffer.recover_logged_encrypted_events().await;
+                })
+                .detach();
             }
             Err(e) => self.print_error(&format!("Error restoring room: {}", e)),
         }
@@ -1172,7 +1175,28 @@ impl InnerServer {
         let mut refresh_status_bar = false;
 
         match &event {
-            AnyToDeviceEvent::RoomKey(_) => {}
+            AnyToDeviceEvent::RoomKey(e) => {
+                if let Some(room) =
+                    self.rooms.borrow().get(&e.content.room_id).cloned()
+                {
+                    room.retry_pending_encrypted_events_for_session(
+                        &e.content.room_id,
+                        &e.content.session_id,
+                    )
+                    .await;
+                }
+            }
+            AnyToDeviceEvent::ForwardedRoomKey(e) => {
+                if let Some(room) =
+                    self.rooms.borrow().get(&e.content.room_id).cloned()
+                {
+                    room.retry_pending_encrypted_events_for_session(
+                        &e.content.room_id,
+                        &e.content.session_id,
+                    )
+                    .await;
+                }
+            }
             AnyToDeviceEvent::RoomKeyRequest(_) => {}
             AnyToDeviceEvent::KeyVerificationRequest(e) => {
                 refresh_status_bar = true;
@@ -1636,6 +1660,12 @@ impl InnerServer {
                     total_count,
                     ..
                 }) => {
+                    // Even a deduplicated import can make an already-present
+                    // key usable for placeholders recovered in this session.
+                    for room in self.rooms() {
+                        room.retry_all_pending_encrypted_events().await;
+                    }
+
                     if imported_count > 0 {
                         self.print_network(&format!(
                             "Successfully imported {} E2EE keys",
