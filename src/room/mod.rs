@@ -483,6 +483,14 @@ impl RoomHandle {
                 .unwrap_or_default(),
         );
         buffer.set_localvar("room_id", room.room_id().as_str());
+        let room_avatar = room.room().avatar_url();
+        buffer.set_localvar(
+            "matrix_avatar_mxc",
+            room_avatar
+                .as_ref()
+                .map(|uri| uri.as_str())
+                .unwrap_or_default(),
+        );
         if room.is_direct() {
             buffer.set_localvar("type", "private")
         } else {
@@ -1822,6 +1830,10 @@ impl MatrixRoom {
             .mark_active(event.sender(), event.origin_server_ts());
 
         match event {
+            AnySyncStateEvent::RoomAvatar(_) => {
+                self.buffer.update_avatar();
+                self.members.update_member_localvars();
+            }
             AnySyncStateEvent::RoomName(_) => self.buffer.update_buffer_name(),
             AnySyncStateEvent::RoomTopic(_) => self.buffer.set_topic(),
             AnySyncStateEvent::RoomCanonicalAlias(_) => {
