@@ -416,7 +416,10 @@ impl CommandRunCallback for MatrixUploadCommand {
             ),
         }
 
-        ReturnCode::Ok
+        // This hook implements the complete command. Letting WeeChat continue
+        // would run the same input through normal command dispatch as well and
+        // print a misleading "Unknown command" after a handled upload step.
+        ReturnCode::OkEat
     }
 }
 
