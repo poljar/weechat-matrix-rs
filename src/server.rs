@@ -840,28 +840,38 @@ impl InnerServer {
         tokio::sync::MutexGuard<'_, Option<ThreadContinuationState>>,
         String,
     > {
-        let client = self
-            .get_client()
+        let connection = self
+            .connection()
             .ok_or_else(|| "Matrix server is not connected".to_owned())?;
-        let mut state = self.thread_continuations.lock().await;
-        if state.is_none() {
-            *state = Some(ThreadContinuationState::load(&client).await?);
+        let needs_load = self.thread_continuations.lock().await.is_none();
+        if needs_load {
+            let loaded = ThreadContinuationState::load(&connection).await?;
+            let mut state = self.thread_continuations.lock().await;
+            if state.is_none() {
+                *state = Some(loaded);
+            }
         }
-        Ok(state)
+        Ok(self.thread_continuations.lock().await)
     }
 
     async fn joined_room_handle(
         &self,
         room_id: &RoomId,
     ) -> Result<RoomHandle, String> {
-        let client = self
-            .get_client()
+        let connection = self
+            .connection()
             .ok_or_else(|| "Matrix server is not connected".to_owned())?;
+        let client = connection.client().clone();
         let room = match client.get_room(room_id) {
             Some(room) if room.state() == RoomState::Joined => room,
-            _ => client.join_room_by_id(room_id).await.map_err(|error| {
-                format!("failed to join replacement room {room_id}: {error}")
-            })?,
+            _ => connection
+                .join_room_on_runtime(room_id.to_owned())
+                .await
+                .map_err(|error| {
+                    format!(
+                        "failed to join replacement room {room_id}: {error}"
+                    )
+                })?,
         };
         if room.state() != RoomState::Joined {
             return Err(format!("replacement room {room_id} is not joined"));
@@ -919,14 +929,7 @@ impl InnerServer {
             }
             current = match client.get_room(&successor.room_id) {
                 Some(room) if room.state() == RoomState::Joined => room,
-                _ => client.join_room_by_id(&successor.room_id).await.map_err(
-                    |error| {
-                        format!(
-                            "failed to join replacement room {}: {error}",
-                            successor.room_id
-                        )
-                    },
-                )?,
+                _ => self.joined_room_handle(&successor.room_id).await?.room(),
             };
             upgraded = true;
         }
@@ -939,15 +942,22 @@ impl InnerServer {
         source: ThreadKey,
         target: ThreadKey,
     ) -> Result<(), String> {
-        let client = self
-            .get_client()
+        let connection = self
+            .connection()
             .ok_or_else(|| "Matrix server is not connected".to_owned())?;
-        let mut state = self.loaded_thread_continuations().await?;
-        let state = state.as_mut().expect("continuation state was loaded");
-        let previous = state.clone();
-        state.insert(source, target)?;
-        if let Err(error) = state.save(&client).await {
-            *state = previous;
+        let mut state_guard = self.loaded_thread_continuations().await?;
+        let (previous, next) = {
+            let state = state_guard.as_mut().ok_or_else(|| {
+                "continuation state failed to load".to_owned()
+            })?;
+            let previous = state.clone();
+            state.insert(source, target)?;
+            (previous, state.clone())
+        };
+        drop(state_guard);
+        if let Err(error) = next.save(&connection).await {
+            let mut state = self.thread_continuations.lock().await;
+            *state = Some(previous);
             return Err(error);
         }
         Ok(())
@@ -956,15 +966,16 @@ impl InnerServer {
     pub(crate) async fn verify_thread_continuation_store(
         &self,
     ) -> Result<(), String> {
-        let client = self
-            .get_client()
+        let connection = self
+            .connection()
             .ok_or_else(|| "Matrix server is not connected".to_owned())?;
-        let state = self.loaded_thread_continuations().await?;
-        state
+        let state_guard = self.loaded_thread_continuations().await?;
+        let state = state_guard
             .as_ref()
-            .expect("continuation state was loaded")
-            .save(&client)
-            .await
+            .ok_or_else(|| "continuation state failed to load".to_owned())?
+            .clone();
+        drop(state_guard);
+        state.save(&connection).await
     }
 
     pub fn verifications(&self) -> Vec<VerificationBuffer> {
