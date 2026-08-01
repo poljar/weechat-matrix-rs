@@ -2781,7 +2781,7 @@ impl MatrixRoom {
             self.print_rendered_event_for_relation(
                 Some(event.event_id()),
                 Some(thread_root),
-                rendered,
+                rendered.add_backlog_tags(),
             );
         }
     }
@@ -3096,7 +3096,7 @@ impl MatrixRoom {
                         self.print_rendered_event_for_relation(
                             Some(event.event_id()),
                             thread_root.as_deref(),
-                            rendered,
+                            rendered.add_backlog_tags(),
                         );
                     }
                 }
