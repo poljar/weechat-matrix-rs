@@ -186,6 +186,23 @@ impl RoomBuffer {
         reply_sender_id_from_tags(&line.tags())
     }
 
+    /// Count printed lines after an event that is still visible in a buffer.
+    pub fn reply_line_distance(&self, event_id: &EventId) -> Option<usize> {
+        let event_id_tag = Cow::from(event_id.to_tag());
+
+        self.buffer_handle()
+            .upgrade()
+            .ok()
+            .and_then(|buffer| buffer_line_distance(&buffer, &event_id_tag))
+            .or_else(|| {
+                self.thread_buffers.borrow().values().find_map(|handle| {
+                    handle.upgrade().ok().and_then(|buffer| {
+                        buffer_line_distance(&buffer, &event_id_tag)
+                    })
+                })
+            })
+    }
+
     /// Return whether an event is already rendered in the buffer.
     pub fn contains_event(&self, event_id: &EventId) -> bool {
         let event_id_tag = Cow::from(event_id.to_tag());
@@ -201,6 +218,45 @@ impl RoomBuffer {
                     buffer_contains_tag(&buffer, &event_id_tag)
                 })
             })
+    }
+
+    /// Return encrypted event IDs represented by placeholder lines restored
+    /// from WeeChat logs or currently displayed in a room/thread buffer.
+    pub fn encrypted_event_ids(&self) -> Vec<OwnedEventId> {
+        const ENCRYPTED_TAG: &str = "matrix_encrypted";
+        const EVENT_TAG_PREFIX: &str = "matrix_id_";
+
+        let mut event_ids = Vec::new();
+        let mut handles =
+            self.inner.borrow().iter().cloned().collect::<Vec<_>>();
+        handles.extend(self.thread_buffers.borrow().values().cloned());
+
+        for handle in handles {
+            let Ok(buffer) = handle.upgrade() else {
+                continue;
+            };
+
+            for line in buffer.lines() {
+                let tags = line.tags();
+                if !tags.iter().any(|tag| tag.as_ref() == ENCRYPTED_TAG) {
+                    continue;
+                }
+
+                let Some(event_id) = tags.iter().find_map(|tag| {
+                    tag.as_ref()
+                        .strip_prefix(EVENT_TAG_PREFIX)
+                        .and_then(|event_id| EventId::parse(event_id).ok())
+                }) else {
+                    continue;
+                };
+
+                if !event_ids.contains(&event_id) {
+                    event_ids.push(event_id);
+                }
+            }
+        }
+
+        event_ids
     }
 
     /// Copy the root event line into a newly created thread buffer.
@@ -373,6 +429,8 @@ impl RoomBuffer {
             };
 
             line.update(data);
+            let tags: Vec<&str> = new.tags.iter().map(String::as_str).collect();
+            line.set_tags(&tags);
         }
 
         match lines.len().cmp(&event.content.lines.len()) {
@@ -416,6 +474,22 @@ impl RoomBuffer {
             if let Ok(b) = self.buffer_handle().upgrade() {
                 b.set_localvar("alias", alias.as_str());
             }
+        }
+    }
+
+    pub fn update_avatar(&self) {
+        let Some(room) = maybe_active_room(&self.room) else {
+            return;
+        };
+
+        if let Ok(buffer) = self.buffer_handle().upgrade() {
+            buffer.set_localvar(
+                "matrix_avatar_mxc",
+                room.avatar_url()
+                    .as_ref()
+                    .map(|uri| uri.as_str())
+                    .unwrap_or_default(),
+            );
         }
     }
 
@@ -623,6 +697,20 @@ where
     line.set_tags(&tags);
 }
 
+fn buffer_line_distance(buffer: &Buffer, tag: &Cow<str>) -> Option<usize> {
+    let mut lines_after = 0;
+
+    for line in buffer.lines().rev() {
+        if line.tags().contains(tag) {
+            return Some(lines_after);
+        }
+
+        lines_after += 1;
+    }
+
+    None
+}
+
 fn sanitize_thread_id(thread_root: &EventId) -> String {
     const THREAD_ID_DISPLAY_CHARS: usize = 12;
 
@@ -718,6 +806,14 @@ impl RoomBuffer {
         event_id: &EventId,
         event: RenderedEvent,
     ) {
+        self.replace_event(event_id, event);
+    }
+
+    pub fn replace_event(
+        &self,
+        event_id: &EventId,
+        event: RenderedEvent,
+    ) -> bool {
         if let Ok(buffer) = self.buffer_handle().upgrade() {
             let event_id_tag = Cow::from(event_id.to_tag());
 
@@ -726,8 +822,28 @@ impl RoomBuffer {
                 .filter(|l| l.tags().contains(&event_id_tag))
                 .collect();
 
-            self.replace_event_helper(&buffer, lines, &event);
+            if !lines.is_empty() {
+                self.replace_event_helper(&buffer, lines, &event);
+                return true;
+            }
         }
+
+        self.thread_buffers.borrow().values().any(|handle| {
+            handle.upgrade().is_ok_and(|buffer| {
+                let event_id_tag = Cow::from(event_id.to_tag());
+                let lines: Vec<BufferLine> = buffer
+                    .lines()
+                    .filter(|line| line.tags().contains(&event_id_tag))
+                    .collect();
+
+                if lines.is_empty() {
+                    false
+                } else {
+                    self.replace_event_helper(&buffer, lines, &event);
+                    true
+                }
+            })
+        })
     }
 
     pub fn print_rendered_event(&self, rendered: RenderedEvent) {

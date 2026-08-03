@@ -195,6 +195,13 @@ The inactivity delay defaults to five minutes and can be changed with:
 
        /set matrix-rust.look.smart_filter_delay 300000
 
+Recent replies can be rendered on one line in the form `> Alice: message`. By
+default, weechat-matrix-rs keeps the Matrix reply fallback quote when one is
+available. Set a positive threshold to render replies to recently printed lines
+in the compact one-line form:
+
+       /set matrix-rust.look.reply_full_quote_threshold 20
+
 # Room Status And Verification
 
 The `buffer_modes` bar item shows Matrix room state. Encrypted rooms show

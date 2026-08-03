@@ -136,6 +136,17 @@ config!(
             // Range: 0 ms to one day.
             0..86400000,
         },
+
+        reply_full_quote_threshold: Integer {
+            // Description
+            "Render replies to recently printed events on one line when this \
+             value is positive. The default 0 keeps the Matrix reply fallback \
+             quote when available",
+            // Default value.
+            0,
+            // Range: quote-preserving default to a large scrollback window.
+            0..100000,
+        },
     },
 
     Section color {
