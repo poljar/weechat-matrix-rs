@@ -2,7 +2,7 @@ use clap::{App as Argparse, AppSettings as ArgParseSettings, Arg};
 use weechat::{
     buffer::Buffer,
     hooks::{Command, CommandCallback, CommandSettings},
-    Args, Prefix, Weechat,
+    Args, Weechat,
 };
 
 use super::parse_and_run;
@@ -87,18 +87,7 @@ impl TopicCommand {
 
     fn set_topic(&self, buffer: &Buffer, topic: String) {
         if let Some(room) = self.servers.find_room(buffer) {
-            let room = room.room().clone();
-
-            Weechat::spawn(async move {
-                if let Err(error) = room.set_room_topic(&topic).await {
-                    Weechat::print(&format!(
-                        "{}Failed to set room topic: {}",
-                        Weechat::prefix(Prefix::Error),
-                        error
-                    ));
-                }
-            })
-            .detach();
+            Weechat::spawn(async move { room.set_topic(topic).await }).detach();
         } else {
             Weechat::print(
                 "The /topic command needs to be run in a Matrix room buffer.",

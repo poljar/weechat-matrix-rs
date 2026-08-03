@@ -1526,6 +1526,24 @@ impl MatrixRoom {
         }
     }
 
+    pub async fn set_topic(&self, topic: String) {
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        let room = self.room().clone();
+
+        match connection
+            .spawn(async move { room.set_room_topic(&topic).await })
+            .await
+        {
+            Ok(()) => (),
+            Err(error) => self
+                .print_error(&format!("Failed to set room topic: {}", error)),
+        }
+    }
+
     pub async fn ban_user(&self, user_id: OwnedUserId, reason: Option<String>) {
         let Some(connection) = self.connection.borrow().clone() else {
             self.print_error("Not connected. Please connect first.");
