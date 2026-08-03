@@ -138,6 +138,7 @@ const HISTORY_PAGE_TAGS: [&str; 2] =
     ["matrix_history_page", "matrix_smart_filter"];
 const RESTORED_HISTORY_BATCH_SIZE: u16 = 25;
 const INTERACTIVE_HISTORY_BATCH_SIZE: u16 = 25;
+const INTERACTIVE_HISTORY_MAX_PAGES: usize = 50;
 
 // Restore one current page eagerly. Further pages are user-driven so a noisy
 // room cannot monopolize its history lock while the GUI is asking for older
@@ -2348,8 +2349,30 @@ impl MatrixRoom {
     }
 
     pub async fn get_interactive_history_page(&self) -> HistoryPageResult {
-        self.get_messages_with_limit(INTERACTIVE_HISTORY_BATCH_SIZE)
-            .await
+        let mut total_added = 0;
+
+        for _ in 0..INTERACTIVE_HISTORY_MAX_PAGES {
+            match self
+                .get_messages_with_limit(INTERACTIVE_HISTORY_BATCH_SIZE)
+                .await
+            {
+                HistoryPageResult::Page { added, exhausted } => {
+                    total_added += added;
+                    if total_added > 0 || exhausted {
+                        return HistoryPageResult::Page {
+                            added: total_added,
+                            exhausted,
+                        };
+                    }
+                }
+                result => return result,
+            }
+        }
+
+        HistoryPageResult::Page {
+            added: total_added,
+            exhausted: false,
+        }
     }
 
     async fn get_messages_with_limit(&self, limit: u16) -> HistoryPageResult {
@@ -2381,9 +2404,13 @@ impl MatrixRoom {
                 .room_messages(room, prev_batch.clone(), limit)
                 .await
             {
-                let added = r.chunk.len();
-                let (next_prev_batch, exhausted) =
-                    next_history_page_state(&prev_batch, r.end.clone(), added);
+                let fetched = r.chunk.len();
+                let (next_prev_batch, exhausted) = next_history_page_state(
+                    &prev_batch,
+                    r.end.clone(),
+                    fetched,
+                );
+                let mut added = 0;
                 for event in
                     r.chunk.iter().filter_map(|e| e.raw().deserialize().ok())
                 {
@@ -2399,7 +2426,7 @@ impl MatrixRoom {
                         };
                         *self.latest_event_id.borrow_mut() = Some(event_id);
                     }
-                    self.handle_room_event(&event).await;
+                    added += self.handle_room_event(&event).await;
                 }
 
                 let mut prev_batch = self.prev_batch.borrow_mut();
@@ -2913,7 +2940,7 @@ impl MatrixRoom {
         }
     }
 
-    pub async fn handle_room_event(&self, event: &AnyTimelineEvent) {
+    pub async fn handle_room_event(&self, event: &AnyTimelineEvent) -> usize {
         let thread_root = thread_root_from_timeline_event(event);
 
         match &event {
@@ -2931,7 +2958,7 @@ impl MatrixRoom {
                     content
                 } else {
                     tracing::error!("Unhandled redacted event: {event:?}");
-                    return;
+                    return 0;
                 };
                 let send_time = event.origin_server_ts();
 
@@ -2965,17 +2992,21 @@ impl MatrixRoom {
                         )
                         .await
                     {
+                        let line_count = rendered.content.lines.len();
                         self.print_rendered_event_for_relation(
                             Some(event.event_id()),
                             thread_root.as_deref(),
                             rendered.add_backlog_tags(),
                         );
+                        return line_count;
                     }
                 }
             }
             // TODO: print out state events.
             AnyTimelineEvent::State(_) => (),
         }
+
+        0
     }
 
     pub fn room(&self) -> Room {
