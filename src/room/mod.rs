@@ -1538,7 +1538,7 @@ impl MatrixRoom {
             .spawn(async move { room.set_room_topic(&topic).await })
             .await
         {
-            Ok(()) => (),
+            Ok(_) => (),
             Err(error) => self
                 .print_error(&format!("Failed to set room topic: {}", error)),
         }
