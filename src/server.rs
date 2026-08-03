@@ -107,6 +107,16 @@ use crate::{
     ConfigHandle, Servers, PLUGIN_NAME,
 };
 
+fn secure_set_token_command(name: &str, token: &str) -> Option<String> {
+    let safe = !token.is_empty()
+        && token.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '-' | '.' | '_' | '~' | '+' | '/' | '=')
+        });
+
+    safe.then(|| format!("/secure set {name} {token}"))
+}
+
 fn with_entered_runtime_until_final_drop<F>(
     runtime: Rc<tokio::runtime::Runtime>,
     f: F,
@@ -959,7 +969,9 @@ impl InnerServer {
                 // WeeChat's buffer_switch signal. Populate restored Matrix
                 // buffers proactively instead of waiting for a TUI-only hook.
                 Weechat::spawn(async move {
-                    buffer.preload_restored_messages().await
+                    buffer.preload_restored_messages().await;
+                    buffer.get_messages().await;
+                    buffer.recover_logged_encrypted_events().await;
                 })
                 .detach();
             }
@@ -1174,7 +1186,28 @@ impl InnerServer {
         let mut refresh_status_bar = false;
 
         match &event {
-            AnyToDeviceEvent::RoomKey(_) => {}
+            AnyToDeviceEvent::RoomKey(e) => {
+                if let Some(room) =
+                    self.rooms.borrow().get(&e.content.room_id).cloned()
+                {
+                    room.retry_pending_encrypted_events_for_session(
+                        &e.content.room_id,
+                        &e.content.session_id,
+                    )
+                    .await;
+                }
+            }
+            AnyToDeviceEvent::ForwardedRoomKey(e) => {
+                if let Some(room) =
+                    self.rooms.borrow().get(&e.content.room_id).cloned()
+                {
+                    room.retry_pending_encrypted_events_for_session(
+                        &e.content.room_id,
+                        &e.content.session_id,
+                    )
+                    .await;
+                }
+            }
             AnyToDeviceEvent::RoomKeyRequest(_) => {}
             AnyToDeviceEvent::KeyVerificationRequest(e) => {
                 refresh_status_bar = true;
@@ -1376,15 +1409,17 @@ impl InnerServer {
             return;
         };
 
-        let quote = |value: &str| {
-            format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+        let Some(access_command) =
+            secure_set_token_command(&access_name, &tokens.access_token)
+        else {
+            self.print_error(
+                "Refusing to persist an invalid Matrix access token",
+            );
+            return;
         };
 
         let commands = [
-            format!(
-                "/secure set {access_name} {}",
-                quote(&tokens.access_token)
-            ),
+            access_command,
             format!(
                 "/set matrix-rust.server.{}.access_token \
                  \"${{sec.data.{access_name}}}\"",
@@ -1402,8 +1437,17 @@ impl InnerServer {
         }
 
         if let Some(refresh_token) = tokens.refresh_token {
+            let Some(refresh_command) =
+                secure_set_token_command(&refresh_name, &refresh_token)
+            else {
+                self.print_error(
+                    "Refusing to persist an invalid Matrix refresh token",
+                );
+                return;
+            };
+
             let commands = [
-                format!("/secure set {refresh_name} {}", quote(&refresh_token)),
+                refresh_command,
                 format!(
                     "/set matrix-rust.server.{}.refresh_token \
                      \"${{sec.data.{refresh_name}}}\"",
@@ -1638,6 +1682,12 @@ impl InnerServer {
                     total_count,
                     ..
                 }) => {
+                    // Even a deduplicated import can make an already-present
+                    // key usable for placeholders recovered in this session.
+                    for room in self.rooms() {
+                        room.retry_all_pending_encrypted_events().await;
+                    }
+
                     if imported_count > 0 {
                         self.print_network(&format!(
                             "Successfully imported {} E2EE keys",
@@ -2383,7 +2433,7 @@ impl InnerServer {
 #[cfg(test)]
 mod tests {
     use super::{
-        create_room_request, missing_alias_action,
+        create_room_request, missing_alias_action, secure_set_token_command,
         with_entered_runtime_until_drop, InnerServer, MissingAliasAction,
     };
     use matrix_sdk::ruma::{OwnedRoomAliasId, OwnedUserId};
@@ -2411,6 +2461,34 @@ mod tests {
 
             self.0.store(context, Ordering::SeqCst);
         }
+    }
+
+    #[test]
+    fn secure_token_command_does_not_store_literal_quotes() {
+        assert_eq!(
+            secure_set_token_command(
+                "matrix_access_token",
+                "syt_Abc-123._~+/="
+            )
+            .as_deref(),
+            Some("/secure set matrix_access_token syt_Abc-123._~+/=")
+        );
+    }
+
+    #[test]
+    fn secure_token_command_rejects_command_delimiters() {
+        assert_eq!(
+            secure_set_token_command("matrix_access_token", "\"syt_token\""),
+            None
+        );
+        assert_eq!(
+            secure_set_token_command("matrix_access_token", "syt token"),
+            None
+        );
+        assert_eq!(
+            secure_set_token_command("matrix_access_token", "syt\n/set x y"),
+            None
+        );
     }
 
     #[test]

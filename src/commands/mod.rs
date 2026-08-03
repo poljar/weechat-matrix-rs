@@ -18,6 +18,7 @@ mod keys;
 mod matrix;
 mod me;
 mod media;
+mod mention_send;
 mod moderation;
 mod names;
 mod nick;
@@ -43,6 +44,7 @@ use keys::KeysCommand;
 use matrix::MatrixCommand;
 use me::MeCommand;
 use media::MediaCommand;
+use mention_send::MentionSendCommand;
 use moderation::ModerationCommand;
 use names::NamesCommand;
 use nick::NickCommand;
@@ -56,6 +58,7 @@ use verify::VerifyCommand;
 
 pub struct Commands {
     _matrix: Command,
+    _mention_send: CommandRun,
     _keys: Command,
     _devices: Command,
     _invite: Command,
@@ -87,6 +90,7 @@ impl Commands {
     ) -> Result<Commands, ()> {
         Ok(Commands {
             _matrix: MatrixCommand::create(servers, config)?,
+            _mention_send: MentionSendCommand::create(servers)?,
             _devices: DevicesCommand::create(servers)?,
             _invite: InviteCommand::create(servers)?,
             _ignore: IgnoreCommand::create()?,

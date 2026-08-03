@@ -56,6 +56,12 @@ pub struct RenderedEvent {
     pub content: RenderedContent,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ReplyContext {
+    Inline,
+    Full,
+}
+
 impl RenderedEvent {
     const MSG_TAGS: &'static [&'static str] = &["notify_message"];
     const SELF_TAGS: &'static [&'static str] =
@@ -81,6 +87,7 @@ impl RenderedEvent {
         mut self,
         event_id: &EventId,
         sender: Option<&str>,
+        context: ReplyContext,
         fetched_body: Option<&str>,
     ) -> Self {
         let reply_fallback = self.content.reply_fallback.take();
@@ -109,6 +116,16 @@ impl RenderedEvent {
             .as_ref()
             .map(|fallback| fallback.body.as_str())
             .or(fetched_body);
+
+        if context == ReplyContext::Inline {
+            if let Some(line) = self.content.lines.first_mut() {
+                line.tags = tags;
+                line.message = format!("> {}: {}", reply_sender, line.message);
+            }
+
+            return self;
+        }
+
         let mut context_lines = match quoted_body {
             Some(body) => {
                 let mut header_tags = tags.clone();
@@ -1665,27 +1682,22 @@ mod tests {
                 message: "reply body".to_owned(),
             }]),
         }
-        .add_reply_context(&event_id, Some("Alice"), None);
+        .add_reply_context(
+            &event_id,
+            Some("Alice"),
+            ReplyContext::Inline,
+            None,
+        );
 
-        assert_eq!(2, rendered.content.lines.len());
-        assert_eq!("Reply to Alice", rendered.content.lines[0].message);
+        assert_eq!(1, rendered.content.lines.len());
+        assert_eq!("> Alice: reply body", rendered.content.lines[0].message);
         assert!(rendered.content.lines[0]
             .tags
             .contains(&"matrix_reply".to_owned()));
-        assert!(rendered.content.lines[0]
-            .tags
-            .contains(&"matrix_reply_header".to_owned()));
-        assert!(rendered.content.lines[0]
-            .tags
-            .contains(&"matrix_reply_sender_hex_416c696365".to_owned()));
-        assert!(rendered.content.lines[0]
-            .tags
-            .contains(&"matrix_reply_id_$replyevent:example.org".to_owned()));
-        assert_eq!("reply body", rendered.content.lines[1].message);
     }
 
     #[test]
-    fn reply_context_falls_back_to_event_id() {
+    fn inline_reply_context_falls_back_to_event_id() {
         let event_id =
             matrix_sdk::ruma::owned_event_id!("$replyevent:example.org");
         let rendered = RenderedEvent {
@@ -1696,16 +1708,15 @@ mod tests {
                 message: "reply body".to_owned(),
             }]),
         }
-        .add_reply_context(&event_id, None, None);
+        .add_reply_context(&event_id, None, ReplyContext::Inline, None);
 
         assert_eq!(
-            "Reply to $replyevent:example.org",
+            "> $replyevent:example.org: reply body",
             rendered.content.lines[0].message
         );
         assert!(rendered.content.lines[0]
             .tags
             .contains(&"matrix_reply".to_owned()));
-        assert_eq!("reply body", rendered.content.lines[1].message);
     }
 
     #[test]
@@ -1728,7 +1739,12 @@ mod tests {
             prefix: "bob\t".to_owned(),
             content: content.render(&()),
         }
-        .add_reply_context(&event_id, Some("Alice"), None);
+        .add_reply_context(
+            &event_id,
+            Some("Alice"),
+            ReplyContext::Full,
+            None,
+        );
 
         assert_eq!(3, rendered.content.lines.len());
         assert_eq!("Reply to Alice:", rendered.content.lines[0].message);
@@ -1759,7 +1775,7 @@ mod tests {
             prefix: "bob\t".to_owned(),
             content: content.render(&()),
         }
-        .add_reply_context(&event_id, None, None);
+        .add_reply_context(&event_id, None, ReplyContext::Full, None);
 
         assert_eq!(
             "Reply to @alice:example.org:",
@@ -1788,7 +1804,12 @@ mod tests {
             prefix: "bob\t".to_owned(),
             content: content.render(&()),
         }
-        .add_reply_context(&event_id, Some("Alice"), None);
+        .add_reply_context(
+            &event_id,
+            Some("Alice"),
+            ReplyContext::Full,
+            None,
+        );
 
         let messages = rendered
             .content
@@ -1821,6 +1842,7 @@ mod tests {
         .add_reply_context(
             &event_id,
             Some("Alice"),
+            ReplyContext::Full,
             Some("previous message"),
         );
 
@@ -1833,6 +1855,40 @@ mod tests {
                 .map(|line| line.message.as_str())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn inline_reply_context_keeps_reply_on_one_line_with_fallback() {
+        let event_id =
+            matrix_sdk::ruma::owned_event_id!("$replyevent:example.org");
+        let body = "\
+            <mx-reply>\
+                <blockquote>\
+                    <a href=\"https://matrix.to/#/!room:example.org/$replyevent:example.org\">In reply to</a> \
+                    <a href=\"https://matrix.to/#/@alice:example.org\">@alice:example.org</a>\
+                    <br>\
+                    Previous message\
+                </blockquote>\
+            </mx-reply>\
+            <p>new message</p>";
+        let content = TextMessageEventContent::html("fallback", body);
+        let rendered = RenderedEvent {
+            message_timestamp: 0,
+            prefix: "bob\t".to_owned(),
+            content: content.render(&()),
+        }
+        .add_reply_context(
+            &event_id,
+            Some("Alice"),
+            ReplyContext::Inline,
+            None,
+        );
+
+        assert_eq!(1, rendered.content.lines.len());
+        assert_eq!("> Alice: new message", rendered.content.lines[0].message);
+        assert!(rendered.content.lines[0]
+            .tags
+            .contains(&"matrix_reply".to_owned()));
     }
 
     #[test]

@@ -60,6 +60,10 @@ use matrix_sdk::{
         events::{
             relation::{RelationType, Thread},
             room::{
+                encrypted::{
+                    EncryptedEventScheme, Relation as EncryptedRelation,
+                    RoomEncryptedEventContent,
+                },
                 member::RoomMemberEventContent,
                 message::{
                     MessageType, Relation, RoomMessageEventContent,
@@ -71,8 +75,10 @@ use matrix_sdk::{
             AnySyncStateEvent, AnySyncTimelineEvent, AnyTimelineEvent,
             OriginalSyncMessageLikeEvent, SyncMessageLikeEvent, SyncStateEvent,
         },
+        serde::Raw,
         EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomAliasId,
-        OwnedTransactionId, OwnedUserId, RoomId, TransactionId, UInt, UserId,
+        OwnedRoomId, OwnedTransactionId, OwnedUserId, RoomId, TransactionId,
+        UInt, UserId,
     },
     StoreError,
 };
@@ -87,7 +93,7 @@ use weechat::{
 use crate::{
     config::{Config, RedactionStyle},
     connection::Connection,
-    render::{Render, RenderedEvent},
+    render::{Render, RenderedEvent, ReplyContext},
     utils::{Edit, VerificationEvent},
     PLUGIN_NAME,
 };
@@ -204,6 +210,10 @@ pub struct MatrixRoom {
     latest_thread_event_ids: Rc<RefCell<HashMap<OwnedEventId, OwnedEventId>>>,
     thread_history_in_flight: Rc<RefCell<HashSet<OwnedEventId>>>,
     thread_history_loaded: Rc<RefCell<HashSet<OwnedEventId>>>,
+    pending_encrypted_events:
+        Rc<RefCell<HashMap<OwnedEventId, PendingEncryptedEvent>>>,
+    pending_encrypted_recoveries:
+        Rc<RefCell<HashSet<EncryptedMessageRecovery>>>,
 
     outgoing_messages: MessageQueue,
 
@@ -232,6 +242,51 @@ fn reply_event_details(
     };
 
     Some((sender, body))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+struct EncryptedMessageRecovery {
+    room_id: OwnedRoomId,
+    session_id: String,
+}
+
+impl EncryptedMessageRecovery {
+    fn from_content(
+        room_id: &RoomId,
+        content: &RoomEncryptedEventContent,
+    ) -> Option<Self> {
+        match &content.scheme {
+            EncryptedEventScheme::MegolmV1AesSha2(content) => Some(Self {
+                room_id: room_id.to_owned(),
+                session_id: content.session_id.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PendingEncryptedEvent {
+    event: Raw<OriginalSyncMessageLikeEvent<RoomEncryptedEventContent>>,
+    recovery: Option<EncryptedMessageRecovery>,
+}
+
+fn pending_encrypted_event_raw(
+    event_id: &EventId,
+    sender: &UserId,
+    origin_server_ts: MilliSecondsSinceUnixEpoch,
+    content: &RoomEncryptedEventContent,
+) -> Option<Raw<OriginalSyncMessageLikeEvent<RoomEncryptedEventContent>>> {
+    serde_json::to_string(&serde_json::json!({
+        "content": content,
+        "event_id": event_id,
+        "origin_server_ts": origin_server_ts,
+        "sender": sender,
+        "type": "m.room.encrypted",
+        "unsigned": {},
+    }))
+    .ok()
+    .and_then(|json| Raw::from_json_string(json).ok())
 }
 
 #[derive(Debug, Clone, Default)]
@@ -355,6 +410,16 @@ fn make_emote_message_content(
     content
 }
 
+fn with_mentions(
+    mut content: RoomMessageEventContent,
+    mentioned_user_ids: Vec<OwnedUserId>,
+) -> RoomMessageEventContent {
+    content.mentions = Some(matrix_sdk::ruma::events::Mentions::with_user_ids(
+        mentioned_user_ids,
+    ));
+    content
+}
+
 fn thread_root_from_buffer(buffer: &Buffer) -> Option<OwnedEventId> {
     buffer
         .get_localvar("thread_root")
@@ -370,12 +435,24 @@ fn thread_root_from_content(
     }
 }
 
+fn thread_root_from_encrypted_content(
+    content: &RoomEncryptedEventContent,
+) -> Option<&EventId> {
+    match content.relates_to.as_ref() {
+        Some(EncryptedRelation::Thread(thread)) => Some(&thread.event_id),
+        _ => None,
+    }
+}
+
 fn thread_root_from_event(
     event: &AnySyncMessageLikeEvent,
 ) -> Option<OwnedEventId> {
     event.original_content().and_then(|content| match content {
         AnyMessageLikeEventContent::RoomMessage(content) => {
             thread_root_from_content(&content).map(ToOwned::to_owned)
+        }
+        AnyMessageLikeEventContent::RoomEncrypted(content) => {
+            thread_root_from_encrypted_content(&content).map(ToOwned::to_owned)
         }
         _ => None,
     })
@@ -463,6 +540,8 @@ impl RoomHandle {
             latest_thread_event_ids: Rc::new(RefCell::new(HashMap::new())),
             thread_history_in_flight: Rc::new(RefCell::new(HashSet::new())),
             thread_history_loaded: Rc::new(RefCell::new(HashSet::new())),
+            pending_encrypted_events: Rc::new(RefCell::new(HashMap::new())),
+            pending_encrypted_recoveries: Rc::new(RefCell::new(HashSet::new())),
             own_user_id: own_user_id.into(),
             members,
             buffer,
@@ -538,6 +617,32 @@ impl RoomHandle {
                 .unwrap_or_default(),
         );
         buffer.set_localvar("room_id", room.room_id().as_str());
+        buffer.set_localvar("matrix_upload_v1", "1");
+        let sdk_room = room.room();
+        buffer.set_localvar(
+            "matrix_predecessor_room_id",
+            sdk_room
+                .predecessor_room()
+                .as_ref()
+                .map(|predecessor| predecessor.room_id.as_str())
+                .unwrap_or_default(),
+        );
+        buffer.set_localvar(
+            "matrix_replacement_room_id",
+            sdk_room
+                .successor_room()
+                .as_ref()
+                .map(|successor| successor.room_id.as_str())
+                .unwrap_or_default(),
+        );
+        let room_avatar = room.room().avatar_url();
+        buffer.set_localvar(
+            "matrix_avatar_mxc",
+            room_avatar
+                .as_ref()
+                .map(|uri| uri.as_str())
+                .unwrap_or_default(),
+        );
         if room.is_direct() {
             buffer.set_localvar("type", "private")
         } else {
@@ -594,6 +699,7 @@ impl RoomHandle {
             trace!("Restoring member {}", &user_id);
             room_buffer.members.restore_member(user_id).await;
         }
+        room_buffer.members.update_member_localvars();
 
         room_buffer.buffer.update_buffer_name();
         room_buffer.buffer.set_topic();
@@ -625,6 +731,27 @@ impl BufferInputCallbackAsync for MatrixRoom {
 }
 
 impl MatrixRoom {
+    pub(crate) fn mention_message_content(
+        &self,
+        buffer: &Buffer,
+        input: String,
+        mentioned_user_ids: Vec<OwnedUserId>,
+    ) -> RoomMessageEventContent {
+        let thread_root = thread_root_from_buffer(buffer);
+        let latest_thread_event = thread_root.as_ref().and_then(|root| {
+            self.latest_thread_event_ids.borrow().get(root).cloned()
+        });
+        with_mentions(
+            make_text_message_content(
+                input,
+                self.config.borrow().input().markdown_input(),
+                thread_root,
+                latest_thread_event,
+            ),
+            mentioned_user_ids,
+        )
+    }
+
     pub fn owns_buffer(&self, buffer: &Buffer) -> bool {
         self.buffer.owns_buffer(buffer)
     }
@@ -910,6 +1037,15 @@ impl MatrixRoom {
                 };
 
                 if let Some((event_id, mut reply_sender)) = reply_to {
+                    let threshold = self
+                        .config
+                        .borrow()
+                        .look()
+                        .reply_full_quote_threshold();
+                    let context = reply_context_for_distance(
+                        threshold,
+                        self.buffer.reply_line_distance(&event_id),
+                    );
                     let needs_remote_context = reply_sender.is_none()
                         || !rendered.has_reply_fallback();
                     let remote_context = if needs_remote_context {
@@ -935,6 +1071,7 @@ impl MatrixRoom {
                     rendered.add_reply_context(
                         &event_id,
                         reply_sender.as_deref(),
+                        context,
                         fetched_body,
                     )
                 } else {
@@ -1114,6 +1251,261 @@ impl MatrixRoom {
             })
         } else {
             self.render_redacted_event(event).await
+        }
+    }
+
+    fn note_pending_encrypted_event(
+        &self,
+        event_id: &EventId,
+        sender: &UserId,
+        origin_server_ts: MilliSecondsSinceUnixEpoch,
+        content: &RoomEncryptedEventContent,
+    ) -> Option<EncryptedMessageRecovery> {
+        let recovery = EncryptedMessageRecovery::from_content(
+            self.room_id.as_ref(),
+            content,
+        );
+        let raw = pending_encrypted_event_raw(
+            event_id,
+            sender,
+            origin_server_ts,
+            content,
+        )?;
+
+        self.pending_encrypted_events.borrow_mut().insert(
+            event_id.to_owned(),
+            PendingEncryptedEvent {
+                event: raw,
+                recovery: recovery.clone(),
+            },
+        );
+        recovery
+    }
+
+    fn maybe_request_missing_encrypted_event_recovery(
+        &self,
+        event_id: &EventId,
+        sender: &UserId,
+        origin_server_ts: MilliSecondsSinceUnixEpoch,
+        content: &RoomEncryptedEventContent,
+    ) {
+        let Some(recovery) = self.note_pending_encrypted_event(
+            event_id,
+            sender,
+            origin_server_ts,
+            content,
+        ) else {
+            return;
+        };
+
+        if !self
+            .pending_encrypted_recoveries
+            .borrow_mut()
+            .insert(recovery.clone())
+        {
+            return;
+        }
+
+        let room = self.clone();
+        Weechat::spawn(async move {
+            room.download_missing_room_key(recovery).await;
+        })
+        .detach();
+    }
+
+    async fn download_missing_room_key(
+        &self,
+        recovery: EncryptedMessageRecovery,
+    ) {
+        let Some(connection) = self.connection.borrow().as_ref().cloned()
+        else {
+            return;
+        };
+        let client = connection.client().clone();
+        let room_id = recovery.room_id.clone();
+        let session_id = recovery.session_id.clone();
+
+        match connection
+            .spawn(async move {
+                client
+                    .encryption()
+                    .backups()
+                    .download_room_key(&room_id, &session_id)
+                    .await
+            })
+            .await
+        {
+            Ok(true) => {
+                self.retry_pending_encrypted_events_for_session(
+                    &recovery.room_id,
+                    &recovery.session_id,
+                )
+                .await;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                trace!(
+                    room_id = %recovery.room_id,
+                    session_id = %recovery.session_id,
+                    ?error,
+                    "Unable to download a missing room key from backup"
+                );
+            }
+        }
+    }
+
+    async fn retry_pending_encrypted_event(&self, event_id: &EventId) -> bool {
+        let Some(pending) = self
+            .pending_encrypted_events
+            .borrow()
+            .get(event_id)
+            .cloned()
+        else {
+            return false;
+        };
+        let Some(connection) = self.connection.borrow().as_ref().cloned()
+        else {
+            return false;
+        };
+        let room = self.room();
+        let raw = pending.event.clone();
+        let timeline = match connection
+            .spawn(async move { room.decrypt_event(&raw, None).await })
+            .await
+        {
+            Ok(timeline) => timeline,
+            Err(error) => {
+                trace!(%event_id, ?error, "Unable to retry room event decryption");
+                return false;
+            }
+        };
+        let event: AnySyncTimelineEvent = match timeline.raw().deserialize() {
+            Ok(event) => event,
+            Err(error) => {
+                trace!(%event_id, ?error, "Unable to deserialize retried decrypted event");
+                return false;
+            }
+        };
+        let AnySyncTimelineEvent::MessageLike(event) = event else {
+            return false;
+        };
+        if matches!(
+            event.original_content(),
+            Some(AnyMessageLikeEventContent::RoomEncrypted(_))
+        ) {
+            return false;
+        }
+        let Some(rendered) = self.render_sync_message(&event).await else {
+            return false;
+        };
+        if !self.buffer.replace_event(event_id, rendered) {
+            trace!(%event_id, "Unable to find a pending encrypted event in the room buffers");
+            return false;
+        }
+
+        self.pending_encrypted_events.borrow_mut().remove(event_id);
+        if let Some(recovery) = pending.recovery {
+            let still_pending =
+                self.pending_encrypted_events.borrow().values().any(
+                    |pending| pending.recovery.as_ref() == Some(&recovery),
+                );
+            if !still_pending {
+                self.pending_encrypted_recoveries
+                    .borrow_mut()
+                    .remove(&recovery);
+            }
+        }
+        true
+    }
+
+    pub async fn retry_pending_encrypted_events_for_session(
+        &self,
+        room_id: &RoomId,
+        session_id: &str,
+    ) {
+        let event_ids: Vec<OwnedEventId> = self
+            .pending_encrypted_events
+            .borrow()
+            .iter()
+            .filter(|(_, pending)| {
+                pending.recovery.as_ref().is_some_and(|recovery| {
+                    recovery.room_id == room_id
+                        && recovery.session_id == session_id
+                })
+            })
+            .map(|(event_id, _)| event_id.clone())
+            .collect();
+
+        for event_id in event_ids {
+            self.retry_pending_encrypted_event(&event_id).await;
+        }
+    }
+
+    pub async fn retry_all_pending_encrypted_events(&self) {
+        let event_ids: Vec<OwnedEventId> = self
+            .pending_encrypted_events
+            .borrow()
+            .keys()
+            .cloned()
+            .collect();
+
+        for event_id in event_ids {
+            self.retry_pending_encrypted_event(&event_id).await;
+        }
+    }
+
+    /// Re-fetch encrypted events whose placeholder lines survived a WeeChat
+    /// restart. The log keeps event IDs and tags, but not the raw ciphertext
+    /// required by the Matrix crypto machine for a later retry.
+    pub async fn recover_logged_encrypted_events(&self) {
+        let event_ids = self.buffer.encrypted_event_ids();
+        let Some(connection) = self.connection.borrow().as_ref().cloned()
+        else {
+            return;
+        };
+
+        for event_id in event_ids {
+            let room = self.room();
+            let requested_event_id = event_id.clone();
+            let timeline = match connection
+                .spawn(
+                    async move { room.event(&requested_event_id, None).await },
+                )
+                .await
+            {
+                Ok(timeline) => timeline,
+                Err(error) => {
+                    trace!(%event_id, ?error, "Unable to restore encrypted event from its logged placeholder");
+                    continue;
+                }
+            };
+            let event: AnySyncTimelineEvent = match timeline.raw().deserialize()
+            {
+                Ok(event) => event,
+                Err(error) => {
+                    trace!(%event_id, ?error, "Unable to deserialize restored encrypted event");
+                    continue;
+                }
+            };
+            let AnySyncTimelineEvent::MessageLike(event) = event else {
+                continue;
+            };
+
+            if let AnySyncMessageLikeEvent::RoomEncrypted(
+                SyncMessageLikeEvent::Original(encrypted),
+            ) = &event
+            {
+                self.maybe_request_missing_encrypted_event_recovery(
+                    &encrypted.event_id,
+                    &encrypted.sender,
+                    encrypted.origin_server_ts,
+                    &encrypted.content,
+                );
+            } else if let Some(rendered) =
+                self.render_sync_message(&event).await
+            {
+                self.buffer.replace_event(&event_id, rendered);
+            }
         }
     }
 
@@ -1938,6 +2330,21 @@ impl MatrixRoom {
         self.members
             .mark_active(event.sender(), event.origin_server_ts());
 
+        // Keep encrypted events available for a later decryption retry even
+        // when WeeChat restored their placeholder lines from its log already.
+        // The normal render de-duplication below must not discard this state.
+        if let AnySyncMessageLikeEvent::RoomEncrypted(
+            SyncMessageLikeEvent::Original(encrypted),
+        ) = event
+        {
+            self.maybe_request_missing_encrypted_event_recovery(
+                &encrypted.event_id,
+                &encrypted.sender,
+                encrypted.origin_server_ts,
+                &encrypted.content,
+            );
+        }
+
         if let Some(id) = event.transaction_id() {
             // The send response may have rendered this event before /sync
             // arrived.
@@ -1974,20 +2381,23 @@ impl MatrixRoom {
             self.buffer.contains_event(event.event_id()),
         ) {
             return;
-        } else if let Some(rendered) = self.render_sync_message(event).await {
-            let thread_root = thread_root_from_event(event);
+        } else {
+            if let Some(rendered) = self.render_sync_message(event).await {
+                let thread_root = thread_root_from_event(event);
 
-            if let Some(thread_root) = &thread_root {
-                self.latest_thread_event_ids
-                    .borrow_mut()
-                    .insert(thread_root.clone(), event.event_id().to_owned());
+                if let Some(thread_root) = &thread_root {
+                    self.latest_thread_event_ids.borrow_mut().insert(
+                        thread_root.clone(),
+                        event.event_id().to_owned(),
+                    );
+                }
+
+                self.print_rendered_event_for_relation(
+                    Some(event.event_id()),
+                    thread_root.as_deref(),
+                    rendered,
+                );
             }
-
-            self.print_rendered_event_for_relation(
-                Some(event.event_id()),
-                thread_root.as_deref(),
-                rendered,
-            );
         }
     }
 
@@ -2096,6 +2506,27 @@ impl MatrixRoom {
                         )
                     },
                 );
+                let content = if let Some(content) = event.original_content() {
+                    content
+                } else {
+                    tracing::error!("Unhandled redacted event: {event:?}");
+                    return;
+                };
+                let send_time = event.origin_server_ts();
+
+                // History can contain an event whose placeholder was restored
+                // from a WeeChat log. Record it before render de-duplication so
+                // a later room key can still replace the existing line.
+                if let AnyMessageLikeEventContent::RoomEncrypted(encrypted) =
+                    &content
+                {
+                    self.maybe_request_missing_encrypted_event_recovery(
+                        event.event_id(),
+                        event.sender(),
+                        send_time,
+                        encrypted,
+                    );
+                }
 
                 // TODO: Only print out historical events if they aren't edits of
                 // other events.
@@ -2103,17 +2534,6 @@ impl MatrixRoom {
                     let sender = self.members.get(event.sender()).await.expect(
                     "Rendering a message but the sender isn't in the nicklist",
                 );
-
-                    let content = if let Some(content) =
-                        event.original_content()
-                    {
-                        content
-                    } else {
-                        tracing::error!("Unhandled redacted event: {event:?}");
-                        return;
-                    };
-
-                    let send_time = event.origin_server_ts();
 
                     if let Some(rendered) = self
                         .render_message_content(
@@ -2150,11 +2570,27 @@ impl MatrixRoom {
             .mark_active(event.sender(), event.origin_server_ts());
 
         match event {
+            AnySyncStateEvent::RoomAvatar(_) => {
+                self.buffer.update_avatar();
+                self.members.update_member_localvars();
+            }
             AnySyncStateEvent::RoomName(_) => self.buffer.update_buffer_name(),
             AnySyncStateEvent::RoomTopic(_) => self.buffer.set_topic(),
             AnySyncStateEvent::RoomCanonicalAlias(_) => {
                 self.buffer.set_alias();
                 self.buffer.update_buffer_name();
+            }
+            AnySyncStateEvent::RoomTombstone(_) => {
+                if let Ok(buffer) = self.buffer.buffer_handle().upgrade() {
+                    buffer.set_localvar(
+                        "matrix_replacement_room_id",
+                        self.room()
+                            .successor_room()
+                            .as_ref()
+                            .map(|successor| successor.room_id.as_str())
+                            .unwrap_or_default(),
+                    );
+                }
             }
             AnySyncStateEvent::SpaceParent(_) => {
                 self.buffer.update_parent_spaces()
@@ -2166,6 +2602,16 @@ impl MatrixRoom {
             _ => {}
         }
     }
+}
+
+fn reply_context_for_distance(
+    threshold: i64,
+    distance: Option<usize>,
+) -> ReplyContext {
+    distance
+        .filter(|distance| threshold > 0 && *distance <= threshold as usize)
+        .map(|_| ReplyContext::Inline)
+        .unwrap_or(ReplyContext::Full)
 }
 
 #[cfg(test)]
@@ -2182,6 +2628,24 @@ mod tests {
             restored_prev_batch(Some("token".to_owned())),
             Some(PrevBatch::Backwards(None))
         );
+    }
+
+    #[test]
+    fn accepted_mentions_become_matrix_mentions() {
+        let user_id = UserId::parse("@ada:example.org").unwrap();
+        let content =
+            with_mentions(text_content("hello @Ada"), vec![user_id.clone()]);
+
+        let mentions = content.mentions.expect("m.mentions");
+        assert!(mentions.user_ids.contains(&user_id));
+        assert!(!mentions.room);
+
+        let json = serde_json::to_value(with_mentions(
+            text_content("hello @Ada"),
+            vec![user_id],
+        ))
+        .unwrap();
+        assert_eq!(json["m.mentions"]["user_ids"][0], "@ada:example.org");
     }
 
     #[test]
@@ -2227,6 +2691,22 @@ mod tests {
                 Some("original message".to_owned())
             ))
         );
+    }
+
+    #[test]
+    fn zero_reply_quote_threshold_keeps_full_reply_context() {
+        assert_eq!(ReplyContext::Full, reply_context_for_distance(0, Some(0)));
+        assert_eq!(ReplyContext::Full, reply_context_for_distance(0, Some(1)));
+    }
+
+    #[test]
+    fn positive_reply_quote_threshold_allows_inline_recent_replies() {
+        assert_eq!(
+            ReplyContext::Inline,
+            reply_context_for_distance(2, Some(2))
+        );
+        assert_eq!(ReplyContext::Full, reply_context_for_distance(2, Some(3)));
+        assert_eq!(ReplyContext::Full, reply_context_for_distance(2, None));
     }
 
     #[test]
@@ -2339,6 +2819,98 @@ mod tests {
         assert!(thread_history_page_is_complete(0, None));
         assert!(thread_history_page_is_complete(8, None));
         assert!(!thread_history_page_is_complete(8, Some("next")));
+    }
+
+    #[test]
+    fn encrypted_sync_thread_event_keeps_its_root() {
+        let event: AnySyncTimelineEvent =
+            serde_json::from_value(serde_json::json!({
+                "type": "m.room.encrypted",
+                "room_id": "!room:example.org",
+                "sender": "@alice:example.org",
+                "origin_server_ts": 1,
+                "event_id": "$encrypted:example.org",
+                "content": {
+                    "algorithm": "m.megolm.v1.aes-sha2",
+                    "ciphertext": "AwgAEoAB...",
+                    "sender_key": "sender_key",
+                    "device_id": "DEVICE",
+                    "session_id": "session_id",
+                    "m.relates_to": {
+                        "rel_type": "m.thread",
+                        "event_id": "$root:example.org",
+                        "is_falling_back": true,
+                        "m.in_reply_to": {
+                            "event_id": "$root:example.org"
+                        }
+                    }
+                },
+                "unsigned": {}
+            }))
+            .unwrap();
+
+        let AnySyncTimelineEvent::MessageLike(event) = event else {
+            panic!("expected an encrypted message-like event");
+        };
+
+        assert_eq!(
+            thread_root_from_event(&event).as_deref(),
+            Some(EventId::parse("$root:example.org").unwrap().as_ref())
+        );
+    }
+
+    #[test]
+    fn megolm_encrypted_event_exposes_recovery_session() {
+        let content: RoomEncryptedEventContent =
+            serde_json::from_value(serde_json::json!({
+                "algorithm": "m.megolm.v1.aes-sha2",
+                "ciphertext": "AwgAEoAB...",
+                "sender_key": "sender_key",
+                "device_id": "DEVICE",
+                "session_id": "session_id"
+            }))
+            .unwrap();
+
+        let recovery = EncryptedMessageRecovery::from_content(
+            RoomId::parse("!room:example.org").unwrap().as_ref(),
+            &content,
+        )
+        .expect("megolm event should expose a recovery session");
+
+        assert_eq!(recovery.room_id.as_str(), "!room:example.org");
+        assert_eq!(recovery.session_id, "session_id");
+    }
+
+    #[test]
+    fn pending_encrypted_event_keeps_decryptable_raw_shape() {
+        let content: RoomEncryptedEventContent =
+            serde_json::from_value(serde_json::json!({
+                "algorithm": "m.megolm.v1.aes-sha2",
+                "ciphertext": "AwgAEoAB...",
+                "sender_key": "sender_key",
+                "device_id": "DEVICE",
+                "session_id": "session_id"
+            }))
+            .unwrap();
+        let event_id = EventId::parse("$encrypted:example.org").unwrap();
+        let sender = UserId::parse("@alice:example.org").unwrap();
+
+        let raw = pending_encrypted_event_raw(
+            &event_id,
+            &sender,
+            MilliSecondsSinceUnixEpoch(UInt::from(1_u32)),
+            &content,
+        )
+        .expect("encrypted event should retain a raw decryption input");
+        let event = raw.deserialize().expect("raw event should deserialize");
+
+        assert_eq!(event.event_id, event_id);
+        assert_eq!(event.sender, sender);
+        assert!(matches!(
+            event.content.scheme,
+            EncryptedEventScheme::MegolmV1AesSha2(ref megolm)
+                if megolm.session_id == "session_id"
+        ));
     }
 
     #[test]

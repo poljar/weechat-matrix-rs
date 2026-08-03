@@ -36,9 +36,61 @@ pub struct Members {
     pub(super) runtime: Handle,
     ambiguity_map: Rc<DashMap<OwnedUserId, bool>>,
     nicks: Rc<DashMap<OwnedUserId, String>>,
+    profiles: Rc<DashMap<OwnedUserId, MatrixMemberProfile>>,
     last_active: Rc<DashMap<OwnedUserId, MilliSecondsSinceUnixEpoch>>,
     config: Rc<RefCell<Config>>,
     buffer: RoomBuffer,
+}
+
+const MEMBER_PROFILE_LIMIT: usize = 512;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MatrixMemberProfile {
+    user_id: String,
+    display_name: String,
+    nick: String,
+    membership: String,
+    role: String,
+    power_level: Option<i64>,
+    avatar_mxc: Option<String>,
+}
+
+fn bounded_member_profiles(
+    mut profiles: Vec<MatrixMemberProfile>,
+) -> Vec<MatrixMemberProfile> {
+    profiles.sort_by(|left, right| {
+        left.display_name
+            .to_lowercase()
+            .cmp(&right.display_name.to_lowercase())
+            .then_with(|| left.user_id.cmp(&right.user_id))
+    });
+    profiles.truncate(MEMBER_PROFILE_LIMIT);
+    profiles
+}
+
+fn resolved_room_avatar_mxc(
+    explicit_room_avatar: Option<String>,
+    is_direct: bool,
+    own_user_id: &str,
+    profiles: &[MatrixMemberProfile],
+) -> Option<String> {
+    if explicit_room_avatar.is_some() || !is_direct {
+        return explicit_room_avatar;
+    }
+
+    let mut joined_peers = profiles.iter().filter(|profile| {
+        profile.membership == MembershipState::Join.as_str()
+            && profile.user_id != own_user_id
+    });
+    let peer = joined_peers.next()?;
+
+    // An m.direct room is not necessarily a two-person conversation. Avoid
+    // assigning one arbitrary member's face to a multi-user direct room.
+    if joined_peers.next().is_some() {
+        return None;
+    }
+
+    peer.avatar_mxc.clone()
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +118,7 @@ impl Members {
             room,
             runtime,
             nicks: DashMap::new().into(),
+            profiles: DashMap::new().into(),
             ambiguity_map: DashMap::new().into(),
             last_active: DashMap::new().into(),
             config,
@@ -97,6 +150,74 @@ impl Members {
         };
 
         self.nicks.insert(member.user_id().to_owned(), nick);
+    }
+
+    pub(super) fn update_member_localvars(&self) {
+        let mut candidates: Vec<_> = self
+            .nicks
+            .iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "display_name": entry.value(),
+                    "user_id": entry.key().as_str(),
+                })
+            })
+            .collect();
+        candidates.sort_by(|left, right| {
+            left["display_name"]
+                .as_str()
+                .unwrap_or_default()
+                .to_lowercase()
+                .cmp(
+                    &right["display_name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_lowercase(),
+                )
+        });
+
+        if let Ok(buffer) = self.buffer.buffer_handle().upgrade() {
+            if let Ok(json) = serde_json::to_string(&candidates) {
+                buffer.set_localvar("matrix_mentions", &json);
+            }
+
+            let profiles: Vec<_> = self
+                .profiles
+                .iter()
+                .map(|entry| entry.value().clone())
+                .collect();
+            let profiles = bounded_member_profiles(profiles);
+            let room = active_room(&self.room);
+            let room_avatar = resolved_room_avatar_mxc(
+                room.avatar_url().map(|uri| uri.as_str().to_owned()),
+                buffer
+                    .get_localvar("type")
+                    .is_some_and(|kind| kind == "private"),
+                room.own_user_id().as_str(),
+                &profiles,
+            );
+            buffer.set_localvar(
+                "matrix_avatar_mxc",
+                room_avatar.as_deref().unwrap_or_default(),
+            );
+            let profiles: Vec<_> = profiles
+                .into_iter()
+                .map(|profile| {
+                    serde_json::json!({
+                        "user_id": profile.user_id,
+                        "display_name": profile.display_name,
+                        "nick": profile.nick,
+                        "membership": profile.membership,
+                        "role": profile.role,
+                        "power_level": profile.power_level,
+                        "avatar_mxc": profile.avatar_mxc,
+                    })
+                })
+                .collect();
+            if let Ok(json) = serde_json::to_string(&profiles) {
+                buffer.set_localvar("matrix_members_v1", &json);
+            }
+        }
     }
 
     fn weechat_member(&self, member: RoomMember) -> WeechatRoomMember {
@@ -161,6 +282,8 @@ impl Members {
         }
 
         let member = self.weechat_member(member);
+        self.profiles
+            .insert(member.user_id().to_owned(), member.profile());
         self.add_nick(&buffer, &member);
     }
 
@@ -215,6 +338,7 @@ impl Members {
         }
 
         self.update_member(user_id).await;
+        self.update_member_localvars();
     }
 
     /// Remove a Weechat room member by user ID.
@@ -251,6 +375,8 @@ impl Members {
         if let Some((_, nick)) = self.nicks.remove(user_id) {
             buffer.remove_nick(&nick);
         }
+        self.profiles.remove(user_id);
+        self.update_member_localvars();
     }
 
     /// Retrieve a reference to a Weechat room member by user ID.
@@ -428,7 +554,107 @@ impl Members {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile(index: usize, display_name: &str) -> MatrixMemberProfile {
+        MatrixMemberProfile {
+            user_id: format!("@user{index}:example.org"),
+            display_name: display_name.to_owned(),
+            nick: display_name.to_owned(),
+            membership: "join".to_owned(),
+            role: "member".to_owned(),
+            power_level: Some(0),
+            avatar_mxc: Some(format!("mxc://example.org/avatar{index}")),
+        }
+    }
+
+    #[test]
+    fn profile_export_is_sorted_and_bounded() {
+        let profiles = (0..MEMBER_PROFILE_LIMIT + 20)
+            .rev()
+            .map(|index| profile(index, &format!("Member {index:04}")))
+            .collect();
+        let profiles = bounded_member_profiles(profiles);
+        assert_eq!(profiles.len(), MEMBER_PROFILE_LIMIT);
+        assert_eq!(profiles.first().unwrap().display_name, "Member 0000");
+        assert_eq!(profiles.last().unwrap().display_name, "Member 0511");
+    }
+
+    #[test]
+    fn explicit_room_avatar_wins_for_rooms_and_direct_chats() {
+        let profiles = vec![profile(1, "Peer")];
+        let explicit = Some("mxc://example.org/room-avatar".to_owned());
+
+        assert_eq!(
+            resolved_room_avatar_mxc(
+                explicit.clone(),
+                false,
+                "@me:example.org",
+                &profiles,
+            ),
+            explicit,
+        );
+    }
+
+    #[test]
+    fn one_to_one_direct_chat_uses_the_other_members_avatar() {
+        let mut own = profile(0, "Me");
+        own.user_id = "@me:example.org".to_owned();
+        own.avatar_mxc = Some("mxc://example.org/me".to_owned());
+        let peer = profile(1, "Peer");
+
+        assert_eq!(
+            resolved_room_avatar_mxc(
+                None,
+                true,
+                "@me:example.org",
+                &[own, peer],
+            )
+            .as_deref(),
+            Some("mxc://example.org/avatar1"),
+        );
+    }
+
+    #[test]
+    fn multi_user_direct_room_does_not_choose_an_arbitrary_avatar() {
+        let mut own = profile(0, "Me");
+        own.user_id = "@me:example.org".to_owned();
+
+        assert_eq!(
+            resolved_room_avatar_mxc(
+                None,
+                true,
+                "@me:example.org",
+                &[own, profile(1, "One"), profile(2, "Two")],
+            ),
+            None,
+        );
+    }
+}
+
 impl WeechatRoomMember {
+    fn profile(&self) -> MatrixMemberProfile {
+        let power_level = match self.inner.power_level() {
+            UserPowerLevel::Infinite => None,
+            UserPowerLevel::Int(level) => Some(level.into()),
+            _ => None,
+        };
+        MatrixMemberProfile {
+            user_id: self.user_id().as_str().to_owned(),
+            display_name: self.inner.name().to_owned(),
+            nick: self.nick(),
+            membership: self.inner.membership().as_str().to_owned(),
+            role: self.role().to_owned(),
+            power_level,
+            avatar_mxc: self
+                .inner
+                .avatar_url()
+                .map(|uri| uri.as_str().to_owned()),
+        }
+    }
+
     pub fn user_id(&self) -> &UserId {
         self.inner.user_id()
     }
@@ -452,6 +678,16 @@ impl WeechatRoomMember {
             p if p >= Int::from(50) => "001|h",
             p if p > Int::from(0) => "002|v",
             _ => "999|...",
+        }
+    }
+
+    fn role(&self) -> &'static str {
+        match self.inner.normalized_power_level() {
+            UserPowerLevel::Infinite => "admin",
+            p if p >= Int::from(100) => "admin",
+            p if p >= Int::from(50) => "moderator",
+            p if p > Int::from(0) => "power user",
+            _ => "member",
         }
     }
 

@@ -30,12 +30,15 @@ fn main() {
 
     // Capture git describe output for the version command
     if let Ok(output) = std::process::Command::new("git")
-        .args(["describe", "--long", "--tags", "--always", "--all", "--dirty"])
+        .args([
+            "describe", "--long", "--tags", "--always", "--all", "--dirty",
+        ])
         .current_dir(std::env::var("CARGO_MANIFEST_DIR").unwrap())
         .output()
     {
         if output.status.success() {
-            let describe = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let describe =
+                String::from_utf8_lossy(&output.stdout).trim().to_string();
             println!("cargo::rustc-env=GIT_DESCRIBE={}", describe);
         }
     }
