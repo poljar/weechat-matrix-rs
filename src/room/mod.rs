@@ -1761,8 +1761,10 @@ impl MatrixRoom {
                     }
                     Err(e) => {
                         Weechat::print(&format!(
-                            "{}: Failed to mark room as read: {}",
-                            PLUGIN_NAME, e
+                            "{}{}: Failed to mark room as read: {:?}",
+                            Weechat::prefix(Prefix::Error),
+                            PLUGIN_NAME,
+                            e
                         ));
                     }
                 }
