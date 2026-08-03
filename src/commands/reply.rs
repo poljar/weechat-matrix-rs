@@ -1,7 +1,7 @@
 use clap::{App as Argparse, AppSettings as ArgParseSettings, Arg};
 use matrix_sdk::ruma::{
     events::{
-        relation::InReplyTo,
+        relation::{InReplyTo, Thread},
         room::message::{Relation, RoomMessageEventContent},
     },
     EventId, OwnedEventId,
@@ -128,8 +128,12 @@ impl ReplyCommand {
 
     fn reply(&self, buffer: &Buffer, event_id: OwnedEventId, message: String) {
         if let Some(room) = self.servers.find_room(buffer) {
+            let thread_root = buffer
+                .get_localvar("thread_root")
+                .and_then(|root| EventId::parse(root.as_ref()).ok());
             Weechat::spawn(async move {
-                room.send_message(reply_content(event_id, message)).await
+                room.send_message(reply_content(event_id, message, thread_root))
+                    .await
             })
             .detach();
         } else {
@@ -163,10 +167,16 @@ impl CommandCallback for ReplyCommand {
 fn reply_content(
     event_id: OwnedEventId,
     message: String,
+    thread_root: Option<OwnedEventId>,
 ) -> RoomMessageEventContent {
     let mut content = RoomMessageEventContent::text_plain(message);
-    content.relates_to = Some(Relation::Reply {
-        in_reply_to: InReplyTo::new(event_id),
+    content.relates_to = Some(match thread_root {
+        Some(thread_root) => {
+            Relation::Thread(Thread::plain(thread_root, event_id))
+        }
+        None => Relation::Reply {
+            in_reply_to: InReplyTo::new(event_id),
+        },
     });
     content
 }
@@ -190,12 +200,35 @@ mod tests {
     #[test]
     fn reply_content_sets_reply_relation() {
         let event_id = owned_event_id!("$replyevent:example.org");
-        let content = reply_content(event_id.clone(), "Thanks".to_owned());
+        let content =
+            reply_content(event_id.clone(), "Thanks".to_owned(), None);
 
         let Some(Relation::Reply { in_reply_to }) = content.relates_to else {
             panic!("reply command must create a Matrix reply relation");
         };
 
         assert_eq!(event_id, in_reply_to.event_id);
+    }
+
+    #[test]
+    fn reply_content_keeps_thread_relation_in_thread_buffer() {
+        let event_id = owned_event_id!("$replyevent:example.org");
+        let thread_root = owned_event_id!("$threadroot:example.org");
+        let content = reply_content(
+            event_id.clone(),
+            "Thanks".to_owned(),
+            Some(thread_root.clone()),
+        );
+
+        let Some(Relation::Thread(thread)) = content.relates_to else {
+            panic!("reply from a thread buffer must stay in that thread");
+        };
+
+        assert_eq!(thread_root, thread.event_id);
+        assert_eq!(
+            event_id,
+            thread.in_reply_to.expect("fallback reply target").event_id
+        );
+        assert!(thread.is_falling_back);
     }
 }
