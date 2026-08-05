@@ -197,22 +197,42 @@ impl CompletionCallback for NicksCompletion {
         _: Cow<str>,
         completion: &Completion,
     ) -> Result<(), ()> {
-        if buffer.get_localvar("thread_root").is_none() {
-            return Ok(());
-        }
+        let room_names = self
+            .servers
+            .find_room(buffer)
+            .map(|room| room.names())
+            .unwrap_or_default();
 
-        if let Some(room) = self.servers.find_room(buffer) {
-            for nick in room.names() {
-                completion.add_with_options(
-                    &nick,
-                    true,
-                    CompletionPosition::Sorted,
-                )
-            }
+        for nick in nick_completion_candidates(
+            buffer.get_localvar("thread_root").is_some(),
+            room_names,
+        ) {
+            completion.add_with_options(
+                &nick,
+                true,
+                CompletionPosition::Sorted,
+            )
         }
 
         Ok(())
     }
+}
+
+/// Nick completion candidates for the given matrix buffer context.
+///
+/// Only thread buffers contribute candidates (the parent room's members);
+/// every other buffer contributes nothing so WeeChat keeps using its
+/// built-in nicklist-based completion there.
+fn nick_completion_candidates(
+    is_thread_buffer: bool,
+    room_names: Vec<String>,
+) -> Vec<String> {
+    if !is_thread_buffer {
+        return Vec::new();
+    }
+    let mut names = room_names;
+    names.sort_unstable();
+    names
 }
 
 struct MediaCompletion {
@@ -328,6 +348,44 @@ mod tests {
                 "list".to_owned(),
             ]),
             BTreeSet::from(["#matrix:example.org".to_owned()]),
+        );
+    }
+
+    #[test]
+    fn thread_buffers_contribute_sorted_room_member_nicks() {
+        assert_eq!(
+            nick_completion_candidates(
+                true,
+                vec![
+                    "Bob".to_owned(),
+                    "Alice".to_owned(),
+                    "Ada (ada@example.org)".to_owned(),
+                ],
+            ),
+            vec![
+                "Ada (ada@example.org)".to_owned(),
+                "Alice".to_owned(),
+                "Bob".to_owned(),
+            ],
+        );
+    }
+
+    #[test]
+    fn thread_buffers_without_a_room_contribute_nothing() {
+        assert_eq!(nick_completion_candidates(true, vec![]), Vec::<String>::new());
+    }
+
+    #[test]
+    fn non_thread_buffers_keep_the_builtin_nicklist_completion() {
+        assert_eq!(
+            nick_completion_candidates(
+                false,
+                vec![
+                    "Alice".to_owned(),
+                    "Bob".to_owned(),
+                ],
+            ),
+            Vec::<String>::new(),
         );
     }
 }
