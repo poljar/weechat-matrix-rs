@@ -19,6 +19,7 @@ pub struct Completions {
     servers: CompletionHook,
     users: CompletionHook,
     media: CompletionHook,
+    nicks: CompletionHook,
 }
 
 impl Completions {
@@ -29,7 +30,8 @@ impl Completions {
             )?,
             servers: ServersCompletion::create(servers.clone())?,
             users: UsersCompletion::create(servers.clone())?,
-            media: MediaCompletion::create(servers)?,
+            media: MediaCompletion::create(servers.clone())?,
+            nicks: NicksCompletion::create(servers)?,
         })
     }
 }
@@ -156,6 +158,56 @@ impl CompletionCallback for UsersCompletion {
                         CompletionPosition::Sorted,
                     )
                 }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Feed room member nicks into WeeChat's built-in "nicks" completion.
+///
+/// Thread buffers keep an empty nicklist, so the built-in fallback of
+/// completing from the current buffer's nicklist finds no candidates
+/// there. Adding the parent room's members here makes nick completion
+/// work in thread buffers, while room buffers keep using the built-in
+/// nicklist completion (this hook adds nothing for them, so WeeChat
+/// falls back to it).
+struct NicksCompletion {
+    servers: Servers,
+}
+
+impl NicksCompletion {
+    fn create(servers: Servers) -> Result<CompletionHook, ()> {
+        let comp = NicksCompletion { servers };
+
+        CompletionHook::new(
+            "nick",
+            "Completion for Matrix room member nicks",
+            comp,
+        )
+    }
+}
+
+impl CompletionCallback for NicksCompletion {
+    fn callback(
+        &mut self,
+        _: &Weechat,
+        buffer: &Buffer,
+        _: Cow<str>,
+        completion: &Completion,
+    ) -> Result<(), ()> {
+        if buffer.get_localvar("thread_root").is_none() {
+            return Ok(());
+        }
+
+        if let Some(room) = self.servers.find_room(buffer) {
+            for nick in room.names() {
+                completion.add_with_options(
+                    &nick,
+                    true,
+                    CompletionPosition::Sorted,
+                )
             }
         }
 
