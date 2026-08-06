@@ -58,7 +58,7 @@ use chrono::{offset::Utc, DateTime};
 use std::{
     cell::{Ref, RefCell, RefMut},
     cmp::Reverse,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::Write,
     path::{Path, PathBuf},
     rc::{Rc, Weak},
@@ -88,7 +88,7 @@ use matrix_sdk::{
         OwnedDeviceId, OwnedMxcUri, OwnedRoomAliasId, OwnedRoomId,
         OwnedRoomOrAliasId, OwnedUserId, RoomAliasId, RoomId, UserId,
     },
-    Client, Error, SessionTokens,
+    Client, Error, RoomState, SessionTokens,
 };
 
 use weechat::{
@@ -103,6 +103,7 @@ use crate::{
     config::ServerBuffer,
     connection::{Connection, InteractiveAuthInfo},
     room::RoomHandle,
+    thread_continuation::{ThreadContinuationState, ThreadKey},
     verification_buffer::VerificationBuffer,
     ConfigHandle, Servers, PLUGIN_NAME,
 };
@@ -198,7 +199,7 @@ pub struct LoginInfo {
 
 #[derive(Clone)]
 pub struct MatrixServer {
-    inner: Rc<InnerServer>,
+    pub(crate) inner: Rc<InnerServer>,
 }
 
 impl std::ops::Deref for MatrixServer {
@@ -217,6 +218,7 @@ impl std::fmt::Debug for MatrixServer {
 }
 
 pub struct InnerServer {
+    self_weak: RefCell<Weak<InnerServer>>,
     servers: Servers,
     server_name: Rc<str>,
     rooms: Rc<RefCell<HashMap<OwnedRoomId, RoomHandle>>>,
@@ -228,6 +230,19 @@ pub struct InnerServer {
     connection: Rc<RefCell<Option<Connection>>>,
     server_buffer: Rc<RefCell<Option<BufferHandle>>>,
     verification_buffers: Rc<RefCell<HashMap<String, VerificationBuffer>>>,
+    thread_continuations: tokio::sync::Mutex<Option<ThreadContinuationState>>,
+    thread_continuation_send_lock: tokio::sync::Mutex<()>,
+}
+
+pub(crate) enum ThreadRoute {
+    Current {
+        room: RoomHandle,
+        thread_root: matrix_sdk::ruma::OwnedEventId,
+    },
+    CreateRoot {
+        room: RoomHandle,
+        continuation_source: ThreadKey,
+    },
 }
 
 impl MatrixServer {
@@ -240,6 +255,7 @@ impl MatrixServer {
         let server_name: Rc<str> = name.to_string().into();
 
         let server = InnerServer {
+            self_weak: RefCell::new(Weak::new()),
             servers,
             server_name: server_name.clone(),
             rooms: Rc::new(RefCell::new(HashMap::new())),
@@ -251,9 +267,12 @@ impl MatrixServer {
             connection: Rc::new(RefCell::new(None)),
             server_buffer: Rc::new(RefCell::new(None)),
             verification_buffers: Rc::new(RefCell::new(HashMap::new())),
+            thread_continuations: tokio::sync::Mutex::new(None),
+            thread_continuation_send_lock: tokio::sync::Mutex::new(()),
         };
 
-        let server = server.into();
+        let server: Rc<InnerServer> = server.into();
+        *server.self_weak.borrow_mut() = Rc::downgrade(&server);
 
         MatrixServer::create_server_conf(&server_name, server_section, &server);
 
@@ -809,6 +828,156 @@ impl InnerServer {
         self.rooms.borrow().values().cloned().collect()
     }
 
+    pub(crate) async fn thread_continuation_send_guard(
+        &self,
+    ) -> tokio::sync::MutexGuard<'_, ()> {
+        self.thread_continuation_send_lock.lock().await
+    }
+
+    async fn loaded_thread_continuations(
+        &self,
+    ) -> Result<
+        tokio::sync::MutexGuard<'_, Option<ThreadContinuationState>>,
+        String,
+    > {
+        let connection = self
+            .connection()
+            .ok_or_else(|| "Matrix server is not connected".to_owned())?;
+        let needs_load = self.thread_continuations.lock().await.is_none();
+        if needs_load {
+            let loaded = ThreadContinuationState::load(&connection).await?;
+            let mut state = self.thread_continuations.lock().await;
+            if state.is_none() {
+                *state = Some(loaded);
+            }
+        }
+        Ok(self.thread_continuations.lock().await)
+    }
+
+    async fn joined_room_handle(
+        &self,
+        room_id: &RoomId,
+    ) -> Result<RoomHandle, String> {
+        let connection = self
+            .connection()
+            .ok_or_else(|| "Matrix server is not connected".to_owned())?;
+        let client = connection.client().clone();
+        let room = match client.get_room(room_id) {
+            Some(room) if room.state() == RoomState::Joined => room,
+            _ => connection
+                .join_room_on_runtime(room_id.to_owned())
+                .await
+                .map_err(|error| {
+                    format!(
+                        "failed to join replacement room {room_id}: {error}"
+                    )
+                })?,
+        };
+        if room.state() != RoomState::Joined {
+            return Err(format!("replacement room {room_id} is not joined"));
+        }
+        Ok(self.get_or_create_room(room_id))
+    }
+
+    pub(crate) async fn resolve_thread_route(
+        &self,
+        source_room: &RoomHandle,
+        source_root: &matrix_sdk::ruma::EventId,
+    ) -> Result<ThreadRoute, String> {
+        let source = ThreadKey::new(source_room.room_id(), source_root);
+        let effective_source = self
+            .loaded_thread_continuations()
+            .await?
+            .as_ref()
+            .expect("continuation state was loaded")
+            .resolve(&source)?
+            .unwrap_or(source);
+
+        let client = self
+            .get_client()
+            .ok_or_else(|| "Matrix server is not connected".to_owned())?;
+        let effective_room = if effective_source.room_id
+            == source_room.room_id()
+            && effective_source.thread_root == source_root
+        {
+            source_room.clone()
+        } else {
+            self.joined_room_handle(&effective_source.room_id).await?
+        };
+        let mut current = effective_room.room();
+        let mut visited = HashSet::from([current.room_id().to_owned()]);
+        let mut upgraded = false;
+
+        for _ in 0..32 {
+            let Some(successor) = current.successor_room() else {
+                return if upgraded {
+                    Ok(ThreadRoute::CreateRoot {
+                        room: self
+                            .joined_room_handle(current.room_id())
+                            .await?,
+                        continuation_source: effective_source,
+                    })
+                } else {
+                    Ok(ThreadRoute::Current {
+                        room: effective_room,
+                        thread_root: effective_source.thread_root,
+                    })
+                };
+            };
+            if !visited.insert(successor.room_id.clone()) {
+                return Err("cyclic Matrix room upgrade chain".to_owned());
+            }
+            current = match client.get_room(&successor.room_id) {
+                Some(room) if room.state() == RoomState::Joined => room,
+                _ => self.joined_room_handle(&successor.room_id).await?.room(),
+            };
+            upgraded = true;
+        }
+
+        Err("Matrix room upgrade chain is too deep".to_owned())
+    }
+
+    pub(crate) async fn persist_thread_continuation(
+        &self,
+        source: ThreadKey,
+        target: ThreadKey,
+    ) -> Result<(), String> {
+        let connection = self
+            .connection()
+            .ok_or_else(|| "Matrix server is not connected".to_owned())?;
+        let mut state_guard = self.loaded_thread_continuations().await?;
+        let (previous, next) = {
+            let state = state_guard.as_mut().ok_or_else(|| {
+                "continuation state failed to load".to_owned()
+            })?;
+            let previous = state.clone();
+            state.insert(source, target)?;
+            (previous, state.clone())
+        };
+        drop(state_guard);
+        if let Err(error) = next.save(&connection).await {
+            let mut state = self.thread_continuations.lock().await;
+            *state = Some(previous);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn verify_thread_continuation_store(
+        &self,
+    ) -> Result<(), String> {
+        let connection = self
+            .connection()
+            .ok_or_else(|| "Matrix server is not connected".to_owned())?;
+        let state_guard = self.loaded_thread_continuations().await?;
+        let state = state_guard
+            .as_ref()
+            .ok_or_else(|| "continuation state failed to load".to_owned())?
+            .clone();
+        drop(state_guard);
+        state.save(&connection).await
+    }
+
     pub fn verifications(&self) -> Vec<VerificationBuffer> {
         self.verification_buffers
             .borrow()
@@ -844,6 +1013,7 @@ impl InnerServer {
             let buffer = RoomHandle::new(
                 &self.server_name,
                 self.servers.runtime().to_owned(),
+                self.self_weak.borrow().clone(),
                 &self.connection,
                 self.config.inner.clone(),
                 room,
@@ -953,6 +1123,7 @@ impl InnerServer {
         match RoomHandle::restore(
             &self.server_name,
             self.servers.runtime().to_owned(),
+            self.self_weak.borrow().clone(),
             room,
             &self.connection,
             self.config.inner.clone(),
@@ -969,6 +1140,7 @@ impl InnerServer {
                 // WeeChat's buffer_switch signal. Populate restored Matrix
                 // buffers proactively instead of waiting for a TUI-only hook.
                 Weechat::spawn(async move {
+                    buffer.preload_restored_messages().await;
                     buffer.get_messages().await;
                     buffer.recover_logged_encrypted_events().await;
                 })

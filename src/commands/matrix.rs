@@ -4,6 +4,7 @@ use clap::{
 };
 use url::Url;
 
+use matrix_sdk::ruma::EventId;
 use weechat::{
     buffer::Buffer,
     hooks::{Command, CommandCallback, CommandSettings},
@@ -18,6 +19,7 @@ use super::{
 use crate::{
     commands::{DevicesCommand, KeysCommand, MediaCommand, VerifyCommand},
     config::ConfigHandle,
+    room::HistoryPageResult,
     MatrixServer, Servers, PLUGIN_NAME,
 };
 
@@ -45,7 +47,9 @@ impl MatrixCommand {
             .add_argument("disconnect <server-name>")
             .add_argument("reconnect <server-name>")
             .add_argument("sso-complete <server-name> <login-token>")
+            .add_argument("history")
             .add_argument("read")
+            .add_argument("thread <event-id>")
             .add_argument("version")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
             .arguments_description(format!(
@@ -55,7 +59,9 @@ impl MatrixCommand {
    reconnect: Reconnect to server(s).
         join: Join a Matrix room by ID or alias.
 sso-complete: Finish SSO login with a copied loginToken.
+     history: Load an older page of messages in the current room.
         read: Mark the current room as read.
+      thread: Open a thread buffer and load its complete history.
      version: Show version information about weechat-matrix.
      devices: {}
         keys: {}
@@ -83,8 +89,9 @@ Use /matrix [command] help to find out more.\n",
             .add_completion("disconnect %(matrix_servers)")
             .add_completion("reconnect %(matrix_servers)")
             .add_completion("sso-complete %(matrix_servers)")
+            .add_completion("thread")
             .add_completion(
-                "help server|connect|disconnect|reconnect|join|sso-complete|read|version|keys|devices|media|verify|verification",
+                "help server|connect|disconnect|reconnect|join|sso-complete|history|read|thread|version|keys|devices|media|verify|verification",
             );
 
         Command::new(
@@ -273,6 +280,42 @@ Use /matrix [command] help to find out more.\n",
         }
     }
 
+    fn thread_command(&self, buffer: &Buffer, args: &ArgMatches) {
+        let Some(room) = self.servers.find_room(buffer) else {
+            Weechat::print(&format!(
+                "{}{}: Run /matrix thread from a Matrix room buffer.",
+                Weechat::prefix(Prefix::Error),
+                PLUGIN_NAME,
+            ));
+            return;
+        };
+        let event_id = args
+            .value_of("event-id")
+            .expect("Event ID not set but was required");
+        let Ok(event_id) = EventId::parse(event_id) else {
+            Weechat::print(&format!(
+                "{}{}: Invalid Matrix event ID: {}",
+                Weechat::prefix(Prefix::Error),
+                PLUGIN_NAME,
+                event_id,
+            ));
+            return;
+        };
+
+        if let Some(handle) = room.open_thread_buffer(&event_id) {
+            if let Ok(thread_buffer) = handle.upgrade() {
+                thread_buffer.switch_to();
+            }
+        } else {
+            Weechat::print(&format!(
+                "{}{}: Event {} is not loaded in this room.",
+                Weechat::prefix(Prefix::Error),
+                PLUGIN_NAME,
+                event_id,
+            ));
+        }
+    }
+
     fn run(&self, buffer: &Buffer, args: &ArgMatches) {
         match args.subcommand() {
             ("connect", Some(subargs)) => self.connect_command(subargs),
@@ -302,6 +345,30 @@ Use /matrix [command] help to find out more.\n",
                     room.mark_as_read();
                 }
             }
+            ("history", _) => {
+                let Some(room) = self.servers.find_room(buffer) else {
+                    Weechat::print(&format!(
+                        "{}{}: /matrix history needs to be run in a Matrix room buffer.",
+                        Weechat::prefix(Prefix::Error),
+                        PLUGIN_NAME,
+                    ));
+                    return;
+                };
+
+                if !room.has_history_page() {
+                    room.print_history_page_result(
+                        HistoryPageResult::Unavailable,
+                    );
+                    return;
+                }
+
+                Weechat::spawn(async move {
+                    let result = room.get_interactive_history_page().await;
+                    room.print_history_page_result(result);
+                })
+                .detach();
+            }
+            ("thread", Some(subargs)) => self.thread_command(buffer, subargs),
             ("version", _) => {
                 Weechat::print(&format!(
                     "{}: weechat-matrix version {} ({})",
@@ -435,6 +502,20 @@ impl CommandCallback for MatrixCommand {
             .subcommand(
                 SubCommand::with_name("read")
                     .about("Mark the current room as read."),
+            )
+            .subcommand(
+                SubCommand::with_name("history").about(
+                    "Load an older page of messages in the current room.",
+                ),
+            )
+            .subcommand(
+                SubCommand::with_name("thread")
+                    .about("Open a thread buffer and load its history.")
+                    .arg(
+                        Arg::with_name("event-id")
+                            .value_name("event-id")
+                            .required(true),
+                    ),
             )
             .subcommand(
                 SubCommand::with_name("version")

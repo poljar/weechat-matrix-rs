@@ -38,6 +38,7 @@ chrono = "0.4.22"
 dashmap = "6.1.0"
 url = "2.3.1"
 serde_json = "1.0.85"
+serde = { version = "1.0", features = ["derive"] }
 strum = { version = "0.24.0", features = ["derive"] }
 tokio = { version = "1.21.1", features = ["rt-multi-thread", "sync"] }
 tracing = "0.1.36"
@@ -50,7 +51,9 @@ ruma-html = { version = "0.5.0", features = ["matrix"] }
 # Auto-select version from matrix-sdk
 qrcode = { version = "*", default-features = false }
 image = { version = "*", default-features = false, features = ["jpeg"] }
+mime = "0.3"
 mime_guess = "2.0"
+sha2 = "0.10"
 
 [dependencies.weechat]
 git = "https://github.com/poljar/rust-weechat"

@@ -10,6 +10,7 @@ mod debug;
 mod render;
 mod room;
 mod server;
+mod thread_continuation;
 mod utils;
 mod verification_buffer;
 

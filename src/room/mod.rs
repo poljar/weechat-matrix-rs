@@ -44,6 +44,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Mutex, MutexGuard,
     },
+    time::Duration,
 };
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -51,12 +52,18 @@ use url::Url;
 
 use matrix_sdk::{
     async_trait,
-    attachment::{AttachmentConfig, AttachmentInfo, BaseFileInfo},
+    attachment::{
+        AttachmentConfig, AttachmentInfo, BaseFileInfo, BaseImageInfo,
+    },
     deserialized_responses::AmbiguityChange,
-    room::Room,
+    room::{
+        reply::{EnforceThread, Reply},
+        IncludeRelations, RelationsOptions, Room,
+    },
     ruma::{
+        api::Direction,
         events::{
-            relation::Thread,
+            relation::{RelationType, Thread},
             room::{
                 encrypted::{
                     EncryptedEventScheme, Relation as EncryptedRelation,
@@ -64,8 +71,8 @@ use matrix_sdk::{
                 },
                 member::RoomMemberEventContent,
                 message::{
-                    MessageType, Relation, RoomMessageEventContent,
-                    TextMessageEventContent,
+                    MessageType, Relation, ReplyWithinThread,
+                    RoomMessageEventContent, TextMessageEventContent,
                 },
                 redaction::SyncRoomRedactionEvent,
             },
@@ -92,6 +99,8 @@ use crate::{
     config::{Config, RedactionStyle},
     connection::Connection,
     render::{Render, RenderedEvent, ReplyContext},
+    server::{InnerServer, MatrixServer, ThreadRoute},
+    thread_continuation::ThreadKey,
     utils::{Edit, VerificationEvent},
     PLUGIN_NAME,
 };
@@ -117,12 +126,86 @@ pub enum PrevBatch {
     Backwards(Option<String>),
 }
 
-fn restored_prev_batch(prev_batch: Option<String>) -> Option<PrevBatch> {
-    // A restored SDK room does not always have a sync pagination token in its
-    // store. Matrix permits a backward /messages request without `from`, which
-    // starts at the newest visible event. Keep that request representable so a
-    // freshly restored room can still populate its WeeChat buffer.
-    Some(PrevBatch::Backwards(prev_batch))
+#[derive(Debug, Eq, PartialEq)]
+pub enum HistoryPageResult {
+    Page { added: usize, exhausted: bool },
+    Unavailable,
+    Busy,
+    Failed,
+}
+
+const HISTORY_PAGE_TAGS: [&str; 2] =
+    ["matrix_history_page", "matrix_smart_filter"];
+const RESTORED_HISTORY_BATCH_SIZE: u16 = 25;
+const INTERACTIVE_HISTORY_BATCH_SIZE: u16 = 25;
+const INTERACTIVE_HISTORY_MAX_PAGES: usize = 50;
+
+// Restore one current page eagerly. Further pages are user-driven so a noisy
+// room cannot monopolize its history lock while the GUI is asking for older
+// messages in the room the user is actually viewing.
+const RESTORED_HISTORY_TARGET_LINES: i32 = 1;
+const RESTORED_HISTORY_MAX_PAGES: usize = 10;
+
+fn restored_prev_batch(_prev_batch: Option<String>) -> Option<PrevBatch> {
+    // The SDK does not replay the stored sync timeline when a room is restored.
+    // Its last_prev_batch token points before that timeline, so using it here
+    // skips the newest messages entirely. Start at the current room end; the
+    // response's end token will drive older backward pagination afterwards.
+    Some(PrevBatch::Backwards(None))
+}
+
+fn should_continue_restored_history(
+    lines_before: i32,
+    lines_after: i32,
+    has_older_page: bool,
+) -> bool {
+    has_older_page
+        && lines_after > lines_before
+        && lines_after < RESTORED_HISTORY_TARGET_LINES
+}
+
+fn has_history_page(prev_batch: &Option<PrevBatch>) -> bool {
+    prev_batch.is_some()
+}
+
+fn next_history_page_state(
+    current: &PrevBatch,
+    end: Option<String>,
+    _added: usize,
+) -> (Option<PrevBatch>, bool) {
+    if let PrevBatch::Forward(token) = current {
+        return (Some(PrevBatch::Backwards(Some(token.clone()))), false);
+    }
+
+    let repeated_cursor = matches!(
+        (current, end.as_deref()),
+        (PrevBatch::Backwards(Some(current)), Some(next)) if current == next
+    );
+    if end.is_none() || repeated_cursor {
+        (None, true)
+    } else {
+        (Some(PrevBatch::Backwards(end)), false)
+    }
+}
+
+fn history_page_marker(result: &HistoryPageResult) -> String {
+    match result {
+        HistoryPageResult::Page { added, exhausted } => format!(
+            "matrix_history_page added={} exhausted={}",
+            added,
+            u8::from(*exhausted),
+        ),
+        HistoryPageResult::Unavailable => {
+            "matrix_history_page added=0 exhausted=1 state=unavailable"
+                .to_owned()
+        }
+        HistoryPageResult::Busy => {
+            "matrix_history_page added=0 exhausted=0 state=busy".to_owned()
+        }
+        HistoryPageResult::Failed => {
+            "matrix_history_page added=0 exhausted=0 state=failed".to_owned()
+        }
+    }
 }
 
 fn should_render_event(already_rendered: bool) -> bool {
@@ -183,6 +266,7 @@ pub struct MatrixRoom {
     room_id: Rc<RoomId>,
     own_user_id: Rc<UserId>,
     room: SharedRoom,
+    server: std::rc::Weak<InnerServer>,
     buffer: RoomBuffer,
 
     config: Rc<RefCell<Config>>,
@@ -193,6 +277,8 @@ pub struct MatrixRoom {
     latest_event_id: Rc<RefCell<Option<OwnedEventId>>>,
     latest_read_event_id: Rc<RefCell<Option<OwnedEventId>>>,
     latest_thread_event_ids: Rc<RefCell<HashMap<OwnedEventId, OwnedEventId>>>,
+    thread_history_in_flight: Rc<RefCell<HashSet<OwnedEventId>>>,
+    thread_history_loaded: Rc<RefCell<HashSet<OwnedEventId>>>,
     pending_encrypted_events:
         Rc<RefCell<HashMap<OwnedEventId, PendingEncryptedEvent>>>,
     pending_encrypted_recoveries:
@@ -202,6 +288,29 @@ pub struct MatrixRoom {
 
     members: Members,
     verification: Verification,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct ResolvedReplyContext {
+    sender: String,
+    body: Option<String>,
+}
+
+fn reply_event_details(
+    event: AnySyncTimelineEvent,
+) -> Option<(OwnedUserId, Option<String>)> {
+    let AnySyncTimelineEvent::MessageLike(event) = event else {
+        return None;
+    };
+    let sender = event.sender().to_owned();
+    let body = match event {
+        AnySyncMessageLikeEvent::RoomMessage(
+            SyncMessageLikeEvent::Original(event),
+        ) => Some(event.content.msgtype.body().to_owned()),
+        _ => None,
+    };
+
+    Some((sender, body))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -380,10 +489,26 @@ fn with_mentions(
     content
 }
 
-fn thread_root_from_buffer(buffer: &Buffer) -> Option<OwnedEventId> {
+pub(crate) fn thread_root_from_buffer(buffer: &Buffer) -> Option<OwnedEventId> {
     buffer
         .get_localvar("thread_root")
         .and_then(|thread_root| EventId::parse(thread_root.as_ref()).ok())
+}
+
+fn attachment_config(
+    info: AttachmentInfo,
+    thread_root: Option<OwnedEventId>,
+) -> AttachmentConfig {
+    let config = AttachmentConfig::new().info(info);
+
+    if let Some(event_id) = thread_root {
+        config.reply(Some(Reply {
+            event_id,
+            enforce_thread: EnforceThread::Threaded(ReplyWithinThread::No),
+        }))
+    } else {
+        config
+    }
 }
 
 fn thread_root_from_content(
@@ -402,6 +527,16 @@ fn thread_root_from_encrypted_content(
         Some(EncryptedRelation::Thread(thread)) => Some(&thread.event_id),
         _ => None,
     }
+}
+
+fn retarget_thread_content(
+    content: &mut RoomMessageEventContent,
+    thread_root: OwnedEventId,
+) {
+    content.relates_to = Some(Relation::Thread(Thread::plain(
+        thread_root.clone(),
+        thread_root,
+    )));
 }
 
 fn thread_root_from_event(
@@ -429,10 +564,34 @@ fn rendered_root_to_seed<'a>(
     }
 }
 
+fn thread_root_from_timeline_event(
+    event: &AnyTimelineEvent,
+) -> Option<OwnedEventId> {
+    match event {
+        AnyTimelineEvent::MessageLike(event) => {
+            event.original_content().and_then(|content| match content {
+                AnyMessageLikeEventContent::RoomMessage(content) => {
+                    thread_root_from_content(&content).map(ToOwned::to_owned)
+                }
+                _ => None,
+            })
+        }
+        AnyTimelineEvent::State(_) => None,
+    }
+}
+
+fn thread_history_page_is_complete(
+    event_count: usize,
+    next_batch_token: Option<&str>,
+) -> bool {
+    event_count == 0 || next_batch_token.is_none()
+}
+
 impl RoomHandle {
     pub fn new(
         server_name: &str,
         runtime: Handle,
+        server: std::rc::Weak<InnerServer>,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
         room: Room,
@@ -475,6 +634,8 @@ impl RoomHandle {
             latest_event_id: Rc::new(RefCell::new(None)),
             latest_read_event_id: Rc::new(RefCell::new(None)),
             latest_thread_event_ids: Rc::new(RefCell::new(HashMap::new())),
+            thread_history_in_flight: Rc::new(RefCell::new(HashSet::new())),
+            thread_history_loaded: Rc::new(RefCell::new(HashSet::new())),
             pending_encrypted_events: Rc::new(RefCell::new(HashMap::new())),
             pending_encrypted_recoveries: Rc::new(RefCell::new(HashSet::new())),
             own_user_id: own_user_id.into(),
@@ -484,6 +645,7 @@ impl RoomHandle {
             outgoing_messages: MessageQueue::new(),
             messages_in_flight: IntMutex::new(),
             room,
+            server,
         };
 
         let buffer_name = format!("{}.{}", server_name, room_id);
@@ -597,6 +759,7 @@ impl RoomHandle {
     pub async fn restore(
         server_name: &str,
         runtime: Handle,
+        server: std::rc::Weak<InnerServer>,
         room: Room,
         connection: &Rc<RefCell<Option<Connection>>>,
         config: Rc<RefCell<Config>>,
@@ -610,6 +773,7 @@ impl RoomHandle {
         let room_buffer = Self::new(
             server_name,
             runtime.clone(),
+            server,
             connection,
             config,
             room_clone,
@@ -647,10 +811,12 @@ impl RoomHandle {
 #[async_trait(?Send)]
 impl BufferInputCallbackAsync for MatrixRoom {
     async fn callback(&mut self, buffer: BufferHandle, input: String) {
-        let thread_root = buffer
-            .upgrade()
-            .ok()
-            .and_then(|buffer| thread_root_from_buffer(&buffer));
+        let thread_root = buffer.upgrade().ok().and_then(|buffer| {
+            buffer
+                .get_localvar("matrix_continuation_source_thread_root")
+                .and_then(|root| EventId::parse(root.as_ref()).ok())
+                .or_else(|| thread_root_from_buffer(&buffer))
+        });
         let latest_thread_event = thread_root.as_ref().and_then(|root| {
             self.latest_thread_event_ids.borrow().get(root).cloned()
         });
@@ -666,6 +832,40 @@ impl BufferInputCallbackAsync for MatrixRoom {
 }
 
 impl MatrixRoom {
+    fn server(&self) -> Option<MatrixServer> {
+        self.server.upgrade().map(|inner| MatrixServer { inner })
+    }
+
+    fn adopt_thread_buffer(
+        &self,
+        source_root: &EventId,
+        target: &RoomHandle,
+        target_root: &EventId,
+    ) {
+        let Some(handle) = self.buffer.thread_buffer(source_root) else {
+            return;
+        };
+        self.buffer.remove_thread_buffer(source_root);
+        target
+            .buffer
+            .set_thread_buffer(target_root.to_owned(), handle.clone());
+        if let Ok(buffer) = handle.upgrade() {
+            buffer.set_localvar(
+                "matrix_continuation_source_room_id",
+                self.room_id.as_str(),
+            );
+            buffer.set_localvar(
+                "matrix_continuation_source_thread_root",
+                source_root.as_str(),
+            );
+            buffer.set_localvar("room_id", target.room_id().as_str());
+            buffer.set_localvar("thread_root", target_root.as_str());
+            target.buffer.seed_thread_buffer(target_root, &buffer);
+            target.buffer.sort_thread_messages(target_root);
+        }
+        target.fetch_thread_history(target_root.to_owned());
+    }
+
     pub(crate) fn mention_message_content(
         &self,
         buffer: &Buffer,
@@ -702,8 +902,53 @@ impl MatrixRoom {
         self.send_message(content).await;
     }
 
+    pub fn open_thread_buffer(
+        &self,
+        thread_root: &EventId,
+    ) -> Option<BufferHandle> {
+        if !self.buffer.contains_event(thread_root) {
+            return None;
+        }
+
+        let buffer = self.get_or_create_thread_buffer(thread_root);
+        if buffer.is_some() {
+            self.resume_thread_continuation(thread_root.to_owned());
+        }
+        buffer
+    }
+
+    fn resume_thread_continuation(&self, source_root: OwnedEventId) {
+        let source = RoomHandle {
+            inner: self.clone(),
+        };
+        Weechat::spawn(async move {
+            let Some(server) = source.server() else {
+                return;
+            };
+            let _guard = server.thread_continuation_send_guard().await;
+            let Ok(ThreadRoute::Current { room, thread_root }) =
+                server.resolve_thread_route(&source, &source_root).await
+            else {
+                return;
+            };
+            if room.room_id() != source.room_id() || thread_root != source_root
+            {
+                source.adopt_thread_buffer(&source_root, &room, &thread_root);
+            }
+        })
+        .detach();
+    }
+
     pub fn close_thread_buffer(&self, buffer: &Buffer) -> bool {
-        if self.buffer.remove_thread_buffer_for_buffer(buffer) {
+        if let Some(thread_root) = self.buffer.thread_root_for_buffer(buffer) {
+            self.buffer.remove_thread_buffer(&thread_root);
+            self.thread_history_in_flight
+                .borrow_mut()
+                .remove(&thread_root);
+            self.thread_history_loaded.borrow_mut().remove(&thread_root);
+            self.latest_thread_event_ids
+                .borrow_mut()
+                .remove(&thread_root);
             buffer.close();
             true
         } else {
@@ -904,7 +1149,7 @@ impl MatrixRoom {
                             None => None,
                         };
 
-                        Some((&in_reply_to.event_id, sender))
+                        Some((in_reply_to.event_id.clone(), sender))
                     }
                     _ => None,
                 };
@@ -952,7 +1197,7 @@ impl MatrixRoom {
                     _ => return None,
                 };
 
-                if let Some((event_id, sender)) = reply_to {
+                if let Some((event_id, mut reply_sender)) = reply_to {
                     let threshold = self
                         .config
                         .borrow()
@@ -960,13 +1205,35 @@ impl MatrixRoom {
                         .reply_full_quote_threshold();
                     let context = reply_context_for_distance(
                         threshold,
-                        self.buffer.reply_line_distance(event_id),
+                        self.buffer.reply_line_distance(&event_id),
                     );
+                    let needs_remote_context = reply_sender.is_none()
+                        || !rendered.has_reply_fallback();
+                    let remote_context = if needs_remote_context {
+                        self.load_reply_context(&event_id).await
+                    } else {
+                        None
+                    };
+
+                    if reply_sender.is_none() {
+                        reply_sender = remote_context
+                            .as_ref()
+                            .map(|context| context.sender.clone());
+                    }
+
+                    let fetched_body = if rendered.has_reply_fallback() {
+                        None
+                    } else {
+                        remote_context
+                            .as_ref()
+                            .and_then(|context| context.body.as_deref())
+                    };
 
                     rendered.add_reply_context(
-                        event_id,
-                        sender.as_deref(),
+                        &event_id,
+                        reply_sender.as_deref(),
                         context,
+                        fetched_body,
                     )
                 } else {
                     rendered
@@ -978,12 +1245,47 @@ impl MatrixRoom {
         Some(rendered)
     }
 
+    async fn load_reply_context(
+        &self,
+        event_id: &EventId,
+    ) -> Option<ResolvedReplyContext> {
+        let connection = self.connection.borrow().as_ref().cloned()?;
+        let room = self.room();
+        let event_id = event_id.to_owned();
+        let timeline_event = connection
+            .spawn(
+                async move { room.load_or_fetch_event(&event_id, None).await },
+            )
+            .await
+            .ok()?;
+        let event = timeline_event.raw().deserialize().ok()?;
+        let (sender_id, body) = reply_event_details(event)?;
+        let sender = self
+            .members
+            .get(&sender_id)
+            .await
+            .map(|member| member.nick())
+            .unwrap_or_else(|| sender_id.as_str().to_owned());
+
+        Some(ResolvedReplyContext { sender, body })
+    }
+
     fn get_or_create_thread_buffer(
         &self,
         thread_root: &EventId,
     ) -> Option<BufferHandle> {
         if let Some(handle) = self.buffer.thread_buffer(thread_root) {
             if handle.upgrade().is_ok() {
+                self.buffer.seed_open_thread_buffer(thread_root);
+                self.buffer.sort_thread_messages(thread_root);
+                if !self.thread_history_loaded.borrow().contains(thread_root)
+                    && !self
+                        .thread_history_in_flight
+                        .borrow()
+                        .contains(thread_root)
+                {
+                    self.fetch_thread_history(thread_root.to_owned());
+                }
                 return Some(handle);
             }
 
@@ -1034,6 +1336,7 @@ impl MatrixRoom {
 
         buffer.set_localvar("room_id", self.room_id.as_str());
         buffer.set_localvar("thread_root", thread_root.as_str());
+        buffer.set_localvar("matrix_upload_v1", "1");
         buffer.set_title(&format!(
             "Thread {} in {}",
             thread_root, room_short_name
@@ -1043,7 +1346,17 @@ impl MatrixRoom {
         self.buffer
             .set_thread_buffer(thread_root.to_owned(), buffer_handle.clone());
 
+        self.fetch_thread_history(thread_root.to_owned());
+
         Some(buffer_handle)
+    }
+
+    fn fetch_thread_history(&self, thread_root: OwnedEventId) {
+        let room = self.clone();
+        Weechat::spawn(async move {
+            room.get_thread_messages(thread_root).await;
+        })
+        .detach();
     }
 
     fn print_rendered_event_for_relation(
@@ -1414,7 +1727,98 @@ impl MatrixRoom {
     ///
     /// buffer.send_message(content).await
     /// ```
-    pub async fn send_message(&self, content: RoomMessageEventContent) {
+    pub async fn send_message(&self, mut content: RoomMessageEventContent) {
+        let Some(source_root) =
+            thread_root_from_content(&content).map(ToOwned::to_owned)
+        else {
+            if let Err(error) = self.send_message_direct(content).await {
+                self.print_error(&error);
+            }
+            return;
+        };
+        let Some(server) = self.server() else {
+            if let Err(error) = self.send_message_direct(content).await {
+                self.print_error(&error);
+            }
+            return;
+        };
+        let _guard = server.thread_continuation_send_guard().await;
+        let route = match server
+            .resolve_thread_route(
+                &RoomHandle {
+                    inner: self.clone(),
+                },
+                &source_root,
+            )
+            .await
+        {
+            Ok(route) => route,
+            Err(error) => {
+                self.print_error(&format!(
+                    "Failed to continue archived Matrix thread: {error}"
+                ));
+                return;
+            }
+        };
+        match route {
+            ThreadRoute::Current { room, thread_root } => {
+                if room.room_id() != self.room_id()
+                    || thread_root != source_root
+                {
+                    self.adopt_thread_buffer(&source_root, &room, &thread_root);
+                    retarget_thread_content(&mut content, thread_root);
+                }
+                if let Err(error) = room.send_message_direct(content).await {
+                    self.print_error(&error);
+                }
+            }
+            ThreadRoute::CreateRoot {
+                room,
+                continuation_source,
+            } => {
+                if let Err(error) =
+                    server.verify_thread_continuation_store().await
+                {
+                    self.print_error(&format!(
+                        "Cannot persist Matrix thread continuation: {error}"
+                    ));
+                    return;
+                }
+                content.relates_to = None;
+                // Matrix assigns the event ID. The SDK store is proven writable
+                // before sending, but the homeserver event and local mapping
+                // cannot be committed atomically without persisting the full
+                // arbitrary user payload as a recovery journal.
+                match room.send_message_direct(content).await {
+                    Ok(target_root) => {
+                        let target_key =
+                            ThreadKey::new(room.room_id(), &target_root);
+                        if let Err(error) = server
+                            .persist_thread_continuation(
+                                continuation_source,
+                                target_key,
+                            )
+                            .await
+                        {
+                            self.print_error(&format!("Sent continuation root but failed to persist it: {error}"));
+                            return;
+                        }
+                        self.adopt_thread_buffer(
+                            &source_root,
+                            &room,
+                            &target_root,
+                        );
+                    }
+                    Err(error) => self.print_error(&error),
+                }
+            }
+        }
+    }
+
+    async fn send_message_direct(
+        &self,
+        content: RoomMessageEventContent,
+    ) -> Result<OwnedEventId, String> {
         let transaction_id = TransactionId::new();
 
         let connection = self.connection.borrow().clone();
@@ -1443,15 +1847,17 @@ impl MatrixRoom {
                         .await;
                         self.outgoing_messages.finish_response(&r.event_id);
                     }
+                    Ok(r.event_id)
                 }
-                Err(_e) => {
+                Err(error) => {
                     // TODO: print out an error, remember to modify the local
                     // echo line if there is one.
                     self.outgoing_messages.remove(&transaction_id);
+                    Err(format!("Failed to send Matrix message: {error}"))
                 }
             }
-        } else if let Ok(buffer) = self.buffer_handle().upgrade() {
-            buffer.print("Error not connected");
+        } else {
+            Err("Matrix server is not connected".to_owned())
         }
     }
 
@@ -1646,7 +2052,11 @@ impl MatrixRoom {
         }
     }
 
-    pub async fn send_attachment(&self, path: PathBuf) {
+    pub async fn send_attachment(
+        &self,
+        path: PathBuf,
+        thread_root: Option<OwnedEventId>,
+    ) {
         let Some(filename) = path
             .file_name()
             .and_then(|f| f.to_str())
@@ -1670,15 +2080,150 @@ impl MatrixRoom {
 
         let content_type = mime_guess::from_path(&path).first_or_octet_stream();
         let size = UInt::new(data.len() as u64);
-        let config = AttachmentConfig::new()
-            .info(AttachmentInfo::File(BaseFileInfo { size }));
+        let info = AttachmentInfo::File(BaseFileInfo { size });
+        if let Err(error) = self
+            .send_attachment_routed(
+                filename,
+                content_type,
+                data,
+                info,
+                thread_root,
+            )
+            .await
+        {
+            self.print_error(&format!(
+                "Failed to upload attachment {}: {error}",
+                path.display()
+            ));
+        }
+    }
 
-        let Some(connection) = self.connection.borrow().clone() else {
-            self.print_error("Not connected. Please connect first.");
-            return;
+    pub async fn send_attachment_bytes(
+        &self,
+        filename: String,
+        content_type: mime::Mime,
+        data: Vec<u8>,
+        thread_root: Option<OwnedEventId>,
+    ) {
+        let size = UInt::new(data.len() as u64);
+        let info = if content_type.type_() == mime::IMAGE {
+            AttachmentInfo::Image(BaseImageInfo {
+                size,
+                ..Default::default()
+            })
+        } else {
+            AttachmentInfo::File(BaseFileInfo { size })
         };
+        if let Err(error) = self
+            .send_attachment_routed(
+                filename,
+                content_type,
+                data,
+                info,
+                thread_root,
+            )
+            .await
+        {
+            self.print_error(&format!(
+                "Failed to upload Matrix attachment: {error}"
+            ));
+        }
+    }
 
-        match connection
+    async fn send_attachment_routed(
+        &self,
+        filename: String,
+        content_type: mime::Mime,
+        data: Vec<u8>,
+        info: AttachmentInfo,
+        source_root: Option<OwnedEventId>,
+    ) -> Result<(), String> {
+        let Some(source_root) = source_root else {
+            self.send_attachment_direct(
+                filename,
+                content_type,
+                data,
+                info,
+                None,
+            )
+            .await?;
+            return Ok(());
+        };
+        let Some(server) = self.server() else {
+            self.send_attachment_direct(
+                filename,
+                content_type,
+                data,
+                info,
+                Some(source_root),
+            )
+            .await?;
+            return Ok(());
+        };
+        let _guard = server.thread_continuation_send_guard().await;
+        match server
+            .resolve_thread_route(
+                &RoomHandle {
+                    inner: self.clone(),
+                },
+                &source_root,
+            )
+            .await?
+        {
+            ThreadRoute::Current { room, thread_root } => {
+                if room.room_id() != self.room_id()
+                    || thread_root != source_root
+                {
+                    self.adopt_thread_buffer(&source_root, &room, &thread_root);
+                }
+                room.send_attachment_direct(
+                    filename,
+                    content_type,
+                    data,
+                    info,
+                    Some(thread_root),
+                )
+                .await?;
+            }
+            ThreadRoute::CreateRoot {
+                room,
+                continuation_source,
+            } => {
+                server.verify_thread_continuation_store().await?;
+                let target_root = room
+                    .send_attachment_direct(
+                        filename,
+                        content_type,
+                        data,
+                        info,
+                        None,
+                    )
+                    .await?;
+                server
+                    .persist_thread_continuation(
+                        continuation_source,
+                        ThreadKey::new(room.room_id(), &target_root),
+                    )
+                    .await?;
+                self.adopt_thread_buffer(&source_root, &room, &target_root);
+            }
+        }
+        Ok(())
+    }
+
+    async fn send_attachment_direct(
+        &self,
+        filename: String,
+        content_type: mime::Mime,
+        data: Vec<u8>,
+        info: AttachmentInfo,
+        thread_root: Option<OwnedEventId>,
+    ) -> Result<OwnedEventId, String> {
+        let config = attachment_config(info, thread_root);
+        let Some(connection) = self.connection.borrow().clone() else {
+            return Err("Matrix server is not connected".to_owned());
+        };
+        connection
             .spawn({
                 let room = self.room();
                 async move {
@@ -1687,16 +2232,8 @@ impl MatrixRoom {
                 }
             })
             .await
-        {
-            Ok(_) => (),
-            Err(e) => {
-                self.print_error(&format!(
-                    "Failed to upload attachment {}: {}",
-                    path.display(),
-                    e
-                ));
-            }
-        }
+            .map(|response| response.event_id)
+            .map_err(|error| error.to_string())
     }
 
     /// Send out a typing notice.
@@ -1749,6 +2286,10 @@ impl MatrixRoom {
 
     pub fn is_busy(&self) -> bool {
         self.messages_in_flight.locked()
+    }
+
+    pub fn has_history_page(&self) -> bool {
+        has_history_page(&self.prev_batch.borrow())
     }
 
     pub fn reset_prev_batch(&self) {
@@ -1822,7 +2363,39 @@ impl MatrixRoom {
         self.mark_latest_event_as_read(false);
     }
 
-    pub async fn get_messages(&self) {
+    pub async fn get_messages(&self) -> HistoryPageResult {
+        self.get_messages_with_limit(RESTORED_HISTORY_BATCH_SIZE)
+            .await
+    }
+
+    pub async fn get_interactive_history_page(&self) -> HistoryPageResult {
+        let mut total_added = 0;
+
+        for _ in 0..INTERACTIVE_HISTORY_MAX_PAGES {
+            match self
+                .get_messages_with_limit(INTERACTIVE_HISTORY_BATCH_SIZE)
+                .await
+            {
+                HistoryPageResult::Page { added, exhausted } => {
+                    total_added += added;
+                    if total_added > 0 || exhausted {
+                        return HistoryPageResult::Page {
+                            added: total_added,
+                            exhausted,
+                        };
+                    }
+                }
+                result => return result,
+            }
+        }
+
+        HistoryPageResult::Page {
+            added: total_added,
+            exhausted: false,
+        }
+    }
+
+    async fn get_messages_with_limit(&self, limit: u16) -> HistoryPageResult {
         let messages_lock = self.messages_in_flight.clone();
 
         let connection = self.connection.borrow().as_ref().cloned();
@@ -1831,23 +2404,33 @@ impl MatrixRoom {
             if let Some(p) = self.prev_batch.borrow().as_ref().cloned() {
                 p
             } else {
-                return;
+                return HistoryPageResult::Unavailable;
             };
 
         let guard = if let Ok(l) = messages_lock.try_lock() {
             l
         } else {
-            return;
+            return HistoryPageResult::Busy;
         };
 
         Weechat::bar_item_update("buffer_modes");
         Weechat::bar_item_update("matrix_modes");
 
-        if let Some(connection) = connection {
+        let result = if let Some(connection) = connection {
             let room = self.room();
             let room_id = room.room_id().to_owned();
 
-            if let Ok(r) = connection.room_messages(room, prev_batch).await {
+            if let Ok(r) = connection
+                .room_messages(room, prev_batch.clone(), limit)
+                .await
+            {
+                let fetched = r.chunk.len();
+                let (next_prev_batch, exhausted) = next_history_page_state(
+                    &prev_batch,
+                    r.end.clone(),
+                    fetched,
+                );
+                let mut added = 0;
                 for event in
                     r.chunk.iter().filter_map(|e| e.raw().deserialize().ok())
                 {
@@ -1863,29 +2446,45 @@ impl MatrixRoom {
                         };
                         *self.latest_event_id.borrow_mut() = Some(event_id);
                     }
-                    self.handle_room_event(&event).await;
+                    added += self.handle_room_event(&event).await;
                 }
 
                 let mut prev_batch = self.prev_batch.borrow_mut();
 
-                if let Some(PrevBatch::Forward(t)) = prev_batch.as_ref() {
-                    *prev_batch =
-                        Some(PrevBatch::Backwards(Some(t.to_owned())));
+                if matches!(prev_batch.as_ref(), Some(PrevBatch::Forward(_))) {
+                    *prev_batch = next_prev_batch;
                     self.buffer.sort_messages();
-                } else if r.chunk.is_empty() {
-                    *prev_batch = None;
                 } else {
-                    *prev_batch =
-                        r.end.map(|token| PrevBatch::Backwards(Some(token)));
-                    self.buffer.sort_messages();
+                    *prev_batch = next_prev_batch;
+                    if added > 0 {
+                        self.buffer.sort_messages();
+                    }
                 }
+
+                HistoryPageResult::Page { added, exhausted }
+            } else {
+                HistoryPageResult::Failed
             }
-        }
+        } else {
+            HistoryPageResult::Failed
+        };
 
         drop(guard);
 
         Weechat::bar_item_update("buffer_modes");
         Weechat::bar_item_update("matrix_modes");
+
+        result
+    }
+
+    pub fn print_history_page_result(&self, result: HistoryPageResult) {
+        if let Ok(buffer) = self.buffer.buffer_handle().upgrade() {
+            buffer.print_date_tags(
+                0,
+                &HISTORY_PAGE_TAGS,
+                &history_page_marker(&result),
+            );
+        }
     }
 
     pub async fn get_messages_if_empty(&self) {
@@ -1896,6 +2495,214 @@ impl MatrixRoom {
 
         if buffer.num_lines() == 0 {
             self.get_messages().await;
+        }
+    }
+
+    pub async fn preload_restored_messages(&self) {
+        for _ in 0..RESTORED_HISTORY_MAX_PAGES {
+            let buffer_handle = self.buffer_handle();
+            let Ok(buffer) = buffer_handle.upgrade() else {
+                return;
+            };
+            let lines_before = buffer.num_lines();
+            drop(buffer);
+
+            self.get_messages().await;
+
+            let buffer_handle = self.buffer_handle();
+            let Ok(buffer) = buffer_handle.upgrade() else {
+                return;
+            };
+            let lines_after = buffer.num_lines();
+            drop(buffer);
+
+            let has_older_page = self.prev_batch.borrow().is_some();
+            if !should_continue_restored_history(
+                lines_before,
+                lines_after,
+                has_older_page,
+            ) {
+                break;
+            }
+        }
+    }
+
+    pub async fn get_thread_messages(&self, thread_root: OwnedEventId) {
+        if self.thread_history_loaded.borrow().contains(&thread_root)
+            || !self
+                .thread_history_in_flight
+                .borrow_mut()
+                .insert(thread_root.clone())
+        {
+            return;
+        }
+
+        let mut from = None;
+        let mut seen_tokens = HashSet::new();
+        let mut seen_event_ids = HashSet::new();
+        let mut newest_event_id = None;
+        let mut completed = false;
+        let mut request_attempts = 0u8;
+        let Some(connection) = self.connection.borrow().as_ref().cloned()
+        else {
+            self.thread_history_in_flight
+                .borrow_mut()
+                .remove(&thread_root);
+            return;
+        };
+
+        loop {
+            let options = RelationsOptions {
+                from: from.clone(),
+                dir: Direction::Backward,
+                limit: Some(UInt::from(100u8)),
+                include_relations: IncludeRelations::RelationsOfType(
+                    RelationType::Thread,
+                ),
+                recurse: false,
+            };
+
+            let room = self.room();
+            let relation_root = thread_root.clone();
+            let relations = match connection
+                .spawn(
+                    async move { room.relations(relation_root, options).await },
+                )
+                .await
+            {
+                Ok(relations) => relations,
+                Err(error) => {
+                    request_attempts += 1;
+                    if request_attempts < 3 {
+                        let delay = Duration::from_millis(
+                            250 * u64::from(request_attempts),
+                        );
+                        connection
+                            .spawn(
+                                async move { tokio::time::sleep(delay).await },
+                            )
+                            .await;
+                        continue;
+                    }
+                    Weechat::print(&format!(
+                            "{}: Error fetching thread history for {} after {} attempts: {}",
+                            Weechat::prefix(Prefix::Error),
+                            thread_root,
+                            request_attempts,
+                            error,
+                        ));
+                    break;
+                }
+            };
+            request_attempts = 0;
+
+            let room_id = self.room_id.as_ref().to_owned();
+            let mut new_event_count = 0;
+            for event in relations
+                .chunk
+                .iter()
+                .filter_map(|event| event.raw().deserialize().ok())
+            {
+                let event = event.into_full_event(room_id.clone());
+                if !seen_event_ids.insert(event.event_id().to_owned()) {
+                    continue;
+                }
+                new_event_count += 1;
+                if newest_event_id.is_none() {
+                    newest_event_id = Some(event.event_id().to_owned());
+                }
+                self.handle_thread_history_event(&thread_root, &event).await;
+            }
+
+            if thread_history_page_is_complete(
+                new_event_count,
+                relations.next_batch_token.as_deref(),
+            ) {
+                completed = true;
+                break;
+            }
+
+            let Some(next) = relations.next_batch_token else {
+                completed = true;
+                break;
+            };
+            if !seen_tokens.insert(next.clone()) {
+                Weechat::print(&format!(
+                    "{}: Thread history pagination repeated a token for {}",
+                    Weechat::prefix(Prefix::Error),
+                    thread_root,
+                ));
+                break;
+            }
+            from = Some(next);
+        }
+
+        self.thread_history_in_flight
+            .borrow_mut()
+            .remove(&thread_root);
+
+        if completed {
+            self.thread_history_loaded
+                .borrow_mut()
+                .insert(thread_root.clone());
+            if let Some(event_id) = newest_event_id {
+                self.latest_thread_event_ids
+                    .borrow_mut()
+                    .entry(thread_root.clone())
+                    .or_insert(event_id);
+            }
+            self.buffer.seed_open_thread_buffer(&thread_root);
+            self.buffer.sort_thread_messages(&thread_root);
+        }
+    }
+
+    async fn handle_thread_history_event(
+        &self,
+        thread_root: &EventId,
+        event: &AnyTimelineEvent,
+    ) {
+        if thread_root_from_timeline_event(event).as_deref()
+            != Some(thread_root)
+        {
+            return;
+        }
+
+        let AnyTimelineEvent::MessageLike(event) = event else {
+            return;
+        };
+
+        if event.is_edit()
+            || !should_render_event(
+                self.buffer
+                    .thread_contains_event(thread_root, event.event_id()),
+            )
+        {
+            return;
+        }
+
+        let sender =
+            self.members.get(event.sender()).await.expect(
+                "Rendering a message but the sender isn't in the nicklist",
+            );
+        let Some(content) = event.original_content() else {
+            tracing::error!("Unhandled redacted event: {event:?}");
+            return;
+        };
+
+        if let Some(rendered) = self
+            .render_message_content(
+                event.event_id(),
+                event.origin_server_ts(),
+                &sender,
+                &content,
+            )
+            .await
+        {
+            self.print_rendered_event_for_relation(
+                Some(event.event_id()),
+                Some(thread_root),
+                rendered.add_backlog_tags(),
+            );
         }
     }
 
@@ -2153,14 +2960,25 @@ impl MatrixRoom {
         }
     }
 
-    pub async fn handle_room_event(&self, event: &AnyTimelineEvent) {
+    pub async fn handle_room_event(&self, event: &AnyTimelineEvent) -> usize {
+        let thread_root = thread_root_from_timeline_event(event);
+
         match &event {
             AnyTimelineEvent::MessageLike(event) => {
+                let already_rendered = thread_root.as_ref().map_or_else(
+                    || self.buffer.contains_event(event.event_id()),
+                    |thread_root| {
+                        self.buffer.thread_contains_event(
+                            thread_root,
+                            event.event_id(),
+                        )
+                    },
+                );
                 let content = if let Some(content) = event.original_content() {
                     content
                 } else {
                     tracing::error!("Unhandled redacted event: {event:?}");
-                    return;
+                    return 0;
                 };
                 let send_time = event.origin_server_ts();
 
@@ -2180,11 +2998,7 @@ impl MatrixRoom {
 
                 // TODO: Only print out historical events if they aren't edits of
                 // other events.
-                if !event.is_edit()
-                    && should_render_event(
-                        self.buffer.contains_event(event.event_id()),
-                    )
-                {
+                if !event.is_edit() && should_render_event(already_rendered) {
                     let sender = self.members.get(event.sender()).await.expect(
                     "Rendering a message but the sender isn't in the nicklist",
                 );
@@ -2198,14 +3012,21 @@ impl MatrixRoom {
                         )
                         .await
                     {
-                        self.buffer.print_rendered_event(rendered);
-                        self.buffer.seed_open_thread_buffer(event.event_id());
+                        let line_count = rendered.content.lines.len();
+                        self.print_rendered_event_for_relation(
+                            Some(event.event_id()),
+                            thread_root.as_deref(),
+                            rendered.add_backlog_tags(),
+                        );
+                        return line_count;
                     }
                 }
             }
             // TODO: print out state events.
             AnyTimelineEvent::State(_) => (),
         }
+
+        0
     }
 
     pub fn room(&self) -> Room {
@@ -2274,10 +3095,10 @@ mod tests {
     }
 
     #[test]
-    fn restored_rooms_fetch_history_backwards_from_prev_batch() {
+    fn restored_rooms_fetch_newest_history_before_older_pages() {
         assert_eq!(
             restored_prev_batch(Some("token".to_owned())),
-            Some(PrevBatch::Backwards(Some("token".to_owned())))
+            Some(PrevBatch::Backwards(None))
         );
     }
 
@@ -2305,9 +3126,151 @@ mod tests {
     }
 
     #[test]
+    fn restored_history_releases_the_lock_after_one_useful_page() {
+        assert!(!should_continue_restored_history(0, 13, true));
+        assert!(!should_continue_restored_history(87, 99, true));
+        assert!(!should_continue_restored_history(13, 13, true));
+        assert!(!should_continue_restored_history(0, 13, false));
+    }
+
+    #[test]
+    fn history_paging_requires_an_available_cursor() {
+        assert!(!has_history_page(&None));
+        assert!(has_history_page(&Some(PrevBatch::Backwards(None))));
+        assert!(has_history_page(&Some(PrevBatch::Backwards(Some(
+            "token".to_owned()
+        )))));
+        assert!(has_history_page(&Some(PrevBatch::Forward(
+            "token".to_owned()
+        ))));
+    }
+
+    #[test]
+    fn empty_history_page_keeps_a_new_cursor() {
+        assert_eq!(
+            next_history_page_state(
+                &PrevBatch::Backwards(Some("cursor-1".to_owned())),
+                Some("cursor-2".to_owned()),
+                0,
+            ),
+            (
+                Some(PrevBatch::Backwards(Some("cursor-2".to_owned()))),
+                false,
+            ),
+        );
+    }
+
+    #[test]
+    fn empty_history_page_stops_on_a_repeated_cursor() {
+        assert_eq!(
+            next_history_page_state(
+                &PrevBatch::Backwards(Some("cursor-1".to_owned())),
+                Some("cursor-1".to_owned()),
+                0,
+            ),
+            (None, true),
+        );
+    }
+
+    #[test]
+    fn non_empty_history_page_also_stops_on_a_repeated_cursor() {
+        assert_eq!(
+            next_history_page_state(
+                &PrevBatch::Backwards(Some("cursor-1".to_owned())),
+                Some("cursor-1".to_owned()),
+                25,
+            ),
+            (None, true),
+        );
+    }
+
+    #[test]
+    fn interactive_history_pages_are_bounded() {
+        assert_eq!(INTERACTIVE_HISTORY_BATCH_SIZE, 25);
+        assert_eq!(RESTORED_HISTORY_BATCH_SIZE, 25);
+    }
+
+    #[test]
+    fn history_page_markers_are_machine_readable_and_hideable() {
+        assert_eq!(
+            HISTORY_PAGE_TAGS,
+            ["matrix_history_page", "matrix_smart_filter"]
+        );
+        assert_eq!(
+            history_page_marker(&HistoryPageResult::Page {
+                added: 25,
+                exhausted: false,
+            }),
+            "matrix_history_page added=25 exhausted=0"
+        );
+        assert_eq!(
+            history_page_marker(&HistoryPageResult::Unavailable),
+            "matrix_history_page added=0 exhausted=1 state=unavailable"
+        );
+    }
+
+    #[test]
     fn already_rendered_events_are_not_printed_again() {
         assert!(should_render_event(false));
         assert!(!should_render_event(true));
+    }
+
+    #[test]
+    fn reply_event_details_extract_sender_and_body() {
+        let event: AnySyncTimelineEvent =
+            serde_json::from_value(serde_json::json!({
+                "type": "m.room.message",
+                "event_id": "$original:example.org",
+                "sender": "@alice:example.org",
+                "origin_server_ts": 1,
+                "content": {
+                    "msgtype": "m.text",
+                    "body": "original message"
+                },
+                "unsigned": {}
+            }))
+            .expect("valid Matrix event");
+
+        assert_eq!(
+            reply_event_details(event),
+            Some((
+                UserId::parse("@alice:example.org").unwrap(),
+                Some("original message".to_owned())
+            ))
+        );
+    }
+
+    #[test]
+    fn room_image_attachment_has_native_image_metadata_without_reply() {
+        let config = attachment_config(
+            AttachmentInfo::Image(BaseImageInfo {
+                size: UInt::new(42),
+                ..Default::default()
+            }),
+            None,
+        );
+
+        assert!(matches!(config.info, Some(AttachmentInfo::Image(_))));
+        assert!(config.reply.is_none());
+    }
+
+    #[test]
+    fn thread_image_attachment_targets_the_thread_root() {
+        let thread_root = EventId::parse("$thread-root:example.org").unwrap();
+        let config = attachment_config(
+            AttachmentInfo::Image(BaseImageInfo {
+                size: UInt::new(42),
+                ..Default::default()
+            }),
+            Some(thread_root.to_owned()),
+        );
+
+        let reply = config.reply.expect("thread image must carry a reply");
+        assert_eq!(reply.event_id, thread_root);
+        assert_eq!(
+            reply.enforce_thread,
+            EnforceThread::Threaded(ReplyWithinThread::No)
+        );
     }
 
     #[test]
@@ -2388,6 +3351,60 @@ mod tests {
     }
 
     #[test]
+    fn continued_thread_text_targets_only_the_successor_root() {
+        let old_root = EventId::parse("$old-root:example.org").unwrap();
+        let new_root = EventId::parse("$new-root:example.org").unwrap();
+        let mut content = make_text_message_content(
+            "continued body".to_owned(),
+            false,
+            Some(old_root),
+            None,
+        );
+
+        retarget_thread_content(&mut content, new_root.clone());
+
+        let Some(Relation::Thread(thread)) = content.relates_to else {
+            panic!("continued text must remain a proper Matrix thread reply");
+        };
+        assert_eq!(thread.event_id, new_root);
+        assert_eq!(
+            thread.in_reply_to.expect("fallback target").event_id,
+            new_root
+        );
+    }
+
+    #[test]
+    fn historical_thread_event_keeps_its_root() {
+        let event: AnyTimelineEvent =
+            serde_json::from_value(serde_json::json!({
+                "type": "m.room.message",
+                "room_id": "!room:example.org",
+                "sender": "@alice:example.org",
+                "origin_server_ts": 1,
+                "event_id": "$reply:example.org",
+                "content": {
+                    "msgtype": "m.text",
+                    "body": "thread reply",
+                    "m.relates_to": {
+                        "rel_type": "m.thread",
+                        "event_id": "$root:example.org",
+                        "is_falling_back": true,
+                        "m.in_reply_to": {
+                            "event_id": "$root:example.org"
+                        }
+                    }
+                },
+                "unsigned": {}
+            }))
+            .unwrap();
+
+        assert_eq!(
+            thread_root_from_timeline_event(&event).as_deref(),
+            Some(EventId::parse("$root:example.org").unwrap().as_ref())
+        );
+    }
+
+    #[test]
     fn thread_reply_is_not_treated_as_another_thread_root() {
         let event_id = EventId::parse("$thread-reply:example.org").unwrap();
         let thread_root = EventId::parse("$thread-root:example.org").unwrap();
@@ -2397,6 +3414,14 @@ mod tests {
             None
         );
         assert_eq!(rendered_root_to_seed(None, Some(&thread_root)), None);
+    }
+
+    #[test]
+    fn empty_thread_history_page_finishes_pagination() {
+        assert!(thread_history_page_is_complete(0, Some("next")));
+        assert!(thread_history_page_is_complete(0, None));
+        assert!(thread_history_page_is_complete(8, None));
+        assert!(!thread_history_page_is_complete(8, Some("next")));
     }
 
     #[test]
