@@ -1698,6 +1698,8 @@ impl MatrixRoom {
         let description = match join_rule {
             JoinRule::Public => "public",
             JoinRule::Invite => "invite-only",
+            JoinRule::Knock => "knock",
+            JoinRule::Private => "private",
             _ => "requested",
         };
 
