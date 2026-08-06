@@ -181,8 +181,12 @@ fn reply_content(
 ) -> RoomMessageEventContent {
     let mut content = RoomMessageEventContent::text_plain(message);
     content.relates_to = Some(match thread_root {
-        Some(thread_root) => Relation::Thread(Thread::plain(thread_root, event_id)),
-        None => Relation::Reply { in_reply_to: InReplyTo::new(event_id) },
+        Some(thread_root) => {
+            Relation::Thread(Thread::plain(thread_root, event_id))
+        }
+        None => Relation::Reply {
+            in_reply_to: InReplyTo::new(event_id),
+        },
     });
     content
 }
@@ -206,7 +210,8 @@ mod tests {
     #[test]
     fn reply_content_sets_reply_relation() {
         let event_id = owned_event_id!("$replyevent:example.org");
-        let content = reply_content(event_id.clone(), "Thanks".to_owned(), None);
+        let content =
+            reply_content(event_id.clone(), "Thanks".to_owned(), None);
 
         let Some(Relation::Reply { in_reply_to }) = content.relates_to else {
             panic!("reply command must create a Matrix reply relation");
