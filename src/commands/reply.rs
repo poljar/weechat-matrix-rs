@@ -126,6 +126,16 @@ impl ReplyCommand {
         }
     }
 
+    fn parser() -> Argparse<'static, 'static> {
+        Argparse::new("reply")
+            .settings(&[
+                ArgParseSettings::AllowLeadingHyphen,
+                ArgParseSettings::DisableHelpFlags,
+                ArgParseSettings::DisableVersion,
+            ])
+            .arg(Arg::with_name("arguments").multiple(true))
+    }
+
     fn reply(&self, buffer: &Buffer, event_id: OwnedEventId, message: String) {
         if let Some(room) = self.servers.find_room(buffer) {
             let thread_root = buffer
@@ -146,20 +156,20 @@ impl ReplyCommand {
 
 impl CommandCallback for ReplyCommand {
     fn callback(&mut self, _: &Weechat, buffer: &Buffer, arguments: Args) {
-        let argparse = Argparse::new("reply")
-            .setting(ArgParseSettings::NoBinaryName)
-            .arg(Arg::with_name("arguments").multiple(true));
-
-        parse_and_run(argparse, arguments, |args| match Self::parse_arguments(
-            buffer,
-            args.values_of("arguments").map(|v| v.collect()),
-        ) {
-            Ok((event_id, message)) => self.reply(buffer, event_id, message),
-            Err(error) => buffer.print(&format!(
-                "{}matrix: {}",
-                Weechat::prefix(Prefix::Error),
-                error
-            )),
+        parse_and_run(Self::parser(), arguments, |args| {
+            match Self::parse_arguments(
+                buffer,
+                args.values_of("arguments").map(|v| v.collect()),
+            ) {
+                Ok((event_id, message)) => {
+                    self.reply(buffer, event_id, message)
+                }
+                Err(error) => buffer.print(&format!(
+                    "{}matrix: {}",
+                    Weechat::prefix(Prefix::Error),
+                    error
+                )),
+            }
         });
     }
 }
@@ -171,12 +181,8 @@ fn reply_content(
 ) -> RoomMessageEventContent {
     let mut content = RoomMessageEventContent::text_plain(message);
     content.relates_to = Some(match thread_root {
-        Some(thread_root) => {
-            Relation::Thread(Thread::plain(thread_root, event_id))
-        }
-        None => Relation::Reply {
-            in_reply_to: InReplyTo::new(event_id),
-        },
+        Some(thread_root) => Relation::Thread(Thread::plain(thread_root, event_id)),
+        None => Relation::Reply { in_reply_to: InReplyTo::new(event_id) },
     });
     content
 }
@@ -200,8 +206,7 @@ mod tests {
     #[test]
     fn reply_content_sets_reply_relation() {
         let event_id = owned_event_id!("$replyevent:example.org");
-        let content =
-            reply_content(event_id.clone(), "Thanks".to_owned(), None);
+        let content = reply_content(event_id.clone(), "Thanks".to_owned(), None);
 
         let Some(Relation::Reply { in_reply_to }) = content.relates_to else {
             panic!("reply command must create a Matrix reply relation");
@@ -230,5 +235,31 @@ mod tests {
             thread.in_reply_to.expect("fallback reply target").event_id
         );
         assert!(thread.is_falling_back);
+    }
+
+    #[test]
+    fn command_parser_discards_the_hook_command_name() {
+        let matches = ReplyCommand::parser()
+            .get_matches_from_safe(vec![
+                "reply",
+                "$chosen:example.org",
+                "message",
+            ])
+            .unwrap();
+        let arguments: Vec<_> =
+            matches.values_of("arguments").unwrap().collect();
+
+        assert_eq!(vec!["$chosen:example.org", "message"], arguments);
+    }
+
+    #[test]
+    fn command_parser_accepts_negative_reply_indexes() {
+        let matches = ReplyCommand::parser()
+            .get_matches_from_safe(vec!["reply", "-2", "message"])
+            .unwrap();
+        let arguments: Vec<_> =
+            matches.values_of("arguments").unwrap().collect();
+
+        assert_eq!(vec!["-2", "message"], arguments);
     }
 }
