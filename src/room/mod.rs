@@ -62,6 +62,7 @@ use matrix_sdk::{
                     EncryptedEventScheme, Relation as EncryptedRelation,
                     RoomEncryptedEventContent,
                 },
+                join_rules::RoomJoinRulesEventContent,
                 member::RoomMemberEventContent,
                 message::{
                     MessageType, Relation, RoomMessageEventContent,
@@ -73,6 +74,7 @@ use matrix_sdk::{
             AnySyncStateEvent, AnySyncTimelineEvent, AnyTimelineEvent,
             OriginalSyncMessageLikeEvent, SyncMessageLikeEvent, SyncStateEvent,
         },
+        room::JoinRule,
         serde::Raw,
         EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomAliasId,
         OwnedRoomId, OwnedTransactionId, OwnedUserId, RoomId, TransactionId,
@@ -1541,6 +1543,37 @@ impl MatrixRoom {
             Ok(_) => (),
             Err(error) => self
                 .print_error(&format!("Failed to set room topic: {}", error)),
+        }
+    }
+
+    pub async fn set_join_rule(&self, join_rule: JoinRule) {
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        let room = self.room().clone();
+        let description = match join_rule {
+            JoinRule::Public => "public",
+            JoinRule::Invite => "invite-only",
+            _ => "requested",
+        };
+
+        match connection
+            .spawn(async move {
+                room.send_state_event(RoomJoinRulesEventContent::new(join_rule))
+                    .await
+            })
+            .await
+        {
+            Ok(_) => self.print_network(&format!(
+                "Room join rule changed to {}.",
+                description
+            )),
+            Err(error) => self.print_error(&format!(
+                "Failed to change room join rule: {}",
+                error
+            )),
         }
     }
 

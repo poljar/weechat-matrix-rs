@@ -7,6 +7,7 @@ use weechat::{
 
 use crate::{config::ConfigHandle, Servers};
 
+mod access;
 mod buffer_clear;
 mod buffer_switch;
 mod devices;
@@ -31,6 +32,7 @@ mod upload;
 mod verification;
 mod verify;
 
+use access::RoomAccessCommand;
 use buffer_clear::BufferClearCommand;
 use buffer_switch::BufferSwitchCommand;
 
@@ -57,6 +59,7 @@ use upload::UploadCommand;
 use verify::VerifyCommand;
 
 pub struct Commands {
+    _room_access: Command,
     _matrix: Command,
     _mention_send: CommandRun,
     _keys: Command,
@@ -89,6 +92,7 @@ impl Commands {
         config: &ConfigHandle,
     ) -> Result<Commands, ()> {
         Ok(Commands {
+            _room_access: RoomAccessCommand::create(servers)?,
             _matrix: MatrixCommand::create(servers, config)?,
             _mention_send: MentionSendCommand::create(servers)?,
             _devices: DevicesCommand::create(servers)?,
