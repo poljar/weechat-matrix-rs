@@ -165,17 +165,6 @@ impl RoomBuffer {
         self.thread_buffers.borrow_mut().remove(thread_root);
     }
 
-    pub fn remove_thread_buffer_for_buffer(&self, buffer: &Buffer) -> bool {
-        let thread_root = self.thread_root_for_buffer(buffer);
-
-        if let Some(thread_root) = thread_root {
-            self.remove_thread_buffer(&thread_root);
-            true
-        } else {
-            false
-        }
-    }
-
     /// Return the sender ID for an event that is still in the buffer.
     ///
     /// Reply rendering uses this local lookup so it never blocks on a
@@ -224,6 +213,23 @@ impl RoomBuffer {
                     buffer_contains_tag(&buffer, &event_id_tag)
                 })
             })
+    }
+
+    /// Return whether an event is already rendered in a specific thread
+    /// buffer.
+    pub fn thread_contains_event(
+        &self,
+        thread_root: &EventId,
+        event_id: &EventId,
+    ) -> bool {
+        let event_id_tag = Cow::from(event_id.to_tag());
+        let Some(handle) = self.thread_buffer(thread_root) else {
+            return false;
+        };
+
+        handle
+            .upgrade()
+            .is_ok_and(|buffer| buffer_contains_tag(&buffer, &event_id_tag))
     }
 
     /// Return encrypted event IDs represented by placeholder lines restored
@@ -462,6 +468,17 @@ impl RoomBuffer {
     pub fn sort_messages(&self) {
         if let Ok(buffer) = self.buffer_handle().upgrade() {
             sort_buffer_lines(&buffer, None);
+        }
+    }
+
+    pub fn sort_thread_messages(&self, thread_root: &EventId) {
+        let Some(handle) = self.thread_buffer(thread_root) else {
+            return;
+        };
+
+        if let Ok(buffer) = handle.upgrade() {
+            let root_tag = thread_root.to_tag();
+            sort_buffer_lines(&buffer, Some(root_tag.as_ref()));
         }
     }
 
