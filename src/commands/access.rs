@@ -36,15 +36,12 @@ impl RoomAccessCommand {
     pub fn create(servers: &Servers) -> Result<Command, ()> {
         let settings = CommandSettings::new("room")
             .description("Change access rules for the current Matrix room.")
-            .add_argument("make_public|make_invite_only")
             .add_argument("set_join_rule <public|invite|knock|private>")
             .arguments_description(
-                "make_public: Allow anyone to join the room.\n\
-                 make_invite_only: Require an invitation to join.\n\
-                 set_join_rule: Set the join rule to public, invite, knock, or private.",
+                "set_join_rule: Set the join rule to public, invite, knock, or private.",
             )
             .add_completion(
-                "make_public|make_invite_only|set_join_rule public|invite|knock|private",
+                "set_join_rule public|invite|knock|private",
             );
 
         Command::new(
@@ -61,8 +58,6 @@ impl RoomAccessCommand {
                 ArgParseSettings::DisableHelpFlags,
                 ArgParseSettings::DisableVersion,
             ])
-            .subcommand(SubCommand::with_name("make_public"))
-            .subcommand(SubCommand::with_name("make_invite_only"))
             .subcommand(
                 SubCommand::with_name("set_join_rule")
                     .arg(Arg::with_name("rule").required(true)),
@@ -71,8 +66,6 @@ impl RoomAccessCommand {
 
     fn action(matches: &clap::ArgMatches) -> Result<AccessAction, String> {
         match matches.subcommand() {
-            ("make_public", _) => Ok(AccessAction::Public),
-            ("make_invite_only", _) => Ok(AccessAction::Invite),
             ("set_join_rule", Some(args)) => match args.value_of("rule") {
                 Some("public") => Ok(AccessAction::Public),
                 Some("invite") | Some("invite_only") => Ok(AccessAction::Invite),
@@ -84,7 +77,7 @@ impl RoomAccessCommand {
                 )),
                 None => Err("A join rule is required.".to_owned()),
             },
-            _ => Err("Usage: /room make_public|make_invite_only|set_join_rule <public|invite|knock|private>".to_owned()),
+            _ => Err("Usage: /room set_join_rule <public|invite|knock|private>".to_owned()),
         }
     }
 
@@ -126,15 +119,6 @@ mod tests {
             .get_matches_from_safe(args)
             .map_err(|error| error.to_string())?;
         RoomAccessCommand::action(&matches)
-    }
-
-    #[test]
-    fn explicit_shortcuts_select_join_rules() {
-        assert_eq!(Ok(AccessAction::Public), parse(&["room", "make_public"]));
-        assert_eq!(
-            Ok(AccessAction::Invite),
-            parse(&["room", "make_invite_only"])
-        );
     }
 
     #[test]
