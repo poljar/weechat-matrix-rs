@@ -7,6 +7,9 @@ enum WeechatApiVersions {
 
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed=.git/HEAD");
+    println!("cargo::rerun-if-changed=.git/refs");
+    println!("cargo::rerun-if-changed=.git/packed-refs");
     println!("cargo::rerun-if-env-changed=WEECHAT_BUNDLED");
     println!("cargo::rerun-if-env-changed=WEECHAT_PLUGIN_FILE");
     println!("cargo::rustc-check-cfg=cfg(weechat410)");
@@ -37,6 +40,9 @@ fn main() {
         if output.status.success() {
             let describe = String::from_utf8_lossy(&output.stdout).trim().to_string();
             println!("cargo::rustc-env=GIT_DESCRIBE={}", describe);
+            println!("cargo::warning=weechat-matrix git describe: {}", describe);
+        } else {
+            println!("cargo::warning=weechat-matrix: git describe failed");
         }
     }
 }
