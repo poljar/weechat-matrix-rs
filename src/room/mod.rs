@@ -549,7 +549,8 @@ impl RoomHandle {
             room,
         };
 
-        let buffer_name = format!("{}.{}", server_name, room_id);
+        let buffer_name =
+            format!("{}.{}", server_name, room.buffer.calculate_buffer_name());
 
         let buffer_handle = BufferBuilderAsync::new(&buffer_name)
             .input_callback(room.clone())
