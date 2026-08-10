@@ -31,7 +31,13 @@ If you are interested in helping out take a look at the issue tracker.
 Install Rust and the native build dependencies first. On Debian or Ubuntu a
 typical build environment needs:
 
-    sudo apt install build-essential clang libclang-dev libsqlite3-dev pkg-config
+    sudo apt install \
+      build-essential \
+      clang \
+      libclang-dev \
+      libsqlite3-dev \
+      pkg-config \
+      weechat-dev
 
 Other distributions use different package names, but the important native
 pieces are a C/C++ compiler, `clang`/`libclang`, and SQLite development headers.
