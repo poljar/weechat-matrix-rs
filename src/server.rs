@@ -89,8 +89,8 @@ use matrix_sdk::{
         },
         DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
         OwnedDeviceId, OwnedMxcUri, OwnedRoomAliasId, OwnedRoomId,
-        OwnedRoomOrAliasId, OwnedServerName, OwnedUserId, RoomAliasId,
-        RoomId, UserId,
+        OwnedRoomOrAliasId, OwnedServerName, OwnedUserId, RoomAliasId, RoomId,
+        UserId,
     },
     Client, Error, RoomState, SessionTokens,
 };
@@ -235,6 +235,8 @@ pub struct InnerServer {
     servers: Servers,
     server_name: Rc<str>,
     rooms: Rc<RefCell<HashMap<OwnedRoomId, RoomHandle>>>,
+    pending_room_metadata:
+        RefCell<HashMap<OwnedRoomId, (bool, Option<String>)>>,
     settings: Rc<RefCell<ServerSettings>>,
     current_settings: Rc<RefCell<ServerSettings>>,
     config: ConfigHandle,
@@ -272,6 +274,7 @@ impl MatrixServer {
             servers,
             server_name: server_name.clone(),
             rooms: Rc::new(RefCell::new(HashMap::new())),
+            pending_room_metadata: RefCell::new(HashMap::new()),
             settings: Rc::new(RefCell::new(ServerSettings::new())),
             current_settings: Rc::new(RefCell::new(ServerSettings::new())),
             config: config.clone(),
@@ -330,7 +333,9 @@ impl MatrixServer {
                 if !self.rooms.borrow().contains_key(&room_id) {
                     self.restore_room(room).await;
                 }
-                if let Some(room) = self.rooms.borrow().get(&room_id) {
+                let room = self.rooms.borrow().get(&room_id).cloned();
+                if let Some(room) = room {
+                    let room = self.latest_room_for(&room).await;
                     if let Ok(buffer) = room.buffer_handle().upgrade() {
                         buffer.switch_to();
                     }
@@ -1283,6 +1288,111 @@ impl InnerServer {
         }
     }
 
+    async fn latest_room_for(&self, room: &RoomHandle) -> RoomHandle {
+        let Some(successor_room_id) = room
+            .room()
+            .successor_room()
+            .map(|successor| successor.room_id)
+        else {
+            return room.clone();
+        };
+
+        self.latest_successor_room_handle(successor_room_id)
+            .await
+            .unwrap_or_else(|| room.clone())
+    }
+
+    fn latest_restored_successor_room(
+        &self,
+        room: &RoomHandle,
+    ) -> Option<RoomHandle> {
+        let mut next_room_id = room
+            .room()
+            .successor_room()
+            .map(|successor| successor.room_id)?;
+        let mut seen_room_ids = HashSet::new();
+        let mut latest = None;
+
+        for _ in 0..ROOM_UPGRADE_CHAIN_LIMIT {
+            if !seen_room_ids.insert(next_room_id.clone()) {
+                self.print_error(&format!(
+                    "Room upgrade cycle detected at {next_room_id}."
+                ));
+                return None;
+            }
+
+            let Some(room) = self.rooms.borrow().get(&next_room_id).cloned()
+            else {
+                return latest;
+            };
+            next_room_id = match room
+                .room()
+                .successor_room()
+                .map(|successor| successor.room_id)
+            {
+                Some(successor_room_id) => successor_room_id,
+                None => return Some(room),
+            };
+            latest = Some(room);
+        }
+
+        self.print_error(&format!(
+            "Room upgrade chain exceeded {ROOM_UPGRADE_CHAIN_LIMIT} rooms."
+        ));
+        latest
+    }
+
+    fn switch_current_room_to_restored_successor(
+        &self,
+        current_room: &RoomHandle,
+        successor_room: &RoomHandle,
+    ) {
+        if !Self::room_buffer_is_current(current_room) {
+            return;
+        }
+
+        if let Ok(buffer) = successor_room.buffer_handle().upgrade() {
+            buffer.switch_to();
+        }
+    }
+
+    fn switch_restored_upgrade_chain(&self, restored_room: &RoomHandle) {
+        if let Some(successor_room) =
+            self.latest_restored_successor_room(restored_room)
+        {
+            self.switch_current_room_to_restored_successor(
+                restored_room,
+                &successor_room,
+            );
+        }
+
+        let restored_room_id = restored_room.room_id().to_owned();
+        let rooms = self.rooms.borrow().values().cloned().collect::<Vec<_>>();
+        for room in rooms {
+            if room.room_id() == restored_room_id {
+                continue;
+            }
+
+            let Some(successor_room_id) = room
+                .room()
+                .successor_room()
+                .map(|successor| successor.room_id)
+            else {
+                continue;
+            };
+
+            if successor_room_id == restored_room_id {
+                let successor_room = self
+                    .latest_restored_successor_room(&room)
+                    .unwrap_or_else(|| restored_room.clone());
+                self.switch_current_room_to_restored_successor(
+                    &room,
+                    &successor_room,
+                );
+            }
+        }
+    }
+
     pub async fn restore_room(&self, room: Room) {
         let homeserver = self
             .settings
@@ -1306,6 +1416,14 @@ impl InnerServer {
                 let room_id = buffer.room_id().to_owned();
 
                 self.rooms.borrow_mut().insert(room_id, buffer.clone());
+                if let Some((is_direct, display_name)) = self
+                    .pending_room_metadata
+                    .borrow_mut()
+                    .remove(buffer.room_id())
+                {
+                    buffer.apply_room_metadata(is_direct, display_name);
+                }
+                self.switch_restored_upgrade_chain(&buffer);
 
                 // Relay-native frontends select buffers without triggering
                 // WeeChat's buffer_switch signal. Populate restored Matrix
@@ -1826,6 +1944,21 @@ impl InnerServer {
         }
 
         self.print_network("Persisted refreshed Matrix session");
+    }
+
+    pub fn receive_room_metadata(
+        &self,
+        room_id: OwnedRoomId,
+        is_direct: bool,
+        display_name: Option<String>,
+    ) {
+        if let Some(room) = self.rooms.borrow().get(&room_id) {
+            room.apply_room_metadata(is_direct, display_name);
+        } else {
+            self.pending_room_metadata
+                .borrow_mut()
+                .insert(room_id, (is_direct, display_name));
+        }
     }
 
     pub fn receive_sso_url(&self, url: &str) {

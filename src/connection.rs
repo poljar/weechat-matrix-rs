@@ -69,6 +69,7 @@ const SEND_RETRY_DELAYS: [Duration; 4] = [
 ];
 const SYNC_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const SYNC_RETRY_MAX_DELAY: Duration = Duration::from_secs(60);
+const ROOM_METADATA_TIMEOUT: Duration = Duration::from_secs(30);
 const SSO_CALLBACK_PORT: u16 = 29_325;
 
 fn is_retryable_network_error(error: &matrix_sdk::Error) -> bool {
@@ -126,6 +127,11 @@ pub enum ClientMessage {
         Option<AmbiguityChange>,
     ),
     RestoredRoom(OwnedRoomId),
+    RoomMetadata {
+        room_id: OwnedRoomId,
+        is_direct: bool,
+        display_name: Option<String>,
+    },
 }
 
 /// Struct representing an active connection to the homeserver.
@@ -468,6 +474,37 @@ impl Connection {
         }
     }
 
+    fn queue_room_metadata(
+        channel: Sender<Result<ClientMessage, String>>,
+        room: Room,
+    ) {
+        tokio::spawn(async move {
+            let room_id = room.room_id().to_owned();
+            let is_direct =
+                tokio::time::timeout(ROOM_METADATA_TIMEOUT, room.is_direct())
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or(false);
+            let display_name = tokio::time::timeout(
+                ROOM_METADATA_TIMEOUT,
+                room.display_name(),
+            )
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .map(|name| name.to_string());
+
+            let _ = channel
+                .send(Ok(ClientMessage::RoomMetadata {
+                    room_id,
+                    is_direct,
+                    display_name,
+                }))
+                .await;
+        });
+    }
+
     /// Response receiver loop.
     /// This runs on the main Weechat thread and listens for responses coming
     /// from the client running in the tokio executor.
@@ -503,6 +540,15 @@ impl Connection {
                     ClientMessage::RestoredRoom(room_id) => {
                         server.restore_room_by_id(room_id).await
                     }
+                    ClientMessage::RoomMetadata {
+                        room_id,
+                        is_direct,
+                        display_name,
+                    } => server.receive_room_metadata(
+                        room_id,
+                        is_direct,
+                        display_name,
+                    ),
                     ClientMessage::ToDeviceEvent(e) => {
                         server.receive_to_device_event(e).await
                     }
@@ -605,6 +651,7 @@ impl Connection {
                 return;
             }
             for room in client.joined_rooms() {
+                Self::queue_room_metadata(channel.clone(), room.clone());
                 if channel
                     .send(Ok(ClientMessage::RestoredRoom(
                         room.room_id().to_owned(),
@@ -743,6 +790,7 @@ impl Connection {
 
             if !first_login {
                 for room in client.joined_rooms() {
+                    Self::queue_room_metadata(channel.clone(), room.clone());
                     if channel
                         .send(Ok(ClientMessage::RestoredRoom(
                             room.room_id().to_owned(),
@@ -863,6 +911,12 @@ impl Connection {
                 }
 
                 for (room_id, room) in response.rooms.joined {
+                    if let Some(room) = client_ref.get_room(&room_id) {
+                        Self::queue_room_metadata(
+                            sync_channel.clone(),
+                            room.clone(),
+                        );
+                    }
                     let state_events = match &room.state {
                         State::Before(state) | State::After(state) => state,
                     };

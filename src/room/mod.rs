@@ -161,6 +161,11 @@ fn restored_prev_batch(_prev_batch: Option<String>) -> Option<PrevBatch> {
     Some(PrevBatch::Backwards(None))
 }
 
+fn non_empty_metadata_name(name: &str) -> Option<&str> {
+    let name = name.trim();
+    (!name.is_empty()).then_some(name)
+}
+
 fn has_history_page(prev_batch: &Option<PrevBatch>) -> bool {
     prev_batch.is_some()
 }
@@ -841,14 +846,6 @@ impl RoomHandle {
             room.buffer.refresh_space_children();
         }
 
-        if let Some(successor) = sdk_room.successor_room() {
-            let room = room.clone();
-            Weechat::spawn(async move {
-                room.follow_successor_room(successor.room_id).await
-            })
-            .detach();
-        }
-
         Self { inner: room }
     }
 
@@ -885,40 +882,44 @@ impl RoomHandle {
         // newer cursor which is then overwritten with the saved one.
         *room_buffer.prev_batch.borrow_mut() = restored_prev_batch(prev_batch);
 
-        let matrix_members = runtime
-            .spawn(async move {
-                tokio::time::timeout(
-                    ROOM_MEMBER_RESTORE_TIMEOUT,
-                    room.joined_user_ids(),
-                )
-                .await
-            })
-            .await
-            .expect("Couldn't get the joined user ids");
-
-        match matrix_members {
-            Ok(Ok(matrix_members)) => {
-                for user_id in matrix_members {
-                    trace!("Restoring member {}", &user_id);
-                    room_buffer.members.restore_member(user_id).await;
-                }
-                room_buffer.members.update_member_localvars();
-            }
-            Ok(Err(error)) => warn!(
-                "Couldn't restore room members for {}: {}",
-                room_id, error
-            ),
-            Err(_) => warn!(
-                "Timed out restoring room members for {} after {} seconds",
-                room_id,
-                ROOM_MEMBER_RESTORE_TIMEOUT.as_secs()
-            ),
-        }
-
         room_buffer.buffer.update_buffer_name();
         room_buffer.buffer.set_topic();
         room_buffer.buffer.update_parent_spaces();
         room_buffer.buffer.refresh_space_children();
+
+        let members_room = room_buffer.clone();
+        Weechat::spawn(async move {
+            let matrix_members = runtime
+                .spawn(async move {
+                    tokio::time::timeout(
+                        ROOM_MEMBER_RESTORE_TIMEOUT,
+                        room.joined_user_ids(),
+                    )
+                    .await
+                })
+                .await
+                .expect("Couldn't get the joined user ids");
+
+            match matrix_members {
+                Ok(Ok(matrix_members)) => {
+                    for user_id in matrix_members {
+                        trace!("Restoring member {}", &user_id);
+                        members_room.members.restore_member(user_id).await;
+                    }
+                    members_room.members.update_member_localvars();
+                }
+                Ok(Err(error)) => warn!(
+                    "Couldn't restore room members for {}: {}",
+                    room_id, error
+                ),
+                Err(_) => warn!(
+                    "Timed out restoring room members for {} after {} seconds",
+                    room_id,
+                    ROOM_MEMBER_RESTORE_TIMEOUT.as_secs()
+                ),
+            }
+        })
+        .detach();
 
         Ok(room_buffer)
     }
@@ -1221,6 +1222,28 @@ impl MatrixRoom {
             .runtime
             .block_on(room.is_direct())
             .unwrap_or_default()
+    }
+
+    pub fn apply_room_metadata(
+        &self,
+        is_direct: bool,
+        display_name: Option<String>,
+    ) {
+        let buffer_handle = self.buffer_handle();
+        let Ok(buffer) = buffer_handle.upgrade() else {
+            return;
+        };
+
+        if is_direct {
+            buffer.set_localvar("type", "private");
+            if let Some(display_name) =
+                display_name.as_deref().and_then(non_empty_metadata_name)
+            {
+                buffer.set_short_name(display_name);
+            }
+        } else {
+            buffer.set_localvar("type", "channel");
+        }
     }
 
     pub fn alias(&self) -> Option<OwnedRoomAliasId> {
@@ -1971,7 +1994,9 @@ impl MatrixRoom {
             return;
         };
         let Some(server) = self.server() else {
-            if let Err(error) = self.send_message_direct(self.room(), content).await {
+            if let Err(error) =
+                self.send_message_direct(self.room(), content).await
+            {
                 self.print_error(&error);
             }
             return;
@@ -2002,7 +2027,9 @@ impl MatrixRoom {
                     self.adopt_thread_buffer(&source_root, &room, &thread_root);
                     retarget_thread_content(&mut content, thread_root);
                 }
-                if let Err(error) = room.send_message_direct(room.room(), content).await {
+                if let Err(error) =
+                    room.send_message_direct(room.room(), content).await
+                {
                     self.print_error(&error);
                 }
             }
