@@ -89,7 +89,8 @@ use matrix_sdk::{
         },
         DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
         OwnedDeviceId, OwnedMxcUri, OwnedRoomAliasId, OwnedRoomId,
-        OwnedRoomOrAliasId, OwnedUserId, RoomAliasId, RoomId, UserId,
+        OwnedRoomOrAliasId, OwnedServerName, OwnedUserId, RoomAliasId,
+        RoomId, UserId,
     },
     Client, Error, RoomState, SessionTokens,
 };
@@ -325,9 +326,18 @@ impl MatrixServer {
 
         match result {
             Ok(Ok(room)) => {
+                let room_id = room.room_id().to_owned();
+                if !self.rooms.borrow().contains_key(&room_id) {
+                    self.restore_room(room).await;
+                }
+                if let Some(room) = self.rooms.borrow().get(&room_id) {
+                    if let Ok(buffer) = room.buffer_handle().upgrade() {
+                        buffer.switch_to();
+                    }
+                }
                 self.print_network(&format!(
                     "Successfully joined room {}",
-                    room.room_id()
+                    room_id
                 ));
             }
             Ok(Err(error)) => {
@@ -737,14 +747,27 @@ fn create_room_request(alias_localpart: String) -> CreateRoomRequest {
     request
 }
 
+fn room_id_join_servers(room_id: &RoomId) -> Vec<OwnedServerName> {
+    room_id
+        .server_name()
+        .map(|server_name| vec![server_name.to_owned()])
+        .unwrap_or_default()
+}
+
 async fn join_room_or_create_local_alias(
     client: &Client,
     room_id_or_alias: &OwnedRoomOrAliasId,
 ) -> Result<Room, String> {
     let Ok(alias) = room_id_or_alias.as_str().parse::<OwnedRoomAliasId>()
     else {
+        let via = room_id_or_alias
+            .as_str()
+            .parse::<OwnedRoomId>()
+            .map(|room_id| room_id_join_servers(&room_id))
+            .unwrap_or_default();
+
         return client
-            .join_room_by_id_or_alias(room_id_or_alias, &[])
+            .join_room_by_id_or_alias(room_id_or_alias, &via)
             .await
             .map_err(|error| {
                 format_join_error(&error, room_id_or_alias.as_str())
@@ -752,12 +775,22 @@ async fn join_room_or_create_local_alias(
     };
 
     match client.resolve_room_alias(&alias).await {
-        Ok(response) => client
-            .join_room_by_id_or_alias(room_id_or_alias, &response.servers)
-            .await
-            .map_err(|error| {
-                format_join_error(&error, room_id_or_alias.as_str())
-            }),
+        Ok(response) => {
+            let mut via = response.servers;
+            if let Some(server_name) = response.room_id.server_name() {
+                let server_name = server_name.to_owned();
+                if !via.contains(&server_name) {
+                    via.push(server_name);
+                }
+            }
+
+            client
+                .join_room_by_id_or_alias(room_id_or_alias, &via)
+                .await
+                .map_err(|error| {
+                    format_join_error(&error, room_id_or_alias.as_str())
+                })
+        }
         Err(error)
             if error.client_api_error_kind() == Some(&ErrorKind::NotFound) =>
         {
@@ -1161,10 +1194,15 @@ impl InnerServer {
             };
             let client = connection.client().clone();
             let target = room_id.clone();
+            let room_id_or_alias: OwnedRoomOrAliasId =
+                room_id.as_str().parse().expect("valid Matrix room ID");
             match connection
                 .spawn(async move {
                     tokio::time::timeout(JOIN_ROOM_TIMEOUT, async move {
-                        client.join_room_by_id(&target).await
+                        let via = room_id_join_servers(&target);
+                        client
+                            .join_room_by_id_or_alias(&room_id_or_alias, &via)
+                            .await
                     })
                     .await
                 })
@@ -2748,10 +2786,11 @@ impl InnerServer {
 #[cfg(test)]
 mod tests {
     use super::{
-        create_room_request, missing_alias_action, secure_set_token_command,
-        with_entered_runtime_until_drop, InnerServer, MissingAliasAction,
+        create_room_request, missing_alias_action, room_id_join_servers,
+        secure_set_token_command, with_entered_runtime_until_drop, InnerServer,
+        MissingAliasAction,
     };
-    use matrix_sdk::ruma::{OwnedRoomAliasId, OwnedUserId};
+    use matrix_sdk::ruma::{OwnedRoomAliasId, OwnedRoomId, OwnedUserId};
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::{
@@ -2890,6 +2929,21 @@ mod tests {
         assert_eq!(
             missing_alias_action(&alias, None),
             MissingAliasAction::RefuseUnknownAccountDomain
+        );
+    }
+
+    #[test]
+    fn uses_room_id_origin_server_as_join_via() {
+        let room_id = "!opaque-room-id:origin.example"
+            .parse::<OwnedRoomId>()
+            .expect("valid room ID");
+
+        assert_eq!(
+            room_id_join_servers(&room_id)
+                .into_iter()
+                .map(|server| server.to_string())
+                .collect::<Vec<_>>(),
+            vec!["origin.example"]
         );
     }
 

@@ -30,7 +30,7 @@ use buffer::{print_rendered_event_to_buffer, RoomBuffer, SpaceChildSelection};
 use members::Members;
 pub use members::WeechatRoomMember;
 use tokio::runtime::Handle;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 use verification::Verification;
 
 use std::{
@@ -151,6 +151,7 @@ const INTERACTIVE_HISTORY_MAX_PAGES: usize = 50;
 // messages in the room the user is actually viewing.
 const RESTORED_HISTORY_TARGET_LINES: i32 = 1;
 const RESTORED_HISTORY_MAX_PAGES: usize = 10;
+const ROOM_MEMBER_RESTORE_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn restored_prev_batch(_prev_batch: Option<String>) -> Option<PrevBatch> {
     // The SDK does not replay the stored sync timeline when a room is restored.
@@ -214,9 +215,17 @@ fn retire_stale_matrix_buffer(buffer_name: &str, room_id: &RoomId) -> bool {
 
     buffer.set_full_name(&stale_name);
     buffer.set_short_name(&format!("stale.{}", buffer.short_name()));
-    buffer.close();
 
     true
+}
+
+fn room_id_buffer_suffix(room_id: &RoomId) -> String {
+    room_id
+        .as_str()
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .take(12)
+        .collect()
 }
 
 fn history_page_marker(result: &HistoryPageResult) -> String {
@@ -671,12 +680,7 @@ impl RoomHandle {
             buffer.clone(),
         );
 
-        let own_nick = runtime
-            .block_on(sdk_room.get_member_no_sync(own_user_id))
-            .ok()
-            .flatten()
-            .map(|m| m.name().to_owned())
-            .unwrap_or_else(|| own_user_id.localpart().to_owned());
+        let own_nick = own_user_id.localpart().to_owned();
 
         let own_user_id = own_user_id.to_owned();
         let room_id = room_id.to_owned();
@@ -723,6 +727,15 @@ impl RoomHandle {
                 } else {
                     Err(())
                 }
+            })
+            .or_else(|_| {
+                let suffix = room_id_buffer_suffix(room_id);
+                let fallback_name = if suffix.is_empty() {
+                    format!("{buffer_name}.room")
+                } else {
+                    format!("{buffer_name}.{suffix}")
+                };
+                build_room_buffer(&fallback_name, room.clone())
             })
             .expect("Can't create new room buffer");
 
@@ -811,11 +824,7 @@ impl RoomHandle {
                 .map(|uri| uri.as_str())
                 .unwrap_or_default(),
         );
-        if room.is_direct() {
-            buffer.set_localvar("type", "private")
-        } else {
-            buffer.set_localvar("type", "channel")
-        }
+        buffer.set_localvar("type", "channel");
 
         if let Some(alias) = room.alias() {
             buffer.set_localvar("alias", alias.as_str());
@@ -853,7 +862,7 @@ impl RoomHandle {
         homeserver: Url,
     ) -> Result<Self, StoreError> {
         let room_clone = room.clone();
-        let room_id = room.room_id();
+        let room_id = room.room_id().to_owned();
         let own_user_id = room.own_user_id();
         let prev_batch = room.last_prev_batch();
 
@@ -865,7 +874,7 @@ impl RoomHandle {
             config,
             room_clone,
             homeserver,
-            room_id,
+            &room_id,
             own_user_id,
         );
 
@@ -877,15 +886,34 @@ impl RoomHandle {
         *room_buffer.prev_batch.borrow_mut() = restored_prev_batch(prev_batch);
 
         let matrix_members = runtime
-            .spawn(async move { room.joined_user_ids().await })
+            .spawn(async move {
+                tokio::time::timeout(
+                    ROOM_MEMBER_RESTORE_TIMEOUT,
+                    room.joined_user_ids(),
+                )
+                .await
+            })
             .await
-            .expect("Couldn't get the joined user ids")?;
+            .expect("Couldn't get the joined user ids");
 
-        for user_id in matrix_members {
-            trace!("Restoring member {}", &user_id);
-            room_buffer.members.restore_member(user_id).await;
+        match matrix_members {
+            Ok(Ok(matrix_members)) => {
+                for user_id in matrix_members {
+                    trace!("Restoring member {}", &user_id);
+                    room_buffer.members.restore_member(user_id).await;
+                }
+                room_buffer.members.update_member_localvars();
+            }
+            Ok(Err(error)) => warn!(
+                "Couldn't restore room members for {}: {}",
+                room_id, error
+            ),
+            Err(_) => warn!(
+                "Timed out restoring room members for {} after {} seconds",
+                room_id,
+                ROOM_MEMBER_RESTORE_TIMEOUT.as_secs()
+            ),
         }
-        room_buffer.members.update_member_localvars();
 
         room_buffer.buffer.update_buffer_name();
         room_buffer.buffer.set_topic();

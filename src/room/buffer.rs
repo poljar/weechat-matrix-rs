@@ -642,8 +642,7 @@ impl RoomBuffer {
         let Some(room) = maybe_active_room(&self.room) else {
             return self.short_name();
         };
-        let is_direct =
-            self.runtime.block_on(room.is_direct()).unwrap_or(false);
+        let is_direct = false;
         let is_space = room.is_space();
 
         let room_name = room
@@ -653,12 +652,6 @@ impl RoomBuffer {
             .or_else(|| {
                 room.canonical_alias()
                     .and_then(|alias| non_empty_room_name(alias.alias()))
-            })
-            .or_else(|| {
-                self.runtime
-                    .block_on(room.display_name())
-                    .ok()
-                    .and_then(|name| non_empty_room_name(&name.to_string()))
             })
             .unwrap_or_else(|| room.room_id().to_string());
 
