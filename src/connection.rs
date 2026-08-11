@@ -49,8 +49,8 @@ use matrix_sdk::{
     store::RoomLoadSettings,
     sync::State,
     utils::local_server::LocalServerBuilder,
-    Client, LoopCtrl, Result as MatrixResult, RoomMemberships, SessionChange,
-    SessionMeta, SessionTokens,
+    Client, HttpError, LoopCtrl, Result as MatrixResult, RoomMemberships,
+    SessionChange, SessionMeta, SessionTokens,
 };
 
 use weechat::{Task, Weechat};
@@ -61,7 +61,38 @@ use crate::{
 };
 
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
+const SEND_RETRY_DELAYS: [Duration; 4] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+];
+const SYNC_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(1);
+const SYNC_RETRY_MAX_DELAY: Duration = Duration::from_secs(60);
 const SSO_CALLBACK_PORT: u16 = 29_325;
+
+fn is_retryable_network_error(error: &matrix_sdk::Error) -> bool {
+    matches!(
+        error,
+        matrix_sdk::Error::Http(http)
+            if matches!(http.as_ref(), HttpError::Reqwest(_))
+    )
+}
+
+fn send_retry_delay(attempt: usize) -> Option<Duration> {
+    SEND_RETRY_DELAYS.get(attempt).copied()
+}
+
+fn sync_retry_delay(failures: u32) -> Duration {
+    let multiplier = 1u32.checked_shl(failures).unwrap_or(u32::MAX);
+    SYNC_RETRY_INITIAL_DELAY
+        .saturating_mul(multiplier)
+        .min(SYNC_RETRY_MAX_DELAY)
+}
+
+fn should_restart_completed_sync(channel_closed: bool) -> bool {
+    !channel_closed
+}
 
 pub struct InteractiveAuthInfo {
     pub user: String,
@@ -212,12 +243,32 @@ impl Connection {
         transaction_id: Option<OwnedTransactionId>,
     ) -> MatrixResult<RoomSendResponse> {
         self.spawn(async move {
-            let mut msg = room.send(content);
-            if let Some(txn_id) = transaction_id.as_deref() {
-                msg = msg.with_transaction_id(txn_id.to_owned());
-            }
+            let mut attempt = 0;
 
-            msg.await
+            loop {
+                let mut msg = room.send(content.clone());
+                if let Some(txn_id) = transaction_id.as_deref() {
+                    msg = msg.with_transaction_id(txn_id.to_owned());
+                }
+
+                match msg.await {
+                    Ok(response) => return Ok(response),
+                    Err(error)
+                        if is_retryable_network_error(&error)
+                            && send_retry_delay(attempt).is_some() =>
+                    {
+                        let delay = send_retry_delay(attempt)
+                            .expect("delay checked above");
+                        attempt += 1;
+                        error!(
+                            "Matrix message send failed due to a network error, retrying in {}s: {error}",
+                            delay.as_secs()
+                        );
+                        tokio::time::sleep(delay).await;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
         })
         .await
     }
@@ -694,10 +745,32 @@ impl Connection {
             }
         });
 
-        let filter = client
-            .get_or_upload_filter("sync", Connection::sync_filter())
-            .await
-            .unwrap();
+        let mut filter_failures = 0;
+        let filter = loop {
+            match client
+                .get_or_upload_filter("sync", Connection::sync_filter())
+                .await
+            {
+                Ok(filter) => break filter,
+                Err(error) if is_retryable_network_error(&error) => {
+                    let delay = sync_retry_delay(filter_failures);
+                    filter_failures = filter_failures.saturating_add(1);
+                    error!(
+                        "Matrix filter upload failed due to a network error, retrying in {}s: {error}",
+                        delay.as_secs()
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+                Err(error) => {
+                    let _ = channel
+                        .send(Err(format!(
+                            "Failed to upload Matrix sync filter: {error}"
+                        )))
+                        .await;
+                    return;
+                }
+            }
+        };
 
         let sync_token: Option<String> = None;
         let sync_settings = SyncSettings::new()
@@ -714,6 +787,7 @@ impl Connection {
 
         let client_ref = &client;
 
+        let mut sync_failures = 0;
         loop {
             let ret = client
             .sync_with_callback(sync_settings.clone(), |response| async move {
@@ -841,12 +915,60 @@ impl Connection {
             })
             .await;
 
-            if let Err(err) = ret {
-                error!("Matrix sync failed: {err}");
-            } else {
-                break;
+            match ret {
+                Err(err) if channel.is_closed() => {
+                    error!("Matrix sync failed during shutdown: {err}");
+                    break;
+                }
+                Err(err) => {
+                    let delay = sync_retry_delay(sync_failures);
+                    sync_failures = sync_failures.saturating_add(1);
+                    error!(
+                        "Matrix sync failed, retrying in {}s: {err}",
+                        delay.as_secs()
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+                Ok(())
+                    if should_restart_completed_sync(channel.is_closed()) =>
+                {
+                    let delay = sync_retry_delay(sync_failures);
+                    sync_failures = sync_failures.saturating_add(1);
+                    error!(
+                        "Matrix sync stopped unexpectedly, restarting in {}s",
+                        delay.as_secs()
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+                Ok(()) => break,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn send_retries_are_bounded() {
+        assert_eq!(send_retry_delay(0), Some(Duration::from_secs(1)));
+        assert_eq!(send_retry_delay(3), Some(Duration::from_secs(10)));
+        assert_eq!(send_retry_delay(4), None);
+    }
+
+    #[test]
+    fn sync_retry_delay_is_capped() {
+        assert_eq!(sync_retry_delay(0), Duration::from_secs(1));
+        assert_eq!(sync_retry_delay(1), Duration::from_secs(2));
+        assert_eq!(sync_retry_delay(6), Duration::from_secs(60));
+        assert_eq!(sync_retry_delay(31), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn completed_sync_restarts_unless_channel_is_closed() {
+        assert!(should_restart_completed_sync(false));
+        assert!(!should_restart_completed_sync(true));
     }
 }
 
