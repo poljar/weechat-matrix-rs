@@ -77,6 +77,7 @@ use matrix_sdk::{
                     RoomMessageEventContent, TextMessageEventContent,
                 },
                 redaction::SyncRoomRedactionEvent,
+                tombstone::RoomTombstoneEventContent,
             },
             AnyMessageLikeEventContent, AnySyncMessageLikeEvent,
             AnySyncStateEvent, AnySyncTimelineEvent, AnyTimelineEvent,
@@ -161,6 +162,61 @@ fn restored_prev_batch(_prev_batch: Option<String>) -> Option<PrevBatch> {
 
 fn has_history_page(prev_batch: &Option<PrevBatch>) -> bool {
     prev_batch.is_some()
+}
+
+fn tombstone_replacement_room_id(
+    event: &SyncStateEvent<RoomTombstoneEventContent>,
+) -> Option<OwnedRoomId> {
+    event
+        .as_original()
+        .map(|event| event.content.replacement_room.clone())
+}
+
+fn build_room_buffer(
+    buffer_name: &str,
+    room: MatrixRoom,
+) -> Result<BufferHandle, ()> {
+    BufferBuilderAsync::new(buffer_name)
+        .input_callback(room)
+        .close_callback(|_weechat: &Weechat, _buffer: &Buffer| {
+            // TODO: remove the roombuffer from the server here.
+            // TODO: leave the room if the plugin isn't unloading.
+            Ok(())
+        })
+        .build()
+}
+
+fn retire_stale_matrix_buffer(buffer_name: &str, room_id: &RoomId) -> bool {
+    let Some(buffer) =
+        (unsafe { Weechat::weechat() }).buffer_search("==", buffer_name)
+    else {
+        return false;
+    };
+
+    let Some(existing_room_id) = buffer.get_localvar("room_id") else {
+        return false;
+    };
+
+    if existing_room_id.as_ref() == room_id.as_str() {
+        return false;
+    }
+
+    let suffix = existing_room_id
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .take(12)
+        .collect::<String>();
+    let stale_name = if suffix.is_empty() {
+        format!("{buffer_name}.stale")
+    } else {
+        format!("{buffer_name}.stale.{suffix}")
+    };
+
+    buffer.set_full_name(&stale_name);
+    buffer.set_short_name(&format!("stale.{}", buffer.short_name()));
+    buffer.close();
+
+    true
 }
 
 fn history_page_marker(result: &HistoryPageResult) -> String {
@@ -657,22 +713,27 @@ impl RoomHandle {
             server,
         };
 
-        let buffer_name = format!("{}.{}", server_name, room_id);
+        let room_short_name = room.buffer.calculate_buffer_name();
+        let buffer_name = format!("{server_name}.{room_short_name}");
 
-        let buffer_handle = BufferBuilderAsync::new(&buffer_name)
-            .input_callback(room.clone())
-            .close_callback(|_weechat: &Weechat, _buffer: &Buffer| {
-                // TODO: remove the roombuffer from the server here.
-                // TODO: leave the room if the plugin isn't unloading.
-                Ok(())
+        let buffer_handle = build_room_buffer(&buffer_name, room.clone())
+            .or_else(|_| {
+                if retire_stale_matrix_buffer(&buffer_name, room_id) {
+                    build_room_buffer(&buffer_name, room.clone())
+                } else {
+                    Err(())
+                }
             })
-            .build()
             .expect("Can't create new room buffer");
 
         let buffer = buffer_handle
             .upgrade()
             .expect("Can't upgrade newly created buffer");
         buffer.set_short_name(&room.buffer.calculate_buffer_name());
+
+        if buffer.short_name() != room_short_name {
+            buffer.set_short_name(&room_short_name);
+        }
 
         buffer
             .add_nicklist_group(
@@ -769,6 +830,14 @@ impl RoomHandle {
             buffer.disable_multiline();
             buffer.disable_log();
             room.buffer.refresh_space_children();
+        }
+
+        if let Some(successor) = sdk_room.successor_room() {
+            let room = room.clone();
+            Weechat::spawn(async move {
+                room.follow_successor_room(successor.room_id).await
+            })
+            .detach();
         }
 
         Self { inner: room }
@@ -968,6 +1037,46 @@ impl MatrixRoom {
                 target,
                 SPACE_JOIN_TIMEOUT.as_secs(),
                 error
+            )),
+        }
+    }
+
+    async fn follow_successor_room(&self, room_id: OwnedRoomId) {
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error(&format!(
+                "Room was upgraded to {room_id}, but Matrix is not connected."
+            ));
+            return;
+        };
+
+        if connection.client().get_room(&room_id).is_some() {
+            return;
+        }
+
+        self.print_network(&format!("Following room upgrade to {room_id}..."));
+
+        let client = connection.client().clone();
+        let target = room_id.clone();
+        let result = connection
+            .spawn(async move {
+                tokio::time::timeout(SPACE_JOIN_TIMEOUT, async move {
+                    client.join_room_by_id(&target).await
+                })
+                .await
+            })
+            .await;
+
+        match result {
+            Ok(Ok(room)) => self.print_network(&format!(
+                "Successfully joined upgraded room {}",
+                room.room_id()
+            )),
+            Ok(Err(error)) => self.print_error(&format!(
+                "Failed to join upgraded room {room_id}: {error}"
+            )),
+            Err(error) => self.print_error(&format!(
+                "Timed out joining upgraded room {room_id} after {} seconds: {error}",
+                SPACE_JOIN_TIMEOUT.as_secs()
             )),
         }
     }
@@ -1827,13 +1936,14 @@ impl MatrixRoom {
         let Some(source_root) =
             thread_root_from_content(&content).map(ToOwned::to_owned)
         else {
-            if let Err(error) = self.send_message_direct(content).await {
+            let room = self.latest_send_room().await;
+            if let Err(error) = self.send_message_direct(room, content).await {
                 self.print_error(&error);
             }
             return;
         };
         let Some(server) = self.server() else {
-            if let Err(error) = self.send_message_direct(content).await {
+            if let Err(error) = self.send_message_direct(self.room(), content).await {
                 self.print_error(&error);
             }
             return;
@@ -1864,7 +1974,7 @@ impl MatrixRoom {
                     self.adopt_thread_buffer(&source_root, &room, &thread_root);
                     retarget_thread_content(&mut content, thread_root);
                 }
-                if let Err(error) = room.send_message_direct(content).await {
+                if let Err(error) = room.send_message_direct(room.room(), content).await {
                     self.print_error(&error);
                 }
             }
@@ -1885,7 +1995,7 @@ impl MatrixRoom {
                 // before sending, but the homeserver event and local mapping
                 // cannot be committed atomically without persisting the full
                 // arbitrary user payload as a recovery journal.
-                match room.send_message_direct(content).await {
+                match room.send_message_direct(room.room(), content).await {
                     Ok(target_root) => {
                         let target_key =
                             ThreadKey::new(room.room_id(), &target_root);
@@ -1911,8 +2021,80 @@ impl MatrixRoom {
         }
     }
 
+    async fn latest_send_room(&self) -> Room {
+        let mut room = self.room();
+        let mut seen_room_ids = HashSet::new();
+
+        for _ in 0..32 {
+            if !seen_room_ids.insert(room.room_id().to_owned()) {
+                self.print_error(&format!(
+                    "Room upgrade cycle detected at {}.",
+                    room.room_id()
+                ));
+                return room;
+            }
+
+            let Some(successor_room_id) =
+                room.successor_room().map(|successor| successor.room_id)
+            else {
+                return room;
+            };
+
+            let Some(connection) = self.connection.borrow().clone() else {
+                self.print_error(&format!(
+                    "Room was upgraded to {successor_room_id}, but Matrix is not connected."
+                ));
+                return room;
+            };
+
+            if let Some(successor_room) =
+                connection.client().get_room(&successor_room_id)
+            {
+                room = successor_room;
+                continue;
+            }
+
+            self.print_network(&format!(
+                "Following room upgrade to {successor_room_id}..."
+            ));
+
+            let client = connection.client().clone();
+            let target = successor_room_id.clone();
+            match connection
+                .spawn(async move {
+                    tokio::time::timeout(SPACE_JOIN_TIMEOUT, async move {
+                        client.join_room_by_id(&target).await
+                    })
+                    .await
+                })
+                .await
+            {
+                Ok(Ok(successor_room)) => room = successor_room,
+                Ok(Err(error)) => {
+                    self.print_error(&format!(
+                        "Failed to join upgraded room {successor_room_id}: {error}"
+                    ));
+                    return room;
+                }
+                Err(error) => {
+                    self.print_error(&format!(
+                        "Timed out joining upgraded room {successor_room_id} after {} seconds: {error}",
+                        SPACE_JOIN_TIMEOUT.as_secs()
+                    ));
+                    return room;
+                }
+            }
+        }
+
+        self.print_error("Room upgrade chain exceeded 32 rooms.");
+        room
+    }
+
+    // Thread continuation already resolved its room and root together. Do not
+    // independently follow room upgrades after that routing decision.
     async fn send_message_direct(
         &self,
+        room: Room,
         content: RoomMessageEventContent,
     ) -> Result<OwnedEventId, String> {
         let transaction_id = TransactionId::new();
@@ -1923,7 +2105,7 @@ impl MatrixRoom {
             self.queue_outgoing_message(&transaction_id, &content).await;
             match c
                 .send_message(
-                    self.room(),
+                    room,
                     AnyMessageLikeEventContent::RoomMessage(content),
                     Some(transaction_id.clone()),
                 )
@@ -3194,16 +3376,20 @@ impl MatrixRoom {
                 self.buffer.set_alias();
                 self.buffer.update_buffer_name();
             }
-            AnySyncStateEvent::RoomTombstone(_) => {
+            AnySyncStateEvent::RoomTombstone(tombstone) => {
+                let replacement_room_id =
+                    tombstone_replacement_room_id(tombstone);
                 if let Ok(buffer) = self.buffer.buffer_handle().upgrade() {
                     buffer.set_localvar(
                         "matrix_replacement_room_id",
-                        self.room()
-                            .successor_room()
+                        replacement_room_id
                             .as_ref()
-                            .map(|successor| successor.room_id.as_str())
+                            .map(|room_id| room_id.as_str())
                             .unwrap_or_default(),
                     );
+                }
+                if let Some(room_id) = replacement_room_id {
+                    self.follow_successor_room(room_id).await;
                 }
             }
             AnySyncStateEvent::SpaceParent(_) => {
@@ -3268,6 +3454,34 @@ mod tests {
     #[test]
     fn restored_rooms_without_prev_batch_fetch_history_from_end() {
         assert_eq!(restored_prev_batch(None), Some(PrevBatch::Backwards(None)));
+    }
+
+    #[test]
+    fn tombstone_state_event_exposes_replacement_room_id() {
+        let event: AnySyncStateEvent =
+            serde_json::from_value(serde_json::json!({
+                "type": "m.room.tombstone",
+                "event_id": "$tombstone:example.org",
+                "sender": "@alice:example.org",
+                "origin_server_ts": 1,
+                "state_key": "",
+                "content": {
+                    "body": "This room has been replaced.",
+                    "replacement_room": "!new:example.org"
+                }
+            }))
+            .expect("valid tombstone event");
+
+        let AnySyncStateEvent::RoomTombstone(tombstone) = event else {
+            panic!("expected tombstone event");
+        };
+
+        assert_eq!(
+            tombstone_replacement_room_id(&tombstone)
+                .as_deref()
+                .map(RoomId::as_str),
+            Some("!new:example.org")
+        );
     }
 
     #[test]

@@ -80,7 +80,10 @@ use matrix_sdk::{
         },
         api::error::ErrorKind,
         events::{
-            room::{member::RoomMemberEventContent, MediaSource},
+            room::{
+                member::RoomMemberEventContent,
+                tombstone::RoomTombstoneEventContent, MediaSource,
+            },
             AnySyncStateEvent, AnySyncTimelineEvent, AnyToDeviceEvent,
             SyncStateEvent,
         },
@@ -98,6 +101,7 @@ use weechat::{
 };
 
 const JOIN_ROOM_TIMEOUT: Duration = Duration::from_secs(120);
+const ROOM_UPGRADE_CHAIN_LIMIT: usize = 32;
 
 use crate::{
     config::ServerBuffer,
@@ -116,6 +120,14 @@ fn secure_set_token_command(name: &str, token: &str) -> Option<String> {
         });
 
     safe.then(|| format!("/secure set {name} {token}"))
+}
+
+fn tombstone_replacement_room_id(
+    event: &SyncStateEvent<RoomTombstoneEventContent>,
+) -> Option<OwnedRoomId> {
+    event
+        .as_original()
+        .map(|event| event.content.replacement_room.clone())
 }
 
 fn with_entered_runtime_until_final_drop<F>(
@@ -1116,6 +1128,123 @@ impl InnerServer {
         self.restore_room(room).await;
     }
 
+    fn room_buffer_is_current(room: &RoomHandle) -> bool {
+        room.buffer_handle()
+            .upgrade()
+            .map(|buffer| {
+                // Sync callbacks run on WeeChat's main thread, so the global
+                // context is valid for this immediate buffer comparison.
+                buffer == unsafe { Weechat::weechat() }.current_buffer()
+            })
+            .unwrap_or(false)
+    }
+
+    async fn successor_room_handle(
+        &self,
+        room_id: OwnedRoomId,
+    ) -> Option<RoomHandle> {
+        if let Some(room) = self.rooms.borrow().get(&room_id).cloned() {
+            return Some(room);
+        }
+
+        let client_room = if let Some(room) = self
+            .get_client()
+            .and_then(|client| client.get_room(&room_id))
+        {
+            Some(room)
+        } else {
+            let Some(connection) = self.connection() else {
+                self.print_error(&format!(
+                    "Room was upgraded to {room_id}, but Matrix is not connected."
+                ));
+                return None;
+            };
+            let client = connection.client().clone();
+            let target = room_id.clone();
+            match connection
+                .spawn(async move {
+                    tokio::time::timeout(JOIN_ROOM_TIMEOUT, async move {
+                        client.join_room_by_id(&target).await
+                    })
+                    .await
+                })
+                .await
+            {
+                Ok(Ok(room)) => Some(room),
+                Ok(Err(error)) => {
+                    self.print_error(&format!(
+                        "Failed to join upgraded room {room_id}: {error}"
+                    ));
+                    None
+                }
+                Err(error) => {
+                    self.print_error(&format!(
+                        "Timed out joining upgraded room {room_id} after {} seconds: {error}",
+                        JOIN_ROOM_TIMEOUT.as_secs()
+                    ));
+                    None
+                }
+            }
+        };
+
+        if let Some(room) = client_room {
+            self.restore_room(room).await;
+        }
+
+        self.rooms.borrow().get(&room_id).cloned()
+    }
+
+    async fn latest_successor_room_handle(
+        &self,
+        room_id: OwnedRoomId,
+    ) -> Option<RoomHandle> {
+        let mut next_room_id = room_id;
+        let mut seen_room_ids = HashSet::new();
+
+        for _ in 0..ROOM_UPGRADE_CHAIN_LIMIT {
+            if !seen_room_ids.insert(next_room_id.clone()) {
+                self.print_error(&format!(
+                    "Room upgrade cycle detected at {next_room_id}."
+                ));
+                return None;
+            }
+
+            let room = self.successor_room_handle(next_room_id).await?;
+            let Some(successor_room_id) = room
+                .room()
+                .successor_room()
+                .map(|successor| successor.room_id)
+            else {
+                return Some(room);
+            };
+            next_room_id = successor_room_id;
+        }
+
+        self.print_error(&format!(
+            "Room upgrade chain exceeded {ROOM_UPGRADE_CHAIN_LIMIT} rooms."
+        ));
+        None
+    }
+
+    async fn switch_current_room_to_successor(
+        &self,
+        current_room: &RoomHandle,
+        successor_room_id: OwnedRoomId,
+    ) {
+        if !Self::room_buffer_is_current(current_room) {
+            return;
+        }
+
+        let Some(successor) =
+            self.latest_successor_room_handle(successor_room_id).await
+        else {
+            return;
+        };
+        if let Ok(buffer) = successor.buffer_handle().upgrade() {
+            buffer.switch_to();
+        }
+    }
+
     pub async fn restore_room(&self, room: Room) {
         let homeserver = self
             .settings
@@ -1522,8 +1651,19 @@ impl InnerServer {
     ) {
         let refresh_parent_spaces =
             matches!(&event, AnySyncStateEvent::RoomName(_));
+        let successor_room_id = match &event {
+            AnySyncStateEvent::RoomTombstone(tombstone) => {
+                tombstone_replacement_room_id(tombstone)
+            }
+            _ => None,
+        };
         let room = self.get_or_create_room(room_id);
         room.handle_sync_state_event(&event, true).await;
+
+        if let Some(successor_room_id) = successor_room_id {
+            self.switch_current_room_to_successor(&room, successor_room_id)
+                .await;
+        }
 
         if refresh_parent_spaces {
             for room in self.rooms() {
