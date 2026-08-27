@@ -193,10 +193,6 @@ fn should_continue_restored_history(
         && lines_after < RESTORED_HISTORY_TARGET_LINES
 }
 
-fn has_history_page(prev_batch: &Option<PrevBatch>) -> bool {
-    prev_batch.is_some()
-}
-
 fn next_history_page_state(
     current: &PrevBatch,
     end: Option<String>,
@@ -214,26 +210,6 @@ fn next_history_page_state(
         (None, true)
     } else {
         (Some(PrevBatch::Backwards(end)), false)
-    }
-}
-
-fn history_page_marker(result: &HistoryPageResult) -> String {
-    match result {
-        HistoryPageResult::Page { added, exhausted } => format!(
-            "matrix_history_page added={} exhausted={}",
-            added,
-            u8::from(*exhausted),
-        ),
-        HistoryPageResult::Unavailable => {
-            "matrix_history_page added=0 exhausted=1 state=unavailable"
-                .to_owned()
-        }
-        HistoryPageResult::Busy => {
-            "matrix_history_page added=0 exhausted=0 state=busy".to_owned()
-        }
-        HistoryPageResult::Failed => {
-            "matrix_history_page added=0 exhausted=0 state=failed".to_owned()
-        }
     }
 }
 
