@@ -68,6 +68,11 @@ After the dependencies are installed the plugin can be compiled with:
 
     cargo build --release
 
+You do not need to clean the `target/` directory before each build. Reusing it
+lets Cargo keep compiled dependencies and makes rebuilds faster. Use
+`cargo clean` or `make clean` only when you deliberately want to discard build
+artifacts.
+
 If you are developing on weechat-matrix-rs, use debug builds which are faster at
 the expense of plugin performance:
 
