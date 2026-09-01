@@ -549,8 +549,7 @@ impl RoomHandle {
             room,
         };
 
-        let buffer_name =
-            format!("{}.{}", server_name, room.buffer.calculate_buffer_name());
+        let buffer_name = format!("{}.{}", server_name, room_id);
 
         let buffer_handle = BufferBuilderAsync::new(&buffer_name)
             .input_callback(room.clone())
@@ -565,6 +564,7 @@ impl RoomHandle {
         let buffer = buffer_handle
             .upgrade()
             .expect("Can't upgrade newly created buffer");
+        buffer.set_short_name(&room.buffer.calculate_buffer_name());
 
         buffer
             .add_nicklist_group(
