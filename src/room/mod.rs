@@ -808,42 +808,40 @@ impl BufferInputCallbackAsync for MatrixRoom {
             return;
         }
 
-        let thread_root = buffer
-            .upgrade()
-            .ok()
-            .and_then(|buffer| thread_root_from_buffer(&buffer));
-        let latest_thread_event = thread_root.as_ref().and_then(|root| {
-            self.latest_thread_event_ids.borrow().get(root).cloned()
-        });
-        let content = make_text_message_content(
-            input,
-            self.config.borrow().input().markdown_input(),
-            thread_root,
-            latest_thread_event,
-        );
-
-        self.send_message(content).await;
+        if let Ok(buffer) = buffer.upgrade() {
+            let content = self.text_message_content(&buffer, input);
+            self.send_message(content).await;
+        }
     }
 }
 
 impl MatrixRoom {
+    pub(crate) fn text_message_content(
+        &self,
+        buffer: &Buffer,
+        input: String,
+    ) -> RoomMessageEventContent {
+        let thread_root = thread_root_from_buffer(buffer);
+        let latest_thread_event = thread_root.as_ref().and_then(|root| {
+            self.latest_thread_event_ids.borrow().get(root).cloned()
+        });
+
+        make_text_message_content(
+            input,
+            self.config.borrow().input().markdown_input(),
+            thread_root,
+            latest_thread_event,
+        )
+    }
+
     pub(crate) fn mention_message_content(
         &self,
         buffer: &Buffer,
         input: String,
         mentioned_user_ids: Vec<OwnedUserId>,
     ) -> RoomMessageEventContent {
-        let thread_root = thread_root_from_buffer(buffer);
-        let latest_thread_event = thread_root.as_ref().and_then(|root| {
-            self.latest_thread_event_ids.borrow().get(root).cloned()
-        });
         with_mentions(
-            make_text_message_content(
-                input,
-                self.config.borrow().input().markdown_input(),
-                thread_root,
-                latest_thread_event,
-            ),
+            self.text_message_content(buffer, input),
             mentioned_user_ids,
         )
     }
