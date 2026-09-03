@@ -28,6 +28,7 @@ mod page_up;
 mod part;
 mod redact;
 mod reply;
+mod say;
 mod topic;
 mod upload;
 mod verification;
@@ -56,6 +57,7 @@ use page_up::PageUpCommand;
 use part::PartCommand;
 use redact::RedactCommand;
 use reply::ReplyCommand;
+use say::SayCommand;
 use topic::TopicCommand;
 use upload::UploadCommand;
 use verify::VerifyCommand;
@@ -74,6 +76,7 @@ pub struct Commands {
     _page_up: CommandRun,
     _redact: Command,
     _reply: Command,
+    _say: CommandRun,
     _topic: Command,
     _verification: Command,
     _buffer_clear: CommandRun,
@@ -108,6 +111,7 @@ impl Commands {
             _page_up: PageUpCommand::create(servers)?,
             _redact: RedactCommand::create(servers)?,
             _reply: ReplyCommand::create(servers)?,
+            _say: SayCommand::create(servers)?,
             _topic: TopicCommand::create(servers)?,
             _verification: VerificationCommand::create(servers)?,
             _buffer_clear: BufferClearCommand::create(servers)?,
