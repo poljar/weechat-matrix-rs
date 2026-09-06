@@ -7,7 +7,7 @@ use matrix_sdk::{
             key::verification::VerificationMethod, room::message::MessageType,
             AnySyncMessageLikeEvent,
         },
-        UserId,
+        OwnedUserId,
     },
     Error,
 };
@@ -22,7 +22,7 @@ use super::{buffer::RoomBuffer, members::Members};
 
 #[derive(Clone)]
 pub struct Verification {
-    own_user_id: Rc<UserId>,
+    own_user_id: OwnedUserId,
     connection: Rc<RefCell<Option<Connection>>>,
     members: Members,
     buffer: RoomBuffer,
@@ -57,7 +57,7 @@ impl ActiveVerification {
 
 impl Verification {
     pub fn new(
-        own_user_id: Rc<UserId>,
+        own_user_id: OwnedUserId,
         connection: Rc<RefCell<Option<Connection>>>,
         members: Members,
         buffer: RoomBuffer,
@@ -179,7 +179,7 @@ impl Verification {
             );
         let own_member = self
             .members
-            .get(&self.own_user_id)
+            .get(self.own_user_id.as_ref())
             .await
             .expect("Own member missing from the store");
         let send_time = event.origin_server_ts();

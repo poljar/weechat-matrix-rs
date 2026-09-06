@@ -75,10 +75,10 @@ use matrix_sdk::{
     room::Room,
     ruma::{
         api::client::{
-            error::ErrorKind,
             room::create_room::v3::Request as CreateRoomRequest,
             session::login::v3::Response as LoginResponse,
         },
+        api::error::ErrorKind,
         events::{
             room::{member::RoomMemberEventContent, MediaSource},
             AnySyncStateEvent, AnySyncTimelineEvent, AnyToDeviceEvent,
