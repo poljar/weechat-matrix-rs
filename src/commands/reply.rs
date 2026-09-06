@@ -1,7 +1,7 @@
 use clap::{App as Argparse, AppSettings as ArgParseSettings, Arg};
 use matrix_sdk::ruma::{
     events::{
-        relation::{InReplyTo, Thread},
+        relation::{InReplyTo, Reply, Thread},
         room::message::{Relation, RoomMessageEventContent},
     },
     EventId, OwnedEventId,
@@ -184,9 +184,7 @@ fn reply_content(
         Some(thread_root) => {
             Relation::Thread(Thread::plain(thread_root, event_id))
         }
-        None => Relation::Reply {
-            in_reply_to: InReplyTo::new(event_id),
-        },
+        None => Relation::Reply(Reply::new(InReplyTo::new(event_id))),
     });
     content
 }
@@ -213,11 +211,11 @@ mod tests {
         let content =
             reply_content(event_id.clone(), "Thanks".to_owned(), None);
 
-        let Some(Relation::Reply { in_reply_to }) = content.relates_to else {
+        let Some(Relation::Reply(reply)) = content.relates_to else {
             panic!("reply command must create a Matrix reply relation");
         };
 
-        assert_eq!(event_id, in_reply_to.event_id);
+        assert_eq!(event_id, reply.in_reply_to.event_id);
     }
 
     #[test]

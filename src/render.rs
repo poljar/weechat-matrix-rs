@@ -32,7 +32,8 @@ use matrix_sdk::{
                     ServerNoticeMessageEventContent, TextMessageEventContent,
                     VideoMessageEventContent,
                 },
-                EncryptedFile, MediaSource,
+                EncryptedFile, EncryptedFileHash, EncryptedFileHashAlgorithm,
+                EncryptedFileInfo, MediaSource,
             },
             OriginalSyncStateEvent, RedactedSyncMessageLikeEvent,
         },
@@ -525,18 +526,20 @@ fn mxc_to_emxc(
     emxc_url = emxc_url.join(&mxc_to_http_download_path(url)?)?;
 
     // Add query parameters
+    let EncryptedFileInfo::V2(info) = &encrypted.info else {
+        return Err("Unsupported encrypted media info version".into());
+    };
+    let Some(EncryptedFileHash::Sha256(hash)) =
+        encrypted.hashes.get(&EncryptedFileHashAlgorithm::Sha256)
+    else {
+        return Err("Missing sha256 hash".into());
+    };
+
     emxc_url
         .query_pairs_mut()
-        .append_pair("key", &encrypted.key.k.encode())
-        .append_pair(
-            "hash",
-            &encrypted
-                .hashes
-                .get("sha256")
-                .ok_or("Missing sha256 hash")?
-                .encode(),
-        )
-        .append_pair("iv", &encrypted.iv.encode());
+        .append_pair("key", &info.k.encode())
+        .append_pair("hash", &hash.encode())
+        .append_pair("iv", &info.iv.encode());
 
     Ok(emxc_url.to_string())
 }
@@ -1583,12 +1586,32 @@ pub fn render_membership(
 #[cfg(test)]
 mod tests {
     use matrix_sdk::ruma::{
-        events::room::{EncryptedFileInit, JsonWebKeyInit},
-        serde::Base64,
+        events::room::{
+            EncryptedFile, EncryptedFileHash, EncryptedFileHashAlgorithm,
+            EncryptedFileHashes, V2EncryptedFileInfo,
+        },
         OwnedMxcUri,
     };
 
     use super::*;
+
+    fn encrypted_file_fixture() -> (EncryptedFile, String, String, String) {
+        let info = V2EncryptedFileInfo::encode([1; 32], [2; 16]);
+        let key = info.k.encode();
+        let iv = info.iv.encode();
+        let hashes = EncryptedFileHashes::with_sha256([3; 32]);
+        let hash = match hashes.get(&EncryptedFileHashAlgorithm::Sha256) {
+            Some(EncryptedFileHash::Sha256(hash)) => hash.encode(),
+            _ => unreachable!("fixture always includes a sha256 hash"),
+        };
+        let file = EncryptedFile::new(
+            OwnedMxcUri::from("mxc://some-url"),
+            info.into(),
+            hashes,
+        );
+
+        (file, key, hash, iv)
+    }
 
     #[test]
     fn test_mxc_to_http() {
@@ -1601,29 +1624,12 @@ mod tests {
 
     #[test]
     fn test_emxc_to_http() {
-        use std::collections::BTreeMap;
-
         let homeserver = url::Url::parse("https://matrix.org").unwrap();
         let mxc_url = OwnedMxcUri::from("mxc://matrix.org/some-media-id");
-        let mut hashes: BTreeMap<String, Base64> = BTreeMap::new();
-        hashes.insert("sha256".to_string(), Base64::parse("aGFzaA").unwrap());
-        let encrypt_info = EncryptedFileInit {
-            key: JsonWebKeyInit {
-                k: Base64::parse("dGVzdA").unwrap(),
-                kty: "oct".to_string(),
-                key_ops: vec![],
-                ext: true,
-                alg: "A256CTR".to_string(),
-            }
-            .into(),
-            iv: Base64::parse("aXY").unwrap(),
-            v: "v2".to_string(),
-            url: OwnedMxcUri::from("mxc://some-url"),
-            hashes,
-        }
-        .into();
-        let expected =
-            "emxc://matrix.org:443/_matrix/media/r0/download/matrix.org/some-media-id?key=dGVzdA&hash=aGFzaA&iv=aXY";
+        let (encrypt_info, key, hash, iv) = encrypted_file_fixture();
+        let expected = format!(
+            "emxc://matrix.org:443/_matrix/media/r0/download/matrix.org/some-media-id?key={key}&hash={hash}&iv={iv}"
+        );
         assert_eq!(
             expected,
             mxc_to_emxc(&mxc_url, &homeserver, &encrypt_info).unwrap()
@@ -1694,25 +1700,7 @@ mod tests {
 
     #[test]
     fn test_encrypted_media_has_no_plain_download_command() {
-        use std::collections::BTreeMap;
-
-        let mut hashes: BTreeMap<String, Base64> = BTreeMap::new();
-        hashes.insert("sha256".to_string(), Base64::parse("aGFzaA").unwrap());
-        let encrypt_info = EncryptedFileInit {
-            key: JsonWebKeyInit {
-                k: Base64::parse("dGVzdA").unwrap(),
-                kty: "oct".to_string(),
-                key_ops: vec![],
-                ext: true,
-                alg: "A256CTR".to_string(),
-            }
-            .into(),
-            iv: Base64::parse("aXY").unwrap(),
-            v: "v2".to_string(),
-            url: OwnedMxcUri::from("mxc://some-url"),
-            hashes,
-        }
-        .into();
+        let (encrypt_info, _, _, _) = encrypted_file_fixture();
         let source = MediaSource::Encrypted(Box::new(encrypt_info));
 
         assert_eq!(None, media_download_command(&source));

@@ -73,7 +73,7 @@ use matrix_sdk::{
                 join_rules::RoomJoinRulesEventContent,
                 member::RoomMemberEventContent,
                 message::{
-                    MessageType, Relation, ReplyWithinThread,
+                    AddMentions, MessageType, Relation, ReplyWithinThread,
                     RoomMessageEventContent, TextMessageEventContent,
                 },
                 redaction::SyncRoomRedactionEvent,
@@ -241,8 +241,8 @@ impl IntMutex {
 #[derive(Clone)]
 pub struct MatrixRoom {
     homeserver: Rc<Url>,
-    room_id: Rc<RoomId>,
-    own_user_id: Rc<UserId>,
+    room_id: OwnedRoomId,
+    own_user_id: OwnedUserId,
     room: SharedRoom,
     buffer: RoomBuffer,
 
@@ -482,6 +482,7 @@ fn attachment_config(
         config.reply(Some(Reply {
             event_id,
             enforce_thread: EnforceThread::Threaded(ReplyWithinThread::No),
+            add_mentions: AddMentions::Yes,
         }))
     } else {
         config
@@ -582,8 +583,11 @@ impl RoomHandle {
             .map(|m| m.name().to_owned())
             .unwrap_or_else(|| own_user_id.localpart().to_owned());
 
+        let own_user_id = own_user_id.to_owned();
+        let room_id = room_id.to_owned();
+
         let verification = Verification::new(
-            own_user_id.into(),
+            own_user_id.clone(),
             connection.clone(),
             members.clone(),
             buffer.clone(),
@@ -591,7 +595,7 @@ impl RoomHandle {
 
         let room = MatrixRoom {
             homeserver: Rc::new(homeserver),
-            room_id: room_id.into(),
+            room_id: room_id.clone(),
             connection: connection.clone(),
             config,
             prev_batch: Rc::new(RefCell::new(restored_prev_batch(
@@ -604,7 +608,7 @@ impl RoomHandle {
             pending_encrypted_recoveries: Rc::new(RefCell::new(HashSet::new())),
             thread_history_in_flight: Rc::new(RefCell::new(HashSet::new())),
             thread_history_loaded: Rc::new(RefCell::new(HashSet::new())),
-            own_user_id: own_user_id.into(),
+            own_user_id,
             members,
             buffer,
             verification,
@@ -982,7 +986,7 @@ impl MatrixRoom {
     }
 
     pub fn room_id(&self) -> &RoomId {
-        &self.room_id
+        self.room_id.as_ref()
     }
 
     pub fn names(&self) -> Vec<String> {
@@ -1116,10 +1120,10 @@ impl MatrixRoom {
             }
             RoomMessage(c) => {
                 let reply_to = match c.relates_to.as_ref() {
-                    Some(Relation::Reply { in_reply_to }) => {
+                    Some(Relation::Reply(reply)) => {
                         let sender = match self
                             .buffer
-                            .reply_sender_id(&in_reply_to.event_id)
+                            .reply_sender_id(&reply.in_reply_to.event_id)
                         {
                             Some(sender_id) => self
                                 .members
@@ -1129,7 +1133,7 @@ impl MatrixRoom {
                             None => None,
                         };
 
-                        Some((in_reply_to.event_id.clone(), sender))
+                        Some((reply.in_reply_to.event_id.clone(), sender))
                     }
                     _ => None,
                 };
@@ -1667,10 +1671,13 @@ impl MatrixRoom {
 
         if self.config.borrow().look().local_echo() {
             if let MessageType::Text(c) = &content.msgtype {
-                let sender =
-                    self.members.get(&self.own_user_id).await.unwrap_or_else(
-                        || panic!("No own member {}", self.own_user_id),
-                    );
+                let sender = self
+                    .members
+                    .get(self.own_user_id.as_ref())
+                    .await
+                    .unwrap_or_else(|| {
+                        panic!("No own member {}", self.own_user_id)
+                    });
 
                 let local_echo = c
                     .render_with_prefix_for_echo(&sender, transaction_id, &())
@@ -2419,7 +2426,7 @@ impl MatrixRoom {
             };
             request_attempts = 0;
 
-            let room_id = self.room_id.as_ref().to_owned();
+            let room_id = self.room_id.clone();
             let mut new_event_count = 0;
             for event in relations
                 .chunk
@@ -2539,13 +2546,17 @@ impl MatrixRoom {
         let thread_root =
             thread_root_from_content(&content).map(ToOwned::to_owned);
 
-        let event = OriginalSyncMessageLikeEvent {
-            sender: (*self.own_user_id).to_owned(),
-            origin_server_ts: MilliSecondsSinceUnixEpoch::now(),
-            event_id: event_id.to_owned(),
-            content,
-            unsigned: Default::default(),
-        };
+        let send_time = MilliSecondsSinceUnixEpoch::now();
+        let event: OriginalSyncMessageLikeEvent<RoomMessageEventContent> =
+            serde_json::from_value(serde_json::json!({
+                "content": content,
+                "event_id": event_id,
+                "origin_server_ts": send_time,
+                "sender": self.own_user_id.as_str(),
+                "type": "m.room.message",
+                "unsigned": {},
+            }))
+            .expect("synthetic local echo event should deserialize");
 
         let event = AnySyncMessageLikeEvent::RoomMessage(
             SyncMessageLikeEvent::Original(event),

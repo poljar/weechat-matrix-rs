@@ -4,7 +4,7 @@ use clap::{
     App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
     SubCommand,
 };
-use matrix_sdk::ruma::MxcUri;
+use matrix_sdk::ruma::{MxcUri, OwnedMxcUri};
 use weechat::{buffer::Buffer, Weechat};
 
 use crate::{BufferOwner, Servers};
@@ -38,12 +38,13 @@ impl MediaCommand {
                 let uri = args
                     .value_of("mxc-uri")
                     .expect("MXC URI not set but was required");
-                let uri = Box::<MxcUri>::from(uri);
+                let uri_ref = <&MxcUri>::from(uri);
 
-                if !uri.is_valid() {
+                if !uri_ref.is_valid() {
                     Weechat::print("Invalid MXC URI");
                     return;
                 }
+                let uri = OwnedMxcUri::from(uri);
 
                 let download_prefix =
                     server.config().borrow().media().download_prefix();
@@ -77,7 +78,7 @@ impl MediaCommand {
         vec![SubCommand::with_name("download")
             .about("Download the MXC URI through the logged-in Matrix client")
             .arg(Arg::with_name("mxc-uri").required(true).validator(|uri| {
-                let uri = Box::<MxcUri>::from(uri.as_str());
+                let uri = <&MxcUri>::from(uri.as_str());
 
                 if uri.is_valid() {
                     Ok(())
@@ -102,8 +103,7 @@ fn normalize_download_file(file: &str) -> PathBuf {
 
 fn strip_download_file_quotes(file: &str) -> &str {
     let file = file.trim();
-    file
-        .strip_prefix('"')
+    file.strip_prefix('"')
         .and_then(|file| file.strip_suffix('"'))
         .or_else(|| {
             file.strip_prefix('\'')
@@ -190,11 +190,11 @@ mod tests {
 
     #[test]
     fn defaults_download_file_to_media_id() {
-        let uri = Box::<MxcUri>::from("mxc://matrix.org/some-media-id");
+        let uri = <&MxcUri>::from("mxc://matrix.org/some-media-id");
 
         assert_eq!(
             Some(PathBuf::from("matrix-media-some-media-id")),
-            default_download_file(&uri, "matrix-media-")
+            default_download_file(uri, "matrix-media-")
         );
     }
 
@@ -212,11 +212,11 @@ mod tests {
 
     #[test]
     fn default_download_prefix_can_include_directory() {
-        let uri = Box::<MxcUri>::from("mxc://matrix.org/some-media-id");
+        let uri = <&MxcUri>::from("mxc://matrix.org/some-media-id");
 
         assert_eq!(
             Some(PathBuf::from("/tmp/matrix/matrix-media-some-media-id")),
-            default_download_file(&uri, "/tmp/matrix/matrix-media-")
+            default_download_file(uri, "/tmp/matrix/matrix-media-")
         );
     }
 

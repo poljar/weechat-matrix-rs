@@ -207,11 +207,7 @@ impl CompletionCallback for NicksCompletion {
             buffer.get_localvar("thread_root").is_some(),
             room_names,
         ) {
-            completion.add_with_options(
-                &nick,
-                true,
-                CompletionPosition::Sorted,
-            )
+            completion.add_with_options(&nick, true, CompletionPosition::Sorted)
         }
 
         Ok(())
@@ -296,7 +292,7 @@ fn extract_mxc_uris(message: &str) -> Vec<String> {
                 })
                 .next()
                 .unwrap_or_default();
-            let uri = Box::<MxcUri>::from(uri);
+            let uri = <&MxcUri>::from(uri);
 
             if uri.is_valid() {
                 Some(uri.as_str().to_owned())
@@ -372,7 +368,10 @@ mod tests {
 
     #[test]
     fn thread_buffers_without_a_room_contribute_nothing() {
-        assert_eq!(nick_completion_candidates(true, vec![]), Vec::<String>::new());
+        assert_eq!(
+            nick_completion_candidates(true, vec![]),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -380,10 +379,7 @@ mod tests {
         assert_eq!(
             nick_completion_candidates(
                 false,
-                vec![
-                    "Alice".to_owned(),
-                    "Bob".to_owned(),
-                ],
+                vec!["Alice".to_owned(), "Bob".to_owned(),],
             ),
             Vec::<String>::new(),
         );

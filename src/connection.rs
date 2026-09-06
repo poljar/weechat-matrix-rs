@@ -30,13 +30,13 @@ use matrix_sdk::{
             filter::{
                 FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
             },
-            message::send_message_event::v3::Response as RoomSendResponse,
+            message::send_message_event,
             session::{
                 get_login_types::v3::LoginType,
                 login::v3::Response as LoginResponse,
             },
             sync::sync_events::v3::Filter,
-            uiaa::{AuthData, Password, UserIdentifier},
+            uiaa::{AuthData, MatrixUserIdentifier, Password, UserIdentifier},
         },
         events::{
             room::member::RoomMemberEventContent, AnyMessageLikeEventContent,
@@ -103,7 +103,9 @@ pub struct InteractiveAuthInfo {
 impl InteractiveAuthInfo {
     pub fn as_auth_data(&self) -> AuthData {
         AuthData::Password(Password::new(
-            UserIdentifier::UserIdOrLocalpart(self.user.clone()),
+            UserIdentifier::Matrix(MatrixUserIdentifier::new(
+                self.user.clone(),
+            )),
             self.password.clone(),
         ))
     }
@@ -241,7 +243,7 @@ impl Connection {
         room: Room,
         content: AnyMessageLikeEventContent,
         transaction_id: Option<OwnedTransactionId>,
-    ) -> MatrixResult<RoomSendResponse> {
+    ) -> MatrixResult<send_message_event::v3::Response> {
         self.spawn(async move {
             let mut attempt = 0;
 
@@ -252,7 +254,7 @@ impl Connection {
                 }
 
                 match msg.await {
-                    Ok(response) => return Ok(response),
+                    Ok(result) => return Ok(result.response),
                     Err(error)
                         if is_retryable_network_error(&error)
                             && send_retry_delay(attempt).is_some() =>
