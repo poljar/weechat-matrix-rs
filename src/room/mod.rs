@@ -57,9 +57,8 @@ use matrix_sdk::{
     },
     deserialized_responses::AmbiguityChange,
     room::{
-        IncludeRelations, RelationsOptions,
         reply::{EnforceThread, Reply},
-        Room,
+        IncludeRelations, RelationsOptions, Room,
     },
     ruma::{
         api::Direction,
@@ -727,14 +726,14 @@ impl RoomHandle {
 
         let buffer_handle = build_room_buffer(&buffer_name, room.clone())
             .or_else(|_| {
-                if retire_stale_matrix_buffer(&buffer_name, room_id) {
+                if retire_stale_matrix_buffer(&buffer_name, &room_id) {
                     build_room_buffer(&buffer_name, room.clone())
                 } else {
                     Err(())
                 }
             })
             .or_else(|_| {
-                let suffix = room_id_buffer_suffix(room_id);
+                let suffix = room_id_buffer_suffix(&room_id);
                 let fallback_name = if suffix.is_empty() {
                     format!("{buffer_name}.room")
                 } else {
@@ -1084,15 +1083,8 @@ impl MatrixRoom {
 
         self.print_network(&format!("Following room upgrade to {room_id}..."));
 
-        let client = connection.client().clone();
-        let target = room_id.clone();
         let result = connection
-            .spawn(async move {
-                tokio::time::timeout(SPACE_JOIN_TIMEOUT, async move {
-                    client.join_room_by_id(&target).await
-                })
-                .await
-            })
+            .join_room_with_timeout(room_id.clone(), SPACE_JOIN_TIMEOUT)
             .await;
 
         match result {
@@ -2113,15 +2105,11 @@ impl MatrixRoom {
                 "Following room upgrade to {successor_room_id}..."
             ));
 
-            let client = connection.client().clone();
-            let target = successor_room_id.clone();
             match connection
-                .spawn(async move {
-                    tokio::time::timeout(SPACE_JOIN_TIMEOUT, async move {
-                        client.join_room_by_id(&target).await
-                    })
-                    .await
-                })
+                .join_room_with_timeout(
+                    successor_room_id.clone(),
+                    SPACE_JOIN_TIMEOUT,
+                )
                 .await
             {
                 Ok(Ok(successor_room)) => room = successor_room,

@@ -235,6 +235,21 @@ impl Connection {
             .map_err(|error| error.to_string())
     }
 
+    /// Bound upgrade joins while polling both the timer and SDK on Tokio.
+    pub async fn join_room_with_timeout(
+        &self,
+        room_id: OwnedRoomId,
+        timeout: std::time::Duration,
+    ) -> Result<Result<Room, matrix_sdk::Error>, tokio::time::error::Elapsed>
+    {
+        let client = self.client().clone();
+        self.spawn(async move {
+            tokio::time::timeout(timeout, client.join_room_by_id(&room_id))
+                .await
+        })
+        .await
+    }
+
     pub fn shutdown(&self) {
         let runtime = self.runtime();
 
