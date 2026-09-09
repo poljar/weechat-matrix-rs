@@ -160,11 +160,6 @@ fn restored_prev_batch(_prev_batch: Option<String>) -> Option<PrevBatch> {
     Some(PrevBatch::Backwards(None))
 }
 
-fn non_empty_metadata_name(name: &str) -> Option<&str> {
-    let name = name.trim();
-    (!name.is_empty()).then_some(name)
-}
-
 fn has_history_page(prev_batch: &Option<PrevBatch>) -> bool {
     prev_batch.is_some()
 }
@@ -1226,15 +1221,14 @@ impl MatrixRoom {
             return;
         };
 
+        self.buffer.set_room_metadata(is_direct, display_name);
+
         if is_direct {
             buffer.set_localvar("type", "private");
-            if let Some(display_name) =
-                display_name.as_deref().and_then(non_empty_metadata_name)
-            {
-                buffer.set_short_name(display_name);
-            }
+            buffer.set_short_name(&self.buffer.calculate_buffer_name());
         } else {
             buffer.set_localvar("type", "channel");
+            buffer.set_short_name(&self.buffer.calculate_buffer_name());
         }
     }
 
