@@ -26,6 +26,7 @@ pub struct RoomBuffer {
     room: SharedRoom,
     runtime: Handle,
     pub(super) inner: Rc<RefCell<Option<BufferHandle>>>,
+    room_metadata: Rc<RefCell<Option<(bool, Option<String>)>>>,
     thread_buffers: Rc<RefCell<HashMap<OwnedEventId, BufferHandle>>>,
     space_children: Rc<RefCell<Vec<SpaceChildInfo>>>,
 }
@@ -56,6 +57,7 @@ impl RoomBuffer {
             room,
             runtime,
             inner: Rc::new(RefCell::new(None)),
+            room_metadata: Rc::new(RefCell::new(None)),
             thread_buffers: Rc::new(RefCell::new(HashMap::new())),
             space_children: Rc::new(RefCell::new(Vec::new())),
         }
@@ -642,20 +644,26 @@ impl RoomBuffer {
         let Some(room) = maybe_active_room(&self.room) else {
             return self.short_name();
         };
-        let is_direct = false;
+        let (is_direct, metadata_name) =
+            self.room_metadata.borrow().clone().unwrap_or_default();
         let is_space = room.is_space();
 
-        let room_name = room
-            .name()
-            .as_deref()
-            .and_then(non_empty_room_name)
-            .or_else(|| {
-                room.canonical_alias()
-                    .and_then(|alias| non_empty_room_name(alias.alias()))
-            })
-            .unwrap_or_else(|| room.room_id().to_string());
+        let room_name = room_display_name(
+            room.name().as_deref(),
+            room.canonical_alias().as_deref().map(|alias| alias.alias()),
+            metadata_name.as_deref(),
+            room.room_id().as_str(),
+        );
 
         format_buffer_name(&room_name, is_direct, is_space)
+    }
+
+    pub fn set_room_metadata(
+        &self,
+        is_direct: bool,
+        display_name: Option<String>,
+    ) {
+        *self.room_metadata.borrow_mut() = Some((is_direct, display_name));
     }
 
     pub fn calculate_thread_buffer_name(
@@ -915,6 +923,19 @@ fn non_empty_room_name(name: &str) -> Option<String> {
     }
 }
 
+fn room_display_name(
+    explicit_name: Option<&str>,
+    alias: Option<&str>,
+    metadata_name: Option<&str>,
+    room_id: &str,
+) -> String {
+    explicit_name
+        .and_then(non_empty_room_name)
+        .or_else(|| alias.and_then(non_empty_room_name))
+        .or_else(|| metadata_name.and_then(non_empty_room_name))
+        .unwrap_or_else(|| room_id.to_owned())
+}
+
 fn format_buffer_name(
     room_name: &str,
     is_direct: bool,
@@ -1068,9 +1089,9 @@ mod tests {
 
     use super::{
         filter_space_children, format_buffer_name, format_thread_buffer_name,
-        line_sort_key, reply_sender_id_from_tags, sanitize_thread_id,
-        select_space_child, space_child_selection, RoomBuffer, SpaceChildInfo,
-        SpaceChildSelection,
+        line_sort_key, reply_sender_id_from_tags, room_display_name,
+        sanitize_thread_id, select_space_child, space_child_selection,
+        RoomBuffer, SpaceChildInfo, SpaceChildSelection,
     };
 
     fn space_child(
@@ -1135,6 +1156,38 @@ mod tests {
 
         assert!(
             line_sort_key(100, &tags, None) < line_sort_key(200, &tags, None)
+        );
+    }
+
+    #[test]
+    fn async_display_name_fills_unnamed_room_without_overriding_explicit_names()
+    {
+        assert_eq!(
+            room_display_name(
+                None,
+                None,
+                Some("Orbit"),
+                "!fallback:example.org"
+            ),
+            "Orbit"
+        );
+        assert_eq!(
+            room_display_name(
+                Some("Named"),
+                Some("#alias"),
+                Some("Orbit"),
+                "!fallback:example.org"
+            ),
+            "Named"
+        );
+        assert_eq!(
+            room_display_name(
+                None,
+                Some("#alias"),
+                Some("Orbit"),
+                "!fallback:example.org"
+            ),
+            "#alias"
         );
     }
 
