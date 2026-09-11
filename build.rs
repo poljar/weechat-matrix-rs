@@ -43,7 +43,10 @@ fn main() {
             let describe =
                 String::from_utf8_lossy(&output.stdout).trim().to_string();
             println!("cargo::rustc-env=GIT_DESCRIBE={}", describe);
-            println!("cargo::warning=weechat-matrix git describe: {}", describe);
+            println!(
+                "cargo::warning=weechat-matrix git describe: {}",
+                describe
+            );
         } else {
             println!("cargo::warning=weechat-matrix: git describe failed");
         }

@@ -147,6 +147,15 @@ config!(
             // Range: quote-preserving default to a large scrollback window.
             0..100000,
         },
+
+        nick_format: String {
+            // Description.
+            "Format for Matrix member nicks. Supported placeholders: %d for \
+             display name, %m for full MXID, %u for MXID localpart, and %h \
+             for MXID homeserver",
+            // Default value.
+            "%d",
+        },
     },
 
     Section color {
