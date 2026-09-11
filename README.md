@@ -297,8 +297,15 @@ Nick prefix colors for Matrix power levels can be changed with:
        /set matrix-rust.color.nick_prefix_moderator lightmagenta
        /set matrix-rust.color.nick_prefix_power yellow
 
-Existing nicklist entries may need a member update or plugin restart before the new colors are visible.
+Existing nicklist entries may need a member update or plugin restart before the new colors or nick format are visible.
 
+Matrix member nicknames default to display names. To include MXID parts in chat,
+the nicklist, `/names`, and nick completion, set `matrix-rust.look.nick_format`:
+
+       /set matrix-rust.look.nick_format "%u (%d)"
+
+Supported placeholders are `%d` for display name, `%m` for full MXID, `%u` for
+MXID localpart, and `%h` for homeserver.
 
 # Helpful Commands
 

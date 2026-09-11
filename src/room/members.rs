@@ -99,6 +99,7 @@ pub struct WeechatRoomMember {
     color: Rc<String>,
     prefix_color: Rc<String>,
     ambiguous_nick: Rc<bool>,
+    nick: Rc<String>,
 }
 
 impl PartialEq for WeechatRoomMember {
@@ -242,6 +243,12 @@ impl Members {
                     .map(|a| *a)
                     .unwrap_or(false),
             ),
+            nick: Rc::new(format_member_nick(
+                &self.config.borrow().look().nick_format(),
+                member.user_id(),
+                member.name(),
+                member.name_ambiguous(),
+            )),
             inner: member,
         }
     }
@@ -632,6 +639,41 @@ mod tests {
             None,
         );
     }
+
+    #[test]
+    fn nick_format_defaults_to_display_name_with_ambiguity_suffix() {
+        let user_id = UserId::parse("@ada:example.org").unwrap();
+
+        assert_eq!(format_member_nick("%d", &user_id, "Ada", false), "Ada");
+        assert_eq!(
+            format_member_nick("%d", &user_id, "Ada", true),
+            "Ada (@ada:example.org)"
+        );
+    }
+
+    #[test]
+    fn nick_format_exposes_mxid_parts() {
+        let user_id = UserId::parse("@ada:example.org").unwrap();
+
+        assert_eq!(
+            format_member_nick("%u (%d) @ %h", &user_id, "Ada", true),
+            "ada (Ada) @ example.org"
+        );
+        assert_eq!(
+            format_member_nick("%m", &user_id, "Ada", true),
+            "@ada:example.org"
+        );
+    }
+
+    #[test]
+    fn nick_format_keeps_unknown_placeholders_literal() {
+        let user_id = UserId::parse("@ada:example.org").unwrap();
+
+        assert_eq!(
+            format_member_nick("%d %% %x %", &user_id, "Ada", false),
+            "Ada % %x %"
+        );
+    }
 }
 
 impl WeechatRoomMember {
@@ -710,7 +752,10 @@ impl WeechatRoomMember {
     }
 
     pub fn nick_colored(&self) -> String {
-        if *self.ambiguous_nick {
+        let default_ambiguous_nick =
+            format!("{} ({})", self.nick_raw(), self.user_id());
+        if *self.ambiguous_nick && self.nick.as_ref() == &default_ambiguous_nick
+        {
             // TODO: this should color the parenthesis differently.
             format!(
                 "{}{}{} ({})",
@@ -725,17 +770,52 @@ impl WeechatRoomMember {
                 Weechat::color(self.prefix_color()),
                 self.prefix(),
                 Weechat::color(self.color()),
-                self.nick_raw(),
+                self.nick(),
                 Weechat::color("reset")
             )
         }
     }
 
     pub fn nick(&self) -> String {
-        if *self.ambiguous_nick {
-            format!("{} ({})", self.nick_raw(), self.user_id())
-        } else {
-            self.nick_raw().to_string()
+        self.nick.as_ref().to_owned()
+    }
+}
+
+fn format_member_nick(
+    format: &str,
+    user_id: &UserId,
+    display_name: &str,
+    ambiguous_display_name: bool,
+) -> String {
+    let localpart = user_id.localpart();
+    let homeserver = user_id.server_name().as_str();
+
+    let mut formatted =
+        String::with_capacity(format.len() + display_name.len());
+    let mut chars = format.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            formatted.push(ch);
+            continue;
         }
+
+        match chars.next() {
+            Some('d') => formatted.push_str(display_name),
+            Some('m') => formatted.push_str(user_id.as_str()),
+            Some('u') => formatted.push_str(localpart),
+            Some('h') => formatted.push_str(homeserver),
+            Some('%') => formatted.push('%'),
+            Some(other) => {
+                formatted.push('%');
+                formatted.push(other);
+            }
+            None => formatted.push('%'),
+        }
+    }
+
+    if ambiguous_display_name && format == "%d" {
+        format!("{} ({})", formatted, user_id)
+    } else {
+        formatted
     }
 }
