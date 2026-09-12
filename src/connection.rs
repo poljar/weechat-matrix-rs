@@ -40,8 +40,8 @@ use matrix_sdk::{
         },
         events::{
             room::member::RoomMemberEventContent, AnyMessageLikeEventContent,
-            AnySyncStateEvent, AnySyncTimelineEvent, AnyToDeviceEvent,
-            SyncStateEvent,
+            AnySyncEphemeralRoomEvent, AnySyncStateEvent, AnySyncTimelineEvent,
+            AnyToDeviceEvent, SyncStateEvent,
         },
         OwnedDeviceId, OwnedEventId, OwnedRoomId, OwnedTransactionId,
         OwnedUserId,
@@ -119,6 +119,7 @@ pub enum ClientMessage {
     SsoLoginUrl(String),
     SyncState(OwnedRoomId, AnySyncStateEvent),
     SyncEvent(OwnedRoomId, AnySyncTimelineEvent),
+    EphemeralRoomEvent(OwnedRoomId, AnySyncEphemeralRoomEvent),
     ToDeviceEvent(AnyToDeviceEvent),
     MemberEvent(
         OwnedRoomId,
@@ -552,6 +553,9 @@ impl Connection {
                     ClientMessage::SyncState(r, e) => {
                         server.receive_joined_state_event(&r, e).await
                     }
+                    ClientMessage::EphemeralRoomEvent(r, e) => {
+                        server.receive_joined_ephemeral_event(&r, e).await
+                    }
                     ClientMessage::RestoredRoom(room_id) => {
                         server.restore_room_by_id(room_id).await
                     }
@@ -959,6 +963,23 @@ impl Connection {
                             }
                         } else if sync_channel
                             .send(Ok(ClientMessage::SyncState(
+                                room_id.clone(),
+                                event,
+                            )))
+                            .await
+                            .is_err()
+                        {
+                            return LoopCtrl::Break;
+                        }
+                    }
+
+                    for event in room
+                        .ephemeral
+                        .iter()
+                        .filter_map(|e| e.deserialize().ok())
+                    {
+                        if sync_channel
+                            .send(Ok(ClientMessage::EphemeralRoomEvent(
                                 room_id.clone(),
                                 event,
                             )))

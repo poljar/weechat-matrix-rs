@@ -78,9 +78,10 @@ use matrix_sdk::{
                 redaction::SyncRoomRedactionEvent,
                 tombstone::RoomTombstoneEventContent,
             },
-            AnyMessageLikeEventContent, AnySyncMessageLikeEvent,
-            AnySyncStateEvent, AnySyncTimelineEvent, AnyTimelineEvent,
-            OriginalSyncMessageLikeEvent, SyncMessageLikeEvent, SyncStateEvent,
+            AnyMessageLikeEventContent, AnySyncEphemeralRoomEvent,
+            AnySyncMessageLikeEvent, AnySyncStateEvent, AnySyncTimelineEvent,
+            AnyTimelineEvent, OriginalSyncMessageLikeEvent,
+            SyncMessageLikeEvent, SyncStateEvent,
         },
         room::JoinRule,
         serde::Raw,
@@ -346,6 +347,7 @@ pub struct MatrixRoom {
     latest_event_id: Rc<RefCell<Option<OwnedEventId>>>,
     latest_read_event_id: Rc<RefCell<Option<OwnedEventId>>>,
     latest_thread_event_ids: Rc<RefCell<HashMap<OwnedEventId, OwnedEventId>>>,
+    typing_users: Rc<RefCell<Vec<String>>>,
     pending_encrypted_events:
         Rc<RefCell<HashMap<OwnedEventId, PendingEncryptedEvent>>>,
     pending_encrypted_recoveries:
@@ -702,6 +704,7 @@ impl RoomHandle {
             latest_event_id: Rc::new(RefCell::new(None)),
             latest_read_event_id: Rc::new(RefCell::new(None)),
             latest_thread_event_ids: Rc::new(RefCell::new(HashMap::new())),
+            typing_users: Rc::new(RefCell::new(Vec::new())),
             pending_encrypted_events: Rc::new(RefCell::new(HashMap::new())),
             pending_encrypted_recoveries: Rc::new(RefCell::new(HashSet::new())),
             thread_history_in_flight: Rc::new(RefCell::new(HashSet::new())),
@@ -1261,6 +1264,10 @@ impl MatrixRoom {
 
     pub fn update_parent_spaces(&self) {
         self.buffer.update_parent_spaces();
+    }
+
+    pub fn typing_notice(&self) -> String {
+        typing_notice_text(&self.typing_users.borrow())
     }
 
     pub fn refresh_space_children(&self) {
@@ -3320,6 +3327,34 @@ impl MatrixRoom {
         }
     }
 
+    pub async fn handle_sync_ephemeral_event(
+        &self,
+        event: AnySyncEphemeralRoomEvent,
+    ) {
+        let AnySyncEphemeralRoomEvent::Typing(event) = event else {
+            return;
+        };
+
+        let mut typing_users = Vec::new();
+        for user_id in event
+            .content
+            .user_ids
+            .iter()
+            .filter(|user_id| user_id.as_str() != self.own_user_id.as_str())
+        {
+            let name = self
+                .members
+                .get(user_id)
+                .await
+                .map(|member| member.nick())
+                .unwrap_or_else(|| user_id.to_string());
+            typing_users.push(name);
+        }
+
+        *self.typing_users.borrow_mut() = typing_users;
+        Weechat::bar_item_update("matrix_typing_notice");
+    }
+
     pub async fn handle_room_event(&self, event: &AnyTimelineEvent) -> usize {
         let thread_root = thread_root_from_timeline_event(event);
 
@@ -3452,6 +3487,10 @@ fn reply_context_for_distance(
         .filter(|distance| threshold > 0 && *distance <= threshold as usize)
         .map(|_| ReplyContext::Inline)
         .unwrap_or(ReplyContext::Full)
+}
+
+fn typing_notice_text(typing_users: &[String]) -> String {
+    typing_users.join(", ")
 }
 
 #[cfg(test)]
@@ -3625,6 +3664,19 @@ mod tests {
         );
         assert_eq!(ReplyContext::Full, reply_context_for_distance(2, Some(3)));
         assert_eq!(ReplyContext::Full, reply_context_for_distance(2, None));
+    }
+
+    #[test]
+    fn typing_notice_is_empty_without_remote_users() {
+        assert_eq!("", typing_notice_text(&[]));
+    }
+
+    #[test]
+    fn typing_notice_lists_remote_users_in_event_order() {
+        assert_eq!(
+            "Ada, Grace",
+            typing_notice_text(&["Ada".to_owned(), "Grace".to_owned()])
+        );
     }
 
     #[test]

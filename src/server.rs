@@ -84,8 +84,8 @@ use matrix_sdk::{
                 member::RoomMemberEventContent,
                 tombstone::RoomTombstoneEventContent, MediaSource,
             },
-            AnySyncStateEvent, AnySyncTimelineEvent, AnyToDeviceEvent,
-            SyncStateEvent,
+            AnySyncEphemeralRoomEvent, AnySyncStateEvent, AnySyncTimelineEvent,
+            AnyToDeviceEvent, SyncStateEvent,
         },
         DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
         OwnedDeviceId, OwnedMxcUri, OwnedRoomAliasId, OwnedRoomId,
@@ -1836,6 +1836,15 @@ impl InnerServer {
     ) {
         let room = self.get_or_create_room(room_id);
         room.handle_sync_room_event(event).await
+    }
+
+    pub async fn receive_joined_ephemeral_event(
+        &self,
+        room_id: &RoomId,
+        event: AnySyncEphemeralRoomEvent,
+    ) {
+        let room = self.get_or_create_room(room_id);
+        room.handle_sync_ephemeral_event(event).await
     }
 
     pub fn receive_login(&self, response: LoginResponse) {
