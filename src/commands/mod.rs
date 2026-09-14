@@ -33,6 +33,7 @@ mod topic;
 mod upload;
 mod verification;
 mod verify;
+pub(crate) mod whois;
 
 use access::RoomAccessCommand;
 use buffer_clear::BufferClearCommand;
@@ -61,6 +62,7 @@ use say::SayCommand;
 use topic::TopicCommand;
 use upload::UploadCommand;
 use verify::VerifyCommand;
+use whois::WhoisCommand;
 
 pub struct Commands {
     _room_access: Command,
@@ -90,6 +92,7 @@ pub struct Commands {
     _names: CommandRun,
     _unban: Command,
     _nick: CommandRun,
+    _whois: Command,
 }
 
 impl Commands {
@@ -125,6 +128,7 @@ impl Commands {
             _names: NamesCommand::create(servers)?,
             _unban: ModerationCommand::unban(servers)?,
             _nick: NickCommand::create(servers)?,
+            _whois: WhoisCommand::create()?,
         })
     }
 }

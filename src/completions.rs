@@ -11,6 +11,9 @@ use weechat::{
 };
 
 use crate::commands::is_buffer_target;
+use crate::commands::whois::{
+    matrix_member_completion_candidates, matrix_member_profiles,
+};
 use crate::Servers;
 
 #[allow(dead_code)]
@@ -18,6 +21,7 @@ pub struct Completions {
     buffer_short_names: CompletionHook,
     servers: CompletionHook,
     users: CompletionHook,
+    room_members: CompletionHook,
     media: CompletionHook,
     nicks: CompletionHook,
 }
@@ -30,6 +34,7 @@ impl Completions {
             )?,
             servers: ServersCompletion::create(servers.clone())?,
             users: UsersCompletion::create(servers.clone())?,
+            room_members: RoomMembersCompletion::create()?,
             media: MediaCompletion::create(servers.clone())?,
             nicks: NicksCompletion::create(servers)?,
         })
@@ -159,6 +164,40 @@ impl CompletionCallback for UsersCompletion {
                     )
                 }
             }
+        }
+
+        Ok(())
+    }
+}
+
+struct RoomMembersCompletion;
+
+impl RoomMembersCompletion {
+    fn create() -> Result<CompletionHook, ()> {
+        CompletionHook::new(
+            "matrix-room-members",
+            "Completion for Matrix room members in the current buffer",
+            RoomMembersCompletion,
+        )
+    }
+}
+
+impl CompletionCallback for RoomMembersCompletion {
+    fn callback(
+        &mut self,
+        _: &Weechat,
+        buffer: &Buffer,
+        _: Cow<str>,
+        completion: &Completion,
+    ) -> Result<(), ()> {
+        for candidate in
+            matrix_member_completion_candidates(&matrix_member_profiles(buffer))
+        {
+            completion.add_with_options(
+                &candidate,
+                true,
+                CompletionPosition::Sorted,
+            )
         }
 
         Ok(())
