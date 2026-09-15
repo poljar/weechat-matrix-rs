@@ -12,6 +12,7 @@ mod buffer_clear;
 mod buffer_switch;
 mod devices;
 mod dm;
+mod edit;
 mod ignore;
 mod invite;
 mod join;
@@ -42,6 +43,7 @@ use buffer_switch::BufferSwitchCommand;
 pub(crate) use buffer_switch::is_buffer_target;
 use devices::DevicesCommand;
 use dm::DirectMessageCommand;
+use edit::EditCommand;
 use ignore::IgnoreCommand;
 use invite::InviteCommand;
 use join::JoinCommand;
@@ -77,6 +79,7 @@ pub struct Commands {
     _kick: Command,
     _page_up: CommandRun,
     _redact: Command,
+    _edit: Command,
     _reply: Command,
     _say: CommandRun,
     _topic: Command,
@@ -113,6 +116,7 @@ impl Commands {
             _keys: KeysCommand::create(servers)?,
             _page_up: PageUpCommand::create(servers)?,
             _redact: RedactCommand::create(servers)?,
+            _edit: EditCommand::create(servers)?,
             _reply: ReplyCommand::create(servers)?,
             _say: SayCommand::create(servers)?,
             _topic: TopicCommand::create(servers)?,

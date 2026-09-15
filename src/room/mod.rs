@@ -57,6 +57,7 @@ use matrix_sdk::{
     },
     deserialized_responses::AmbiguityChange,
     room::{
+        edit::EditedContent,
         reply::{EnforceThread, Reply},
         IncludeRelations, RelationsOptions, Room,
     },
@@ -73,7 +74,9 @@ use matrix_sdk::{
                 member::RoomMemberEventContent,
                 message::{
                     AddMentions, MessageType, Relation, ReplyWithinThread,
-                    RoomMessageEventContent, TextMessageEventContent,
+                    RoomMessageEventContent,
+                    RoomMessageEventContentWithoutRelation,
+                    TextMessageEventContent,
                 },
                 redaction::SyncRoomRedactionEvent,
                 tombstone::RoomTombstoneEventContent,
@@ -2249,6 +2252,40 @@ impl MatrixRoom {
             Ok(_) => (),
             Err(error) => self.print_error(&format!(
                 "Failed to redact {}: {}",
+                error_event_id, error
+            )),
+        }
+    }
+
+    pub async fn send_edit(&self, event_id: OwnedEventId, message: String) {
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        let room = self.room().clone();
+        let error_event_id = event_id.clone();
+
+        match connection
+            .spawn(async move {
+                let edit = EditedContent::RoomMessage(
+                    RoomMessageEventContentWithoutRelation::text_plain(message),
+                );
+                let content = room
+                    .make_edit_event(&event_id, edit)
+                    .await
+                    .map_err(|error| error.to_string())?;
+
+                room.send(content)
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            })
+            .await
+        {
+            Ok(_) => (),
+            Err(error) => self.print_error(&format!(
+                "Failed to edit {}: {}",
                 error_event_id, error
             )),
         }
