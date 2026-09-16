@@ -1668,6 +1668,95 @@ impl InnerServer {
                 }
             }
             AnyToDeviceEvent::RoomKeyRequest(_) => {}
+            AnyToDeviceEvent::RoomKeyWithheld(e) => {
+                use matrix_sdk::ruma::events::room_key::withheld::{
+                    RoomKeyWithheldCodeInfo, RoomKeyWithheldSessionData,
+                };
+
+                // The sender's client proactively told us it will not share
+                // the room key. Surface an actionable hint, routed to the
+                // room buffer when we know which room the key belongs to.
+                // Each recognized code gets its own remediation; the raw
+                // reason is only shown when the code is unknown, as ruma
+                // documents `reason` as a fallback for unrecognized codes.
+                let code = &e.content.code;
+                let session_data: Option<&RoomKeyWithheldSessionData> =
+                    match code {
+                        RoomKeyWithheldCodeInfo::Blacklisted(data) => {
+                            Some(data)
+                        }
+                        RoomKeyWithheldCodeInfo::Unverified(data) => Some(data),
+                        RoomKeyWithheldCodeInfo::Unauthorized(data) => {
+                            Some(data)
+                        }
+                        RoomKeyWithheldCodeInfo::Unavailable(data) => {
+                            Some(data)
+                        }
+                        RoomKeyWithheldCodeInfo::NoOlm => None,
+                        _ => None,
+                    };
+
+                let message = match code {
+                    RoomKeyWithheldCodeInfo::Unavailable(_) => format!(
+                        "{} withheld the room key: the room key is not \
+                         available on their device. Ask them to re-send \
+                         their message or forward the room key from another \
+                         of their devices.",
+                        e.sender
+                    ),
+                    RoomKeyWithheldCodeInfo::Unverified(_) => format!(
+                        "{} withheld the room key: your device is not \
+                         verified and they only share keys with verified \
+                         devices. Verify your device with them so the room \
+                         key gets shared.",
+                        e.sender
+                    ),
+                    RoomKeyWithheldCodeInfo::Blacklisted(_) => format!(
+                        "{} withheld the room key: your device is \
+                         blacklisted. Ask them to unblacklist your device to \
+                         receive the room key.",
+                        e.sender
+                    ),
+                    RoomKeyWithheldCodeInfo::Unauthorized(_) => format!(
+                        "{} withheld the room key: your device is not \
+                         allowed to receive it. Ask them to share the room \
+                         key with you.",
+                        e.sender
+                    ),
+                    RoomKeyWithheldCodeInfo::NoOlm => format!(
+                        "{} withheld the room key: no Olm session could be \
+                         established with your device. Make sure both \
+                         devices are online so an Olm session can be \
+                         established, then ask them to share the room key \
+                         again.",
+                        e.sender
+                    ),
+                    other => {
+                        let mut message = format!(
+                            "{} withheld the room key with code: {}.",
+                            e.sender,
+                            other.code()
+                        );
+                        if let Some(reason) = &e.content.reason {
+                            message
+                                .push_str(&format!(" Reason given: {reason}"));
+                        }
+                        message
+                    }
+                };
+
+                let buffer = session_data.and_then(|data| {
+                    self.rooms
+                        .borrow()
+                        .get(&data.room_id)
+                        .map(|room| room.buffer_handle())
+                });
+                self.print_with_prefix_to(
+                    buffer.as_ref(),
+                    &Weechat::prefix(Prefix::Network),
+                    &message,
+                );
+            }
             AnyToDeviceEvent::KeyVerificationRequest(e) => {
                 refresh_status_bar = true;
                 if let Some(client) = self.get_client() {

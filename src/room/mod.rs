@@ -1374,7 +1374,7 @@ impl MatrixRoom {
 
         let rendered = match content {
             RoomEncrypted(c) => {
-                c.render_with_prefix(send_time, event_id, sender, &())
+                c.render_with_prefix(send_time, event_id, sender, sender)
             }
             RoomMessage(c) => {
                 let reply_to = match c.relates_to.as_ref() {
