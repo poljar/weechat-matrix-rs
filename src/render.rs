@@ -629,25 +629,49 @@ impl<C: HasUrlOrFile> Render for C {
 
 impl Render for RoomEncryptedEventContent {
     const TAGS: &'static [&'static str] = &["matrix_encrypted"];
-    type RenderContext = ();
+    type RenderContext = WeechatRoomMember;
 
-    fn render(&self, _: &Self::RenderContext) -> RenderedContent {
+    fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
+        // The prefix already shows the sender, but naming them in the
+        // placeholder makes the guidance below unambiguous.
         let message = format!(
-            "{}<{}Unable to decrypt message{}>{}",
+            "{}<{}Unable to decrypt message from {}{}>{}",
             Weechat::color("chat_delimiters"),
             Weechat::color("logger.color.backlog_line"),
+            sender.nick(),
             Weechat::color("chat_delimiters"),
             Weechat::color("reset"),
         );
 
-        let line = RenderedLine {
+        let tags = self.tags();
+        let mut lines = vec![RenderedLine {
             message,
-            // TODO: add tags that allow us decrypt the event at a later point in
-            // time, sender key, algorithm, session id.
-            tags: self.tags(),
-        };
+            // TODO: add tags that allow us decrypt the event at a later point
+            // in time, sender key, algorithm, session id.
+            tags: tags.clone(),
+        }];
 
-        RenderedContent::new(vec![line])
+        // The room key is missing, which usually means the sender's client is
+        // not sharing keys with us. Print actionable guidance: only the sender
+        // can help (re-send the message or forward the room key from another
+        // device). The event is retried and re-rendered automatically once the
+        // key arrives (see #274).
+        lines.push(RenderedLine {
+            message: format!(
+                "{}<{}Waiting for the room key from {}. Ask them to re-send \
+                 their message or forward the room key from one of their \
+                 other devices. This message will be decrypted automatically \
+                 once the key arrives.{}>{}",
+                Weechat::color("chat_delimiters"),
+                Weechat::color("logger.color.backlog_line"),
+                sender.nick(),
+                Weechat::color("chat_delimiters"),
+                Weechat::color("reset"),
+            ),
+            tags,
+        });
+
+        RenderedContent::new(lines)
     }
 }
 
