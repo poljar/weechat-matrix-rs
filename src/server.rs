@@ -123,6 +123,80 @@ fn secure_set_token_command(name: &str, token: &str) -> Option<String> {
     safe.then(|| format!("/secure set {name} {token}"))
 }
 
+fn room_key_withheld_message(
+    code: &matrix_sdk::ruma::events::room_key::withheld::RoomKeyWithheldCodeInfo,
+    sender: &UserId,
+    own_user_id: Option<&UserId>,
+    reason: Option<&str>,
+) -> String {
+    use matrix_sdk::ruma::events::room_key::withheld::RoomKeyWithheldCodeInfo;
+
+    let is_own_sender = own_user_id == Some(sender);
+    match code {
+        RoomKeyWithheldCodeInfo::Unavailable(_) if is_own_sender => {
+            format!(
+                "{sender} withheld the room key: your other device does not \
+                 have this key. This device cannot recover that message from it."
+            )
+        }
+        RoomKeyWithheldCodeInfo::Unavailable(_) => format!(
+            "{sender} withheld the room key: the room key is not available on \
+             their device."
+        ),
+        RoomKeyWithheldCodeInfo::Unverified(_) if is_own_sender => {
+            format!(
+                "{sender} withheld the room key: this device is not verified \
+                 by your other device."
+            )
+        }
+        RoomKeyWithheldCodeInfo::Unverified(_) => format!(
+            "{sender} withheld the room key: your device is not verified and \
+             they only share keys with verified devices."
+        ),
+        RoomKeyWithheldCodeInfo::Blacklisted(_) if is_own_sender => {
+            format!(
+                "{sender} withheld the room key: this device is blacklisted by \
+                 your other device."
+            )
+        }
+        RoomKeyWithheldCodeInfo::Blacklisted(_) => format!(
+            "{sender} withheld the room key: your device is blacklisted."
+        ),
+        RoomKeyWithheldCodeInfo::Unauthorized(_) if is_own_sender => {
+            format!(
+                "{sender} withheld the room key: this device is not entitled to \
+                 that room key."
+            )
+        }
+        RoomKeyWithheldCodeInfo::Unauthorized(_) => format!(
+            "{sender} withheld the room key: this device will not be given that \
+             room key by that sender."
+        ),
+        RoomKeyWithheldCodeInfo::NoOlm if is_own_sender => format!(
+            "{sender} withheld the room key: your other device could not \
+             establish an encrypted session with this device. Keep this client \
+             connected; new messages should decrypt once a session is \
+             established."
+        ),
+        RoomKeyWithheldCodeInfo::NoOlm => format!(
+            "{sender} withheld the room key: they could not establish an \
+             encrypted session with this device. Messages they sent before now \
+             cannot be recovered from them. Keep this client connected; new \
+             messages should decrypt once a session is established."
+        ),
+        other => {
+            let mut message = format!(
+                "{sender} withheld the room key with code: {}.",
+                other.code()
+            );
+            if let Some(reason) = reason {
+                message.push_str(&format!(" Reason given: {reason}"));
+            }
+            message
+        }
+    }
+}
+
 fn tombstone_replacement_room_id(
     event: &SyncStateEvent<RoomTombstoneEventContent>,
 ) -> Option<OwnedRoomId> {
@@ -1696,54 +1770,15 @@ impl InnerServer {
                         _ => None,
                     };
 
-                let message = match code {
-                    RoomKeyWithheldCodeInfo::Unavailable(_) => format!(
-                        "{} withheld the room key: the room key is not \
-                         available on their device. Ask them to re-send \
-                         their message or forward the room key from another \
-                         of their devices.",
-                        e.sender
-                    ),
-                    RoomKeyWithheldCodeInfo::Unverified(_) => format!(
-                        "{} withheld the room key: your device is not \
-                         verified and they only share keys with verified \
-                         devices. Verify your device with them so the room \
-                         key gets shared.",
-                        e.sender
-                    ),
-                    RoomKeyWithheldCodeInfo::Blacklisted(_) => format!(
-                        "{} withheld the room key: your device is \
-                         blacklisted. Ask them to unblacklist your device to \
-                         receive the room key.",
-                        e.sender
-                    ),
-                    RoomKeyWithheldCodeInfo::Unauthorized(_) => format!(
-                        "{} withheld the room key: your device is not \
-                         allowed to receive it. Ask them to share the room \
-                         key with you.",
-                        e.sender
-                    ),
-                    RoomKeyWithheldCodeInfo::NoOlm => format!(
-                        "{} withheld the room key: no Olm session could be \
-                         established with your device. Make sure both \
-                         devices are online so an Olm session can be \
-                         established, then ask them to share the room key \
-                         again.",
-                        e.sender
-                    ),
-                    other => {
-                        let mut message = format!(
-                            "{} withheld the room key with code: {}.",
-                            e.sender,
-                            other.code()
-                        );
-                        if let Some(reason) = &e.content.reason {
-                            message
-                                .push_str(&format!(" Reason given: {reason}"));
-                        }
-                        message
-                    }
-                };
+                let login_state = self.login_state.borrow();
+                let own_user_id =
+                    login_state.as_ref().map(|state| state.user_id.as_ref());
+                let message = room_key_withheld_message(
+                    code,
+                    &e.sender,
+                    own_user_id,
+                    e.content.reason.as_deref(),
+                );
 
                 let buffer = session_data.and_then(|data| {
                     self.rooms
@@ -3018,10 +3053,15 @@ impl InnerServer {
 mod tests {
     use super::{
         create_room_request, missing_alias_action, room_id_join_servers,
-        secure_set_token_command, with_entered_runtime_until_drop, InnerServer,
-        MissingAliasAction,
+        room_key_withheld_message, secure_set_token_command,
+        with_entered_runtime_until_drop, InnerServer, MissingAliasAction,
     };
-    use matrix_sdk::ruma::{OwnedRoomAliasId, OwnedRoomId, OwnedUserId};
+    use matrix_sdk::ruma::{
+        events::room_key::withheld::{
+            RoomKeyWithheldCodeInfo, RoomKeyWithheldSessionData,
+        },
+        owned_room_id, user_id, OwnedRoomAliasId, OwnedRoomId, OwnedUserId,
+    };
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
     use std::sync::{
@@ -3161,6 +3201,61 @@ mod tests {
             missing_alias_action(&alias, None),
             MissingAliasAction::RefuseUnknownAccountDomain
         );
+    }
+
+    fn withheld_session(code: &str) -> Box<RoomKeyWithheldSessionData> {
+        RoomKeyWithheldSessionData::new(
+            owned_room_id!("!room:example.org"),
+            code.to_owned(),
+        )
+        .into()
+    }
+
+    #[test]
+    fn unavailable_key_from_own_device_does_not_blame_foreign_sender() {
+        let own_user = user_id!("@me:example.org");
+        let message = room_key_withheld_message(
+            &RoomKeyWithheldCodeInfo::Unavailable(withheld_session("s1")),
+            own_user,
+            Some(own_user),
+            None,
+        );
+
+        assert!(message.contains("your other device does not have this key"));
+        assert!(!message.contains("Ask them"));
+        assert!(!message.contains("re-send"));
+    }
+
+    #[test]
+    fn unauthorised_key_refusal_says_device_is_not_entitled() {
+        let own_user = user_id!("@me:example.org");
+        let message = room_key_withheld_message(
+            &RoomKeyWithheldCodeInfo::Unauthorized(withheld_session("s1")),
+            own_user,
+            Some(own_user),
+            None,
+        );
+
+        assert!(message.contains("this device is not entitled"));
+        assert!(!message.contains("Ask them"));
+        assert!(!message.contains("share the room key"));
+    }
+
+    #[test]
+    fn no_olm_guidance_describes_future_session_establishment() {
+        let sender = user_id!("@alice:example.org");
+        let own_user = user_id!("@me:example.org");
+        let message = room_key_withheld_message(
+            &RoomKeyWithheldCodeInfo::NoOlm,
+            sender,
+            Some(own_user),
+            None,
+        );
+
+        assert!(message.contains("could not establish an encrypted session"));
+        assert!(message.contains("new messages should decrypt"));
+        assert!(!message.contains("share the room key again"));
+        assert!(!message.contains("both devices are online"));
     }
 
     #[test]

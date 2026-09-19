@@ -632,47 +632,42 @@ impl Render for RoomEncryptedEventContent {
     type RenderContext = WeechatRoomMember;
 
     fn render(&self, sender: &Self::RenderContext) -> RenderedContent {
-        // The prefix already shows the sender, but naming them in the
-        // placeholder makes the guidance below unambiguous.
-        let message = format!(
-            "{}<{}Unable to decrypt message from {}{}>{}",
-            Weechat::color("chat_delimiters"),
-            Weechat::color("logger.color.backlog_line"),
-            sender.nick(),
-            Weechat::color("chat_delimiters"),
-            Weechat::color("reset"),
-        );
-
-        let tags = self.tags();
-        let mut lines = vec![RenderedLine {
-            message,
+        let line = RenderedLine {
+            message: encrypted_placeholder_message(&sender.nick()),
             // TODO: add tags that allow us decrypt the event at a later point
             // in time, sender key, algorithm, session id.
-            tags: tags.clone(),
-        }];
+            tags: self.tags(),
+        };
 
-        // The room key is missing, which usually means the sender's client is
-        // not sharing keys with us. Print actionable guidance: only the sender
-        // can help (re-send the message or forward the room key from another
-        // device). The event is retried and re-rendered automatically once the
-        // key arrives (see #274).
-        lines.push(RenderedLine {
-            message: format!(
-                "{}<{}Waiting for the room key from {}. Ask them to re-send \
-                 their message or forward the room key from one of their \
-                 other devices. This message will be decrypted automatically \
-                 once the key arrives.{}>{}",
-                Weechat::color("chat_delimiters"),
-                Weechat::color("logger.color.backlog_line"),
-                sender.nick(),
-                Weechat::color("chat_delimiters"),
-                Weechat::color("reset"),
-            ),
-            tags,
-        });
-
-        RenderedContent::new(lines)
+        RenderedContent::new(vec![line])
     }
+}
+
+fn encrypted_placeholder_message(sender_nick: &str) -> String {
+    // The prefix already shows the sender, but naming them in the placeholder
+    // makes the guidance unambiguous. Keep it one line: decrypted replacement
+    // rewrites placeholders in place and WeeChat cannot delete surplus lines.
+    format!(
+        "{}<{}{}{}>{} {}",
+        Weechat::color("chat_delimiters"),
+        Weechat::color("logger.color.backlog_line"),
+        encrypted_placeholder_body(sender_nick),
+        Weechat::color("chat_delimiters"),
+        Weechat::color("reset"),
+        encrypted_placeholder_guidance(sender_nick),
+    )
+}
+
+fn encrypted_placeholder_body(sender_nick: &str) -> String {
+    format!("Unable to decrypt message from {sender_nick}")
+}
+
+fn encrypted_placeholder_guidance(sender_nick: &str) -> String {
+    format!(
+        "Waiting for the room key from {}; this message will be decrypted \
+         automatically once the key arrives.",
+        sender_nick,
+    )
 }
 
 impl Render for RedactedSyncMessageLikeEvent<RedactedRoomMessageEventContent> {
@@ -2011,6 +2006,19 @@ mod tests {
 
         assert_eq!(rendered.lines.len(), 1);
         assert_eq!(rendered.lines[0].message, "literal <b> text");
+    }
+
+    #[test]
+    fn encrypted_placeholder_guidance_stays_on_one_line() {
+        let message = format!(
+            "{} {}",
+            encrypted_placeholder_body("Alice"),
+            encrypted_placeholder_guidance("Alice")
+        );
+
+        assert_eq!(message.lines().count(), 1);
+        assert!(message.contains("Unable to decrypt message from Alice"));
+        assert!(message.contains("Waiting for the room key from Alice"));
     }
 
     #[test]
