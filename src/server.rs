@@ -2068,13 +2068,9 @@ impl InnerServer {
 
         if let Some(c) = self.connection() {
             let delete = |auth_info| async {
-                if let [device] = devices.as_slice() {
-                    c.delete_device(device.clone(), auth_info).await.map(|_| ())
-                } else {
-                    c.delete_devices(devices.clone(), auth_info)
-                        .await
-                        .map(|_| ())
-                }
+                c.delete_devices(devices.clone(), auth_info)
+                    .await
+                    .map(|_| ())
             };
 
             match delete(None).await {
