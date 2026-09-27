@@ -242,7 +242,17 @@ pub enum ServerError {
 enum DeviceTrust {
     Verified,
     Unverified,
+    MissingKeys,
     Unsupported,
+}
+
+fn device_trust_label(device_trust: DeviceTrust) -> &'static str {
+    match device_trust {
+        DeviceTrust::Verified => "Trusted",
+        DeviceTrust::Unverified => "Not trusted",
+        DeviceTrust::MissingKeys => "No uploaded keys",
+        DeviceTrust::Unsupported => "No encryption support",
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2484,19 +2494,14 @@ impl InnerServer {
 
             let own_device = own_device_id == Some(&device_info.device_id);
 
-            let device_trust = if own_device {
-                DeviceTrust::Verified
-            } else {
-                device
-                    .as_ref()
-                    .map(|d| {
-                        if d.is_verified() {
-                            DeviceTrust::Verified
-                        } else {
-                            DeviceTrust::Unverified
-                        }
-                    })
-                    .unwrap_or(DeviceTrust::Unsupported)
+            let device_trust = match (own_device, device.as_ref()) {
+                (true, Some(_)) => DeviceTrust::Verified,
+                (true, None) => DeviceTrust::MissingKeys,
+                (false, Some(device)) if device.is_verified() => {
+                    DeviceTrust::Verified
+                }
+                (false, Some(_)) => DeviceTrust::Unverified,
+                (false, None) => DeviceTrust::Unsupported,
             };
 
             let info = Self::format_device(
@@ -2620,22 +2625,33 @@ impl InnerServer {
         let verified = match device_trust {
             DeviceTrust::Verified => {
                 format!(
-                    "{}Trusted{}",
+                    "{}{}{}",
                     Weechat::color("green"),
+                    device_trust_label(device_trust),
                     Weechat::color("reset")
                 )
             }
             DeviceTrust::Unverified => {
                 format!(
-                    "{}Not trusted{}",
+                    "{}{}{}",
                     Weechat::color("red"),
+                    device_trust_label(device_trust),
+                    Weechat::color("reset")
+                )
+            }
+            DeviceTrust::MissingKeys => {
+                format!(
+                    "{}{}{}",
+                    Weechat::color("yellow"),
+                    device_trust_label(device_trust),
                     Weechat::color("reset")
                 )
             }
             DeviceTrust::Unsupported => {
                 format!(
-                    "{}No encryption support{}",
+                    "{}{}{}",
                     Weechat::color("darkgray"),
+                    device_trust_label(device_trust),
                     Weechat::color("reset")
                 )
             }
@@ -3052,9 +3068,10 @@ impl InnerServer {
 #[cfg(test)]
 mod tests {
     use super::{
-        create_room_request, missing_alias_action, room_id_join_servers,
-        room_key_withheld_message, secure_set_token_command,
-        with_entered_runtime_until_drop, InnerServer, MissingAliasAction,
+        create_room_request, device_trust_label, missing_alias_action,
+        room_id_join_servers, room_key_withheld_message,
+        secure_set_token_command, with_entered_runtime_until_drop, DeviceTrust,
+        InnerServer, MissingAliasAction,
     };
     use matrix_sdk::ruma::{
         events::room_key::withheld::{
@@ -3086,6 +3103,14 @@ mod tests {
 
             self.0.store(context, Ordering::SeqCst);
         }
+    }
+
+    #[test]
+    fn labels_server_listed_devices_without_uploaded_keys() {
+        assert_eq!(
+            device_trust_label(DeviceTrust::MissingKeys),
+            "No uploaded keys"
+        );
     }
 
     #[test]
