@@ -331,9 +331,12 @@ fn extract_mxc_uris(message: &str) -> Vec<String> {
                 })
                 .next()
                 .unwrap_or_default();
+            let uri = uri.trim_end_matches(|c: char| {
+                !(c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            });
             let uri = <&MxcUri>::from(uri);
 
-            if uri.is_valid() {
+            if uri.is_valid() && uri.media_id().is_ok_and(|id| !id.is_empty()) {
                 Some(uri.as_str().to_owned())
             } else {
                 None
@@ -370,6 +373,60 @@ mod tests {
     #[test]
     fn ignores_invalid_mxc_uris() {
         assert!(extract_mxc_uris("download mxc://").is_empty());
+    }
+
+    #[test]
+    fn extracts_uris_followed_by_sentence_punctuation() {
+        assert_eq!(
+            vec!["mxc://matrix.org/some-media-id".to_owned()],
+            extract_mxc_uris("look at mxc://matrix.org/some-media-id."),
+        );
+        assert_eq!(
+            vec!["mxc://matrix.org/some-media-id".to_owned()],
+            extract_mxc_uris("see mxc://matrix.org/some-media-id, then reply"),
+        );
+        assert_eq!(
+            vec!["mxc://matrix.org/some-media-id".to_owned()],
+            extract_mxc_uris("is it mxc://matrix.org/some-media-id?"),
+        );
+    }
+
+    #[test]
+    fn extracts_uris_wrapped_in_delimiters() {
+        assert_eq!(
+            vec!["mxc://matrix.org/some-media-id".to_owned()],
+            extract_mxc_uris("(mxc://matrix.org/some-media-id)"),
+        );
+        assert_eq!(
+            vec!["mxc://matrix.org/some-media-id".to_owned()],
+            extract_mxc_uris("[mxc://matrix.org/some-media-id]"),
+        );
+        assert_eq!(
+            vec!["mxc://matrix.org/some-media-id".to_owned()],
+            extract_mxc_uris("\"mxc://matrix.org/some-media-id\""),
+        );
+        assert_eq!(
+            vec!["mxc://matrix.org/some-media-id".to_owned()],
+            extract_mxc_uris("<mxc://matrix.org/some-media-id>"),
+        );
+    }
+
+    #[test]
+    fn extracts_multiple_uris_from_a_single_line() {
+        assert_eq!(
+            vec![
+                "mxc://a.example.org/one".to_owned(),
+                "mxc://b.example.org/two".to_owned(),
+            ],
+            extract_mxc_uris(
+                "first mxc://a.example.org/one, then mxc://b.example.org/two."
+            ),
+        );
+    }
+
+    #[test]
+    fn drops_uris_without_a_media_id() {
+        assert!(extract_mxc_uris("download mxc://matrix.org/").is_empty());
     }
 
     #[test]
