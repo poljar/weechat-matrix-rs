@@ -36,6 +36,10 @@ use matrix_sdk::{
                 login::v3::Response as LoginResponse,
             },
             sync::sync_events::v3::Filter,
+            threads::get_threads::v1::{
+                IncludeThreads, Request as GetThreadsRequest,
+                Response as GetThreadsResponse,
+            },
             uiaa::{AuthData, MatrixUserIdentifier, Password, UserIdentifier},
         },
         events::{
@@ -61,6 +65,7 @@ use crate::{
 };
 
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
+const THREAD_LIST_PAGE_SIZE: u8 = 20;
 const SEND_RETRY_DELAYS: [Duration; 4] = [
     Duration::from_secs(1),
     Duration::from_secs(2),
@@ -408,6 +413,29 @@ impl Connection {
             request.limit = limit.into();
 
             room.messages(request).await
+        })
+        .await
+    }
+
+    /// List the thread roots of the given room.
+    ///
+    /// This is the `GET /_matrix/client/v1/rooms/{roomId}/threads` endpoint,
+    /// the only server-side way to discover threads without already knowing
+    /// their root event IDs.
+    pub async fn room_threads(
+        &self,
+        room_id: OwnedRoomId,
+        include: IncludeThreads,
+        from: Option<String>,
+    ) -> MatrixResult<GetThreadsResponse> {
+        let client = self.client().clone();
+        self.spawn(async move {
+            let mut request = GetThreadsRequest::new(room_id);
+            request.include = include;
+            request.from = from;
+            request.limit = Some(THREAD_LIST_PAGE_SIZE.into());
+
+            Ok(client.send(request).await?)
         })
         .await
     }

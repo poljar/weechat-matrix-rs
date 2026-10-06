@@ -1039,16 +1039,16 @@ impl RoomBuffer {
         let buffer = self.buffer_handle();
 
         if let Ok(buffer) = buffer.upgrade() {
-            print_rendered_event_to_buffer(&buffer, rendered);
+            print_rendered_event_to_buffer(&buffer, &rendered);
         }
     }
 }
 
 pub fn print_rendered_event_to_buffer(
     buffer: &Buffer,
-    rendered: RenderedEvent,
+    rendered: &RenderedEvent,
 ) {
-    for line in rendered.content.lines {
+    for line in &rendered.content.lines {
         let message = format!("{}{}", &rendered.prefix, &line.message);
         let tags: Vec<&str> = line.tags.iter().map(|t| t.as_str()).collect();
         buffer.print_date_tags(rendered.message_timestamp, &tags, &message)
