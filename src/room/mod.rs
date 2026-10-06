@@ -1864,7 +1864,7 @@ impl MatrixRoom {
             thread_root.and_then(|root| self.get_or_create_thread_buffer(root))
         {
             if let Ok(buffer) = handle.upgrade() {
-                print_rendered_event_to_buffer(&buffer, rendered);
+                print_rendered_event_to_buffer(&buffer, &rendered);
             } else {
                 self.buffer.print_rendered_event(rendered);
             }
