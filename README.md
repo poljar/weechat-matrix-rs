@@ -313,6 +313,8 @@ MXID localpart, and `%h` for homeserver.
 
 `/matrix help [command]` will print information for subcommands, such as `/matrix help server`.
 
+`/matrix threads list [all|participated]` lists the thread roots of the current room, most recent activity first, using the `/_matrix/client/v1/rooms/{roomId}/threads` endpoint. `/matrix threads more` fetches the next page of that listing and `/matrix threads open <n>` opens one of the listed threads in a thread buffer.
+
 Room buffers accept normal message input after `/matrix connect [server-name]`
 has completed.
 

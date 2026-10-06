@@ -19,13 +19,21 @@ use super::{
 use crate::{
     commands::{DevicesCommand, KeysCommand, MediaCommand, VerifyCommand},
     config::ConfigHandle,
-    room::HistoryPageResult,
+    room::{HistoryPageResult, ThreadFilter},
     MatrixServer, Servers, PLUGIN_NAME,
 };
 
 pub struct MatrixCommand {
     servers: Servers,
     config: ConfigHandle,
+}
+
+/// Validate the `<index>` argument of `/matrix threads open`.
+fn parse_thread_index(value: String) -> Result<(), String> {
+    match value.parse::<usize>() {
+        Ok(index) if index > 0 => Ok(()),
+        _ => Err("index must be a positive number".to_owned()),
+    }
 }
 
 impl MatrixCommand {
@@ -50,6 +58,7 @@ impl MatrixCommand {
             .add_argument("history")
             .add_argument("read")
             .add_argument("thread <event-id>")
+            .add_argument("threads list [all|participated]|more|open <index>")
             .add_argument("version")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
             .arguments_description(format!(
@@ -62,6 +71,7 @@ sso-complete: Finish SSO login with a copied loginToken.
      history: Load an older page of messages in the current room.
         read: Mark the current room as read.
       thread: Open a thread buffer and load its complete history.
+     threads: List the threads of the current room.
      version: Show version information about weechat-matrix.
      devices: {}
         keys: {}
@@ -90,8 +100,9 @@ Use /matrix [command] help to find out more.\n",
             .add_completion("reconnect %(matrix_servers)")
             .add_completion("sso-complete %(matrix_servers)")
             .add_completion("thread")
+            .add_completion("threads list|more|open")
             .add_completion(
-                "help server|connect|disconnect|reconnect|join|sso-complete|history|read|thread|version|keys|devices|media|verify|verification",
+                "help server|connect|disconnect|reconnect|join|sso-complete|history|read|thread|threads|version|keys|devices|media|verify|verification",
             );
 
         Command::new(
@@ -316,6 +327,54 @@ Use /matrix [command] help to find out more.\n",
         }
     }
 
+    fn threads_command(&self, buffer: &Buffer, args: &ArgMatches) {
+        let Some(room) = self.servers.find_room(buffer) else {
+            Weechat::print(&format!(
+                "{}{}: Run /matrix threads from a Matrix room buffer.",
+                Weechat::prefix(Prefix::Error),
+                PLUGIN_NAME,
+            ));
+            return;
+        };
+
+        match args.subcommand() {
+            ("list", subargs) => {
+                let filter = ThreadFilter::from_arg(
+                    subargs.and_then(|args| args.value_of("include")),
+                );
+                Weechat::spawn(async move {
+                    room.list_threads(filter).await
+                })
+                .detach();
+            }
+            ("more", _) => {
+                Weechat::spawn(async move { room.more_threads().await })
+                    .detach();
+            }
+            ("open", subargs) => {
+                let index = subargs
+                    .and_then(|args| args.value_of("index"))
+                    .and_then(|index| index.parse::<usize>().ok())
+                    .expect("Index was validated but isn't a number");
+
+                match room.open_listed_thread(index) {
+                    Some(handle) => {
+                        if let Ok(thread_buffer) = handle.upgrade() {
+                            thread_buffer.switch_to();
+                        }
+                    }
+                    None => Weechat::print(&format!(
+                        "{}{}: Thread {} is not in the last listing.",
+                        Weechat::prefix(Prefix::Error),
+                        PLUGIN_NAME,
+                        index,
+                    )),
+                }
+            }
+            _ => (),
+        }
+    }
+
     fn run(&self, buffer: &Buffer, args: &ArgMatches) {
         match args.subcommand() {
             ("connect", Some(subargs)) => self.connect_command(subargs),
@@ -369,6 +428,9 @@ Use /matrix [command] help to find out more.\n",
                 .detach();
             }
             ("thread", Some(subargs)) => self.thread_command(buffer, subargs),
+            ("threads", Some(subargs)) => {
+                self.threads_command(buffer, subargs)
+            }
             ("version", _) => {
                 Weechat::print(&format!(
                     "{}: weechat-matrix version {} ({})",
@@ -515,6 +577,33 @@ impl CommandCallback for MatrixCommand {
                         Arg::with_name("event-id")
                             .value_name("event-id")
                             .required(true),
+                    ),
+            )
+            .subcommand(
+                SubCommand::with_name("threads")
+                    .about("List the threads of the current room.")
+                    .setting(ArgParseSettings::SubcommandRequiredElseHelp)
+                    .subcommand(
+                        SubCommand::with_name("list")
+                            .about("List thread roots, newest activity first.")
+                            .arg(
+                                Arg::with_name("include")
+                                    .possible_values(&["all", "participated"])
+                                    .required(false),
+                            ),
+                    )
+                    .subcommand(
+                        SubCommand::with_name("more")
+                            .about("Fetch the next page of the thread list."),
+                    )
+                    .subcommand(
+                        SubCommand::with_name("open")
+                            .about("Open a thread from the last listing.")
+                            .arg(
+                                Arg::with_name("index")
+                                    .required(true)
+                                    .validator(parse_thread_index),
+                            ),
                     ),
             )
             .subcommand(

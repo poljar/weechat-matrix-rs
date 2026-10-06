@@ -62,7 +62,7 @@ use matrix_sdk::{
         IncludeRelations, RelationsOptions, Room,
     },
     ruma::{
-        api::Direction,
+        api::{client::threads::get_threads::v1::IncludeThreads, Direction},
         events::{
             relation::{RelationType, Thread},
             room::{
@@ -357,6 +357,8 @@ pub struct MatrixRoom {
         Rc<RefCell<HashSet<EncryptedMessageRecovery>>>,
     thread_history_in_flight: Rc<RefCell<HashSet<OwnedEventId>>>,
     thread_history_loaded: Rc<RefCell<HashSet<OwnedEventId>>>,
+    thread_listing: Rc<RefCell<ThreadListing>>,
+    thread_root_renders: Rc<RefCell<HashMap<OwnedEventId, RenderedEvent>>>,
 
     outgoing_messages: MessageQueue,
 
@@ -662,6 +664,76 @@ fn thread_history_page_is_complete(
     event_count == 0 || next_batch_token.is_none()
 }
 
+const THREAD_LIST_TAGS: &[&str] =
+    &["matrix_thread_list", "matrix_smart_filter"];
+const THREAD_LIST_PREVIEW_GRAPHEMES: usize = 80;
+
+/// Which threads a `/matrix threads list` request should cover.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ThreadFilter {
+    #[default]
+    All,
+    Participated,
+}
+
+impl ThreadFilter {
+    pub fn from_arg(value: Option<&str>) -> Self {
+        match value {
+            Some("participated") => Self::Participated,
+            _ => Self::All,
+        }
+    }
+
+    fn as_include(&self) -> IncludeThreads {
+        match self {
+            Self::All => IncludeThreads::All,
+            Self::Participated => IncludeThreads::Participated,
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Participated => "participated",
+        }
+    }
+}
+
+/// The result of the last thread listing of a room.
+///
+/// `entries` doubles as the index backing `/matrix threads open <n>`.
+#[derive(Default)]
+struct ThreadListing {
+    filter: ThreadFilter,
+    entries: Vec<OwnedEventId>,
+    next_batch: Option<String>,
+}
+
+fn thread_preview_body(content: &AnyMessageLikeEventContent) -> String {
+    match content {
+        AnyMessageLikeEventContent::RoomMessage(message) => {
+            message.msgtype.body().to_owned()
+        }
+        AnyMessageLikeEventContent::RoomEncrypted(_) => {
+            "<encrypted>".to_owned()
+        }
+        _ => String::new(),
+    }
+}
+
+fn thread_preview_line(body: &str) -> String {
+    let single_line = body.lines().next().unwrap_or("").trim().to_owned();
+    let mut graphemes = single_line.graphemes(true);
+    let mut preview: String =
+        graphemes.by_ref().take(THREAD_LIST_PREVIEW_GRAPHEMES).collect();
+
+    if graphemes.next().is_some() {
+        preview.push('…');
+    }
+
+    preview
+}
+
 impl RoomHandle {
     pub fn new(
         server_name: &str,
@@ -712,6 +784,8 @@ impl RoomHandle {
             pending_encrypted_recoveries: Rc::new(RefCell::new(HashSet::new())),
             thread_history_in_flight: Rc::new(RefCell::new(HashSet::new())),
             thread_history_loaded: Rc::new(RefCell::new(HashSet::new())),
+            thread_listing: Rc::new(RefCell::new(ThreadListing::default())),
+            thread_root_renders: Rc::new(RefCell::new(HashMap::new())),
             own_user_id,
             members,
             buffer,
@@ -1122,7 +1196,15 @@ impl MatrixRoom {
         &self,
         thread_root: &EventId,
     ) -> Option<BufferHandle> {
-        if !self.buffer.contains_event(thread_root) {
+        // A root that was never rendered into the room buffer can still be
+        // opened when the thread listing told us about it; the listing caches
+        // a rendering of the root for seeding the thread buffer.
+        let listed = self
+            .thread_root_renders
+            .borrow()
+            .contains_key(thread_root);
+
+        if !listed && !self.buffer.contains_event(thread_root) {
             return None;
         }
 
@@ -1131,6 +1213,18 @@ impl MatrixRoom {
             self.resume_thread_continuation(thread_root.to_owned());
         }
         buffer
+    }
+
+    /// Open the `index`-th (1-based) thread of the last thread listing.
+    pub fn open_listed_thread(&self, index: usize) -> Option<BufferHandle> {
+        let thread_root = self
+            .thread_listing
+            .borrow()
+            .entries
+            .get(index.checked_sub(1)?)
+            .cloned()?;
+
+        self.open_thread_buffer(&thread_root)
     }
 
     fn resume_thread_continuation(&self, source_root: OwnedEventId) {
@@ -1169,6 +1263,147 @@ impl MatrixRoom {
             true
         } else {
             false
+        }
+    }
+
+    /// Print the first page of the threads of this room.
+    ///
+    /// Every listed root is cached so `/matrix threads open <n>` can open a
+    /// thread whose root was never rendered into the room buffer.
+    pub async fn list_threads(&self, filter: ThreadFilter) {
+        self.fetch_thread_listing(filter, None).await;
+    }
+
+    /// Print the next page of the last thread listing.
+    pub async fn more_threads(&self) {
+        let (filter, from) = {
+            let listing = self.thread_listing.borrow();
+            (listing.filter, listing.next_batch.clone())
+        };
+
+        let Some(from) = from else {
+            let message = if self.thread_listing.borrow().entries.is_empty() {
+                "No thread listing yet; run /matrix threads list first."
+            } else {
+                "No more threads to list."
+            };
+            self.print_room_line(THREAD_LIST_TAGS, message);
+            return;
+        };
+
+        self.fetch_thread_listing(filter, Some(from)).await;
+    }
+
+    async fn fetch_thread_listing(
+        &self,
+        filter: ThreadFilter,
+        from: Option<String>,
+    ) {
+        let append = from.is_some();
+        let Some(connection) = self.connection.borrow().as_ref().cloned()
+        else {
+            self.print_room_line(
+                THREAD_LIST_TAGS,
+                "Threads: not connected to a homeserver.",
+            );
+            return;
+        };
+
+        let response = match connection
+            .room_threads(self.room_id.clone(), filter.as_include(), from)
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                self.print_room_line(
+                    THREAD_LIST_TAGS,
+                    &format!("Failed to list threads: {error}"),
+                );
+                return;
+            }
+        };
+
+        let mut entries = if append {
+            std::mem::take(&mut self.thread_listing.borrow_mut().entries)
+        } else {
+            Vec::new()
+        };
+
+        if !append {
+            self.print_room_line(
+                THREAD_LIST_TAGS,
+                &format!("Threads in {} ({})", self.room_id, filter.as_str()),
+            );
+        }
+
+        for raw in response.chunk {
+            let Ok(AnyTimelineEvent::MessageLike(event)) = raw.deserialize()
+            else {
+                continue;
+            };
+
+            let thread_root = event.event_id().to_owned();
+            let content = event.original_content();
+            let sender = self.members.get(event.sender()).await;
+            let sender_nick = sender
+                .as_ref()
+                .map(|member| member.nick())
+                .unwrap_or_else(|| event.sender().to_string());
+
+            if let (Some(content), Some(sender)) = (&content, &sender) {
+                if let Some(rendered) = self
+                    .render_message_content(
+                        &thread_root,
+                        event.origin_server_ts(),
+                        sender,
+                        content,
+                    )
+                    .await
+                    .map(RenderedEvent::add_backlog_tags)
+                {
+                    self.thread_root_renders
+                        .borrow_mut()
+                        .insert(thread_root.clone(), rendered);
+                }
+            }
+
+            let preview = content
+                .as_ref()
+                .map(thread_preview_body)
+                .map(|body| thread_preview_line(&body))
+                .filter(|preview| !preview.is_empty())
+                .unwrap_or_else(|| "<event>".to_owned());
+
+            entries.push(thread_root);
+            self.print_room_line(
+                THREAD_LIST_TAGS,
+                &format!("[{}] {}: {}", entries.len(), sender_nick, preview),
+            );
+        }
+
+        let listed = entries.len();
+        let has_more = response.next_batch.is_some();
+
+        *self.thread_listing.borrow_mut() = ThreadListing {
+            filter,
+            entries,
+            next_batch: response.next_batch,
+        };
+
+        let hint = if has_more {
+            "More threads: /matrix threads more. Open one: /matrix threads open <n>"
+        } else {
+            "End of the thread list. Open one: /matrix threads open <n>"
+        };
+        self.print_room_line(
+            THREAD_LIST_TAGS,
+            &format!("{listed} thread(s) listed. {hint}"),
+        );
+    }
+
+    fn print_room_line(&self, tags: &[&str], message: &str) {
+        if let Ok(buffer) = self.buffer.buffer_handle().upgrade() {
+            buffer.print_date_tags(0, tags, message);
         }
     }
 
@@ -1595,6 +1830,17 @@ impl MatrixRoom {
         self.buffer
             .set_thread_buffer(thread_root.to_owned(), buffer_handle.clone());
 
+        // The root may never have been rendered into the room buffer, for
+        // instance when the thread was discovered by the thread listing.
+        // Seed the thread buffer with the rendering the listing cached.
+        if !self.buffer.thread_contains_event(thread_root, thread_root) {
+            if let Some(rendered) =
+                self.thread_root_renders.borrow().get(thread_root)
+            {
+                print_rendered_event_to_buffer(&buffer, rendered);
+            }
+        }
+
         self.fetch_thread_history(thread_root.to_owned());
 
         Some(buffer_handle)
@@ -1618,7 +1864,7 @@ impl MatrixRoom {
             thread_root.and_then(|root| self.get_or_create_thread_buffer(root))
         {
             if let Ok(buffer) = handle.upgrade() {
-                print_rendered_event_to_buffer(&buffer, rendered);
+                print_rendered_event_to_buffer(&buffer, &rendered);
             } else {
                 self.buffer.print_rendered_event(rendered);
             }
