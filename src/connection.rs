@@ -27,6 +27,9 @@ use matrix_sdk::{
                 delete_devices::v3::Response as DeleteDevicesResponse,
                 get_devices::v3::Response as DevicesResponse,
             },
+            discovery::get_authorization_server_metadata::v1::{
+                AccountManagementActionData, DeviceDeleteData,
+            },
             filter::{
                 FilterDefinition, LazyLoadOptions, RoomEventFilter, RoomFilter,
             },
@@ -377,6 +380,30 @@ impl Connection {
                 }
             })
             .await?)
+    }
+
+    /// Account-page links for deleting the given devices, if the server
+    /// delegates device management to an OAuth 2.0 account page.
+    pub async fn device_delete_urls(
+        &self,
+        devices: Vec<OwnedDeviceId>,
+    ) -> Option<Vec<url::Url>> {
+        let client = self.client().clone();
+        self.spawn(async move {
+            let metadata =
+                client.oauth().cached_server_metadata().await.ok()?;
+            devices
+                .iter()
+                .map(|device_id| {
+                    metadata.account_management_url_with_action(
+                        AccountManagementActionData::DeviceDelete(
+                            DeviceDeleteData::new(device_id),
+                        ),
+                    )
+                })
+                .collect()
+        })
+        .await
     }
 
     pub async fn delete_device(

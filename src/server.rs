@@ -2216,8 +2216,7 @@ impl InnerServer {
                     .map(|_| ())
             };
 
-            match delete(None).await {
-                Ok(_) => print_success(),
+            let result = match delete(None).await {
                 Err(e) => {
                     if let Some(info) = e.as_uiaa_response() {
                         let auth_info = {
@@ -2228,16 +2227,28 @@ impl InnerServer {
                                 session: info.session.clone(),
                             }
                         };
-
-                        if let Err(e) = delete(Some(auth_info)).await {
-                            print_fail(e);
-                        } else {
-                            print_success();
-                        }
+                        delete(Some(auth_info)).await
                     } else {
-                        print_fail(e)
+                        Err(e)
                     }
                 }
+                ok => ok,
+            };
+
+            match result {
+                Ok(()) => print_success(),
+                Err(e) => match c.device_delete_urls(devices.clone()).await {
+                    // OAuth servers (e.g. matrix.org) reject the API call.
+                    Some(urls) => {
+                        for (device, url) in devices.iter().zip(urls) {
+                            self.print_error(&format!(
+                                "This server manages devices on its account \
+                                 page; delete {device} at {url}"
+                            ));
+                        }
+                    }
+                    None => print_fail(e),
+                },
             }
         };
     }
