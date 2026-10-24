@@ -222,6 +222,29 @@ fn retire_stale_matrix_buffer(buffer_name: &str, room_id: &RoomId) -> bool {
     true
 }
 
+/// The new name for a buffer still named by its room ID, once the room has
+/// a real name; `None` if the buffer needs no rename.
+fn room_id_buffer_rename(
+    buffer_name: &str,
+    server_name: &str,
+    room_id: &RoomId,
+    room_name: &str,
+    name_taken: impl Fn(&str) -> bool,
+) -> Option<String> {
+    if buffer_name != format!("{server_name}.{room_id}")
+        || room_name.starts_with('!')
+    {
+        return None;
+    }
+
+    let name = format!("{server_name}.{room_name}");
+    if name_taken(&name) {
+        Some(format!("{name}.{}", room_id_buffer_suffix(room_id)))
+    } else {
+        Some(name)
+    }
+}
+
 fn room_id_buffer_suffix(room_id: &RoomId) -> String {
     room_id
         .as_str()
@@ -1470,6 +1493,25 @@ impl MatrixRoom {
         } else {
             buffer.set_localvar("type", "channel");
             buffer.set_short_name(&self.buffer.calculate_buffer_name());
+        }
+
+        self.rename_room_id_buffer(&buffer);
+    }
+
+    /// Give a buffer created before the room's name was known its real name.
+    fn rename_room_id_buffer(&self, buffer: &Buffer) {
+        let Some(server_name) = buffer.get_localvar("server") else {
+            return;
+        };
+        let weechat = unsafe { Weechat::weechat() };
+        if let Some(name) = room_id_buffer_rename(
+            &buffer.name(),
+            &server_name,
+            &self.room_id,
+            &self.buffer.calculate_buffer_name(),
+            |name| weechat.buffer_search(PLUGIN_NAME, name).is_some(),
+        ) {
+            buffer.set_name(&name);
         }
     }
 
@@ -3917,6 +3959,34 @@ mod tests {
             history_page_marker(&HistoryPageResult::Unavailable),
             "matrix_history_page added=0 exhausted=1 state=unavailable"
         );
+    }
+
+    #[test]
+    fn room_id_buffers_get_the_room_name() {
+        let room_id =
+            matrix_sdk::ruma::room_id!("!abcDEF123456xyz:example.org");
+        let id_name = format!("example_org.{room_id}");
+        let rename = |buffer_name: &str, room_name: &str, taken: bool| {
+            room_id_buffer_rename(
+                buffer_name,
+                "example_org",
+                room_id,
+                room_name,
+                |_| taken,
+            )
+        };
+
+        assert_eq!(
+            rename(&id_name, "#lab", false),
+            Some("example_org.#lab".to_owned())
+        );
+        assert_eq!(
+            rename(&id_name, "#lab", true),
+            Some("example_org.#lab.abcDEF123456".to_owned())
+        );
+        // Name still unknown, or buffer already named.
+        assert_eq!(rename(&id_name, room_id.as_str(), false), None);
+        assert_eq!(rename("example_org.#old", "#lab", false), None);
     }
 
     #[test]
