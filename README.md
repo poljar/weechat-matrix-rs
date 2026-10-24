@@ -15,8 +15,22 @@ over the Matrix protocol. This is a Rust rewrite of the
 
 # Project status
 
-This project is a work in progress and doesn't do much yet. It can connect
-to a Matrix server and send messages.
+weechat-matrix-rs connects to one or more Matrix homeservers and maps rooms,
+direct messages, Spaces, and threads to WeeChat buffers. It supports:
+
+- password and SSO login, with session restore from a saved access token;
+- sending text (Markdown by default), emotes, replies, edits, redactions, and
+  file uploads, with local echo;
+- thread buffers, thread listing, and paging through older room history;
+- typing notices, read markers and read receipts, and a smart filter for
+  membership noise;
+- end-to-end encryption, device listing and deletion, device trust,
+  interactive (SAS) verification, and room-key import and export;
+- room management: join, leave, invite, kick, ban, unban, topic, join rule,
+  member list, `/whois`, and display-name changes;
+- media download through the logged-in client, including authenticated media;
+- room metadata exposed as WeeChat local variables for scripts and relay
+  front-ends.
 
 It is not an IRC relay or bridge: IRC clients connected through WeeChat's relay
 plugin cannot use Matrix rooms as IRC channels. Remote WeeChat interfaces using
@@ -184,6 +198,11 @@ _(replace the placeholders in brackets [] with your own details)_:
 
        ssh -L 29325:127.0.0.1:29325 user@weechat-host
 
+   If the callback cannot reach WeeChat, copy the `loginToken` from the
+   redirect URL instead and finish the login by hand:
+
+       /matrix sso-complete [server-name] [login-token]
+
 3. Now try to connect. The first connection can take a few minutes while the
    client syncs the account:
 
@@ -196,6 +215,58 @@ _(replace the placeholders in brackets [] with your own details)_:
 5. If everything works, save the configuration:
 
        /save
+
+After a password or SSO login the device id is saved under the server's
+storage directory and reused on later logins. If `access_token` is set (which
+also requires `device_id`), the plugin restores that session instead of logging
+in. When the homeserver refreshes the session tokens, the plugin stores them
+with `/secure set` and points `access_token` and `refresh_token` at the
+`${sec.data.*}` entries.
+
+## Server options
+
+Each server has its own `matrix-rust.server.[server-name].*` options:
+
+| Option          | Description                                                   |
+|-----------------|---------------------------------------------------------------|
+| `autoconnect`   | Connect to this server when the plugin loads.                 |
+| `homeserver`    | Homeserver URL, including the scheme.                         |
+| `proxy`         | Proxy URL used for the connection.                            |
+| `username`      | Matrix username.                                              |
+| `password`      | Password. Leave empty to use SSO.                             |
+| `access_token`  | Access token of a saved session.                              |
+| `refresh_token` | Refresh token of a saved session.                             |
+| `device_id`     | Device id of a saved session.                                 |
+| `ssl_verify`    | Verify the server's TLS certificate (default `on`).           |
+
+`homeserver`, `username`, `password`, and the token and device id options are
+evaluated, so they may reference `${sec.data.*}` entries.
+
+## Plugin options
+
+| Option                                      | Default            | Description |
+|---------------------------------------------|--------------------|-------------|
+| `look.encrypted_room_sign`                  | `🔒`               | Shown in `buffer_modes` for encrypted rooms. |
+| `look.encryption_warning_sign`              | `❗`               | Shown for encrypted rooms that contain unverified devices. |
+| `look.public_room_sign`                     | `🌍`               | Shown for public rooms. |
+| `look.busy_sign`                            | `⏳`               | Shown while the client is busy, e.g. fetching history. |
+| `look.local_echo`                           | `on`               | Print a sent message before the server confirms it. |
+| `look.redaction_style`                      | `strike-through`   | How redacted messages are shown: `strike-through`, `delete`, or `notice`. |
+| `look.smart_filter_delay`                   | `300000`           | Inactivity, in milliseconds, after which a member's membership events get the `matrix_smart_filter` tag (0 to 86400000). |
+| `look.reply_full_quote_threshold`           | `0`                | Render replies to recently printed events on one line when positive; `0` keeps the Matrix reply fallback quote. |
+| `look.nick_format`                          | `%d`               | Member nick format: `%d` display name, `%m` full MXID, `%u` MXID localpart, `%h` homeserver. |
+| `look.server_buffer`                        | `merge-with-core`  | Server buffer placement: `merge-with-core`, `merge-without-core`, or `independent`. |
+| `color.nick_prefix_admin`                   | `lightgreen`       | Color of the admin nick prefix (`&`). |
+| `color.nick_prefix_moderator`               | `lightmagenta`     | Color of the moderator nick prefix (`@`). |
+| `color.nick_prefix_power`                   | `yellow`           | Color of the `+` prefix for non-default power levels below moderator. |
+| `network.debug_buffer`                      | `off`              | Write debug logs to a separate buffer. |
+| `network.send_read_receipts`                | `on`               | Send public read receipts when marking a room as read. |
+| `input.markdown_input`                      | `on`               | Parse the input line as Markdown. |
+| `media.download_prefix`                     | `matrix-media-`    | Prefix for default media download filenames; may include a directory and supports `~`, `$XDG_STATE_HOME`, and `${XDG_STATE_HOME}`. |
+
+All of these live under `matrix-rust.`, for example:
+
+       /set matrix-rust.input.markdown_input off
 
 To hide join/leave noise from users who have not been active recently, add a WeeChat
 filter for Matrix smart-filter tags:
@@ -213,13 +284,26 @@ in the compact one-line form:
 
        /set matrix-rust.look.reply_full_quote_threshold 20
 
+## Completions
+
+The plugin adds the completion items `matrix_servers`, `matrix-users`,
+`matrix-room-members`, and `matrix-media`, and adds Matrix buffer short names
+and room member nicks to WeeChat's `buffers_names` and `nick` completions.
+
 # Room Status And Verification
 
 The `buffer_modes` bar item shows Matrix room state. Encrypted rooms show
 `matrix-rust.look.encrypted_room_sign`; encrypted rooms that still contain
 unverified devices also show `matrix-rust.look.encryption_warning_sign`. Public
 rooms show `matrix-rust.look.public_room_sign`, and busy rooms show
-`matrix-rust.look.busy_sign`.
+`matrix-rust.look.busy_sign`. The `matrix_typing_notice` bar item shows who is
+typing in the current room.
+
+Start an interactive verification with a contact, or inspect verification
+state:
+
+       /matrix verification start [user-id]
+       /matrix verification info [user-id]
 
 Interactive verification requests can be accepted, confirmed, or cancelled from
 the room or verification buffer:
@@ -229,7 +313,30 @@ the room or verification buffer:
        /verification cancel
 
 The plugin renders in-room SAS verification requests and shows the emoji or
-decimal short authentication string when it is ready.
+decimal short authentication string when it is ready. `/verification` and
+`/matrix verification` take the same subcommands.
+
+To mark one device as verified without the interactive flow:
+
+       /matrix verify [user-id] [device-id]
+
+Devices can be listed and deleted (`/devices` works the same as
+`/matrix devices`):
+
+       /matrix devices list [user-id]
+       /matrix devices delete [device-id]
+
+`set-name` is accepted by the parser but not implemented yet.
+
+Room keys can be exported to and imported from a passphrase-protected file
+(`/keys` works the same as `/matrix keys`):
+
+       /matrix keys export [file] [passphrase]
+       /matrix keys export --room-id [room-id] [file] [passphrase]
+       /matrix keys import [file] [passphrase]
+
+After an import the plugin retries decryption of messages that could not be
+decrypted earlier in this session.
 
 # Matrix Spaces
 
@@ -313,10 +420,88 @@ MXID localpart, and `%h` for homeserver.
 
 `/matrix help [command]` will print information for subcommands, such as `/matrix help server`.
 
-`/matrix threads list [all|participated]` lists the thread roots of the current room, most recent activity first, using the `/_matrix/client/v1/rooms/{roomId}/threads` endpoint. `/matrix threads more` fetches the next page of that listing and `/matrix threads open <n>` opens one of the listed threads in a thread buffer.
+`/matrix version` prints the plugin version.
+
+## Servers and rooms
+
+       /matrix server add [server-name] [server-url]
+       /matrix server delete [server-name]
+       /matrix server list
+       /matrix server listfull
+       /matrix connect [server-name]...
+       /matrix disconnect [server-name]
+       /matrix join [room-id-or-alias]
+
+`/join [room-id-or-alias]` works in any Matrix buffer. A local alias such as
+`#room` is completed with your homeserver's domain. `/matrix join` also works
+outside Matrix buffers when exactly one server is configured.
+
+`/part` leaves the current room. In a thread buffer it closes the thread buffer
+instead.
+
+`/query [user-id] [message]` and `/msg [user-id] [message]` open (or create)
+the direct-message room with that user, switch to it, and send the optional
+message. A bare localpart is completed with the current room's domain, or
+your own.
+
+## Messages
 
 Room buffers accept normal message input after `/matrix connect [server-name]`
-has completed.
+has completed. Input is sent as Markdown unless `matrix-rust.input.markdown_input`
+is off. `/say [message]` and `/me [action]` send a text message or an emote.
+
+       /reply [event-id|index|/pattern/] [message]
+       /edit [event-id|index|/pattern/] [message]
+       /redact [event-id|index|/pattern/] [reason...]
+
+The target is a Matrix event id, a 1-based index into recent events (`1`, `0`,
+or `-1` is the latest; `2` or `-2` the one before), or a case-sensitive
+substring in slashes, which selects the most recent unredacted message
+containing it. Without a target, the latest event is used. `/edit` also
+accepts the shorthand `/pattern/replacement/`.
+
+       /upload [file]
+
+uploads a file as an attachment to the current room or thread.
+
+       /matrix read
+
+marks the current room as read. Switching to a room buffer also marks it as
+read. Public read receipts are sent unless
+`matrix-rust.network.send_read_receipts` is off.
+
+## History and threads
+
+Scrolling up (`/window page_up`) at the top of a room buffer fetches an older
+page of history. `/matrix history` does the same explicitly and reports the
+result. `/buffer clear` resets the paging state of a room buffer.
+
+       /matrix thread [event-id]
+
+opens a thread buffer for that event and loads its history. Thread buffers
+are named `thread.<suffix>` and expose the root event id as the `thread_root`
+local variable. Input in a thread buffer is sent to the thread.
+
+`/matrix threads list [all|participated]` lists the thread roots of the current room, most recent activity first, using the `/_matrix/client/v1/rooms/{roomId}/threads` endpoint. `/matrix threads more` fetches the next page of that listing and `/matrix threads open <n>` opens one of the listed threads in a thread buffer.
+
+## Room management
+
+       /invite [user-id]
+       /kick [user-id] [reason]
+       /ban [user-id] [reason]
+       /unban [user-id] [reason]
+       /topic [topic]
+       /topic --clear
+       /room set_join_rule [public|invite|knock|private]
+       /names
+       /nick [new-display-name]
+       /whois [user]
+
+`/topic` without arguments shows the current topic. `/nick` without arguments
+shows your display name. `/whois` accepts a user id, display name, or current
+room nick. `/ignore` is not supported in Matrix buffers.
+
+## Media
 
 `/matrix media download <mxc-uri> [file]` downloads Matrix media through the logged-in client, including homeservers that require authenticated media. It refuses to overwrite an existing file. When `[file]` is omitted, the media id is saved with the configured prefix, which defaults to `matrix-media-`:
 
@@ -325,3 +510,18 @@ has completed.
 The prefix may include a directory and supports `~`, `$XDG_STATE_HOME`, and `${XDG_STATE_HOME}`. Parent directories are created automatically:
 
        /set matrix-rust.media.download_prefix "$XDG_STATE_HOME/weechat-matrix/media/matrix-media-"
+
+## Buffer metadata for scripts and front-ends
+
+Room buffers set WeeChat local variables, among them `server`, `room_id`,
+`thread_root` (thread buffers), the Space variables described above,
+`matrix_members_v1` (a JSON list of member profiles, used by `/whois`), and
+`matrix_mentions` (a JSON list of `display_name`/`user_id` pairs). Room and
+thread buffers also set `matrix_upload_v1`.
+
+Two command-run hooks exist for front-ends that drive WeeChat over a relay:
+`/matrix-send [payload]` sends a message with explicit `m.mentions`, where the
+payload is base64url-encoded JSON of the form
+`{"body": "...", "user_ids": ["@user:example.org"]}`, and
+`/matrix-upload begin|chunk|commit|cancel` uploads a file in base64url chunks.
+`/matrix-upload` prints its usage when called with wrong arguments.
