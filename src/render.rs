@@ -66,6 +66,7 @@ pub enum ReplyContext {
 
 impl RenderedEvent {
     const MSG_TAGS: &'static [&'static str] = &["notify_message"];
+    const PRIVATE_MSG_TAGS: &'static [&'static str] = &["notify_private"];
     const BACKLOG_TAGS: &'static [&'static str] =
         &["notify_none", "no_highlight"];
     const SELF_TAGS: &'static [&'static str] =
@@ -77,6 +78,10 @@ impl RenderedEvent {
 
     pub fn add_msg_tags(self) -> Self {
         self.add_tags(Self::MSG_TAGS)
+    }
+
+    pub fn add_private_msg_tags(self) -> Self {
+        self.add_tags(Self::PRIVATE_MSG_TAGS)
     }
 
     pub fn add_backlog_tags(self) -> Self {

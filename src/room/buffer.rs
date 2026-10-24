@@ -658,6 +658,15 @@ impl RoomBuffer {
         format_buffer_name(&room_name, is_direct, is_space)
     }
 
+    /// Whether the room is a DM, from metadata cached on the buffer.
+    pub fn is_direct(&self) -> bool {
+        self.room_metadata
+            .borrow()
+            .as_ref()
+            .map(|(is_direct, _)| *is_direct)
+            .unwrap_or_default()
+    }
+
     pub fn set_room_metadata(
         &self,
         is_direct: bool,
