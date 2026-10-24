@@ -26,7 +26,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use weechat::{
     buffer::{Buffer, BufferHandle},
     hooks::{SignalCallback, SignalData, SignalHook},
-    plugin, Args, Plugin, ReturnCode, Weechat,
+    plugin, Args, Plugin, Prefix, ReturnCode, Weechat,
 };
 
 use crate::{
@@ -321,6 +321,15 @@ impl Plugin for Matrix {
 
 impl Drop for Matrix {
     fn drop(&mut self) {
+        // Like WeeChat's own plugins, save our config file when unloading;
+        // the server section writer needs the servers, so do it first.
+        if let Err(e) = self.config.borrow().write() {
+            Weechat::print(&format!(
+                "{}matrix: Error writing config file: {e}",
+                Weechat::prefix(Prefix::Error)
+            ));
+        }
+
         let servers = self.servers.borrow();
 
         // Buffer close callbacks get called after this, so drop active
