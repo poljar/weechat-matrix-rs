@@ -57,6 +57,7 @@ impl MatrixCommand {
             .add_argument("sso-complete <server-name> <login-token>")
             .add_argument("history")
             .add_argument("read")
+            .add_argument("direct on|off")
             .add_argument("thread <event-id>")
             .add_argument("threads list [all|participated]|more|open <index>")
             .add_argument("version")
@@ -70,6 +71,7 @@ impl MatrixCommand {
 sso-complete: Finish SSO login with a copied loginToken.
      history: Load an older page of messages in the current room.
         read: Mark the current room as read.
+      direct: Mark the current room as a direct message (on) or a normal room (off).
       thread: Open a thread buffer and load its complete history.
      threads: List the threads of the current room.
      version: Show version information about weechat-matrix.
@@ -404,6 +406,19 @@ Use /matrix [command] help to find out more.\n",
                     room.mark_as_read();
                 }
             }
+            ("direct", Some(subargs)) => {
+                let Some(room) = self.servers.find_room(buffer) else {
+                    Weechat::print(&format!(
+                        "{}{}: /matrix direct needs to be run in a Matrix room buffer.",
+                        Weechat::prefix(Prefix::Error),
+                        PLUGIN_NAME,
+                    ));
+                    return;
+                };
+                let is_direct = subargs.value_of("state") == Some("on");
+                Weechat::spawn(async move { room.set_direct(is_direct).await })
+                    .detach();
+            }
             ("history", _) => {
                 let Some(room) = self.servers.find_room(buffer) else {
                     Weechat::print(&format!(
@@ -564,6 +579,17 @@ impl CommandCallback for MatrixCommand {
             .subcommand(
                 SubCommand::with_name("read")
                     .about("Mark the current room as read."),
+            )
+            .subcommand(
+                SubCommand::with_name("direct")
+                    .about(
+                        "Mark the current room as a direct message (on) or a normal room (off).",
+                    )
+                    .arg(
+                        Arg::with_name("state")
+                            .possible_values(&["on", "off"])
+                            .required(true),
+                    ),
             )
             .subcommand(
                 SubCommand::with_name("history").about(

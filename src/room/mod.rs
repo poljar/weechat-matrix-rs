@@ -1452,6 +1452,37 @@ impl MatrixRoom {
             .unwrap_or_default()
     }
 
+    /// Mark the room as a direct message (or a normal room) in the own
+    /// user's `m.direct` account data, as Element's "convert to DM" does,
+    /// and update the buffer name, type and message tagging accordingly.
+    pub async fn set_direct(&self, is_direct: bool) {
+        let Some(connection) = self.connection.borrow().clone() else {
+            self.print_error("Not connected. Please connect first.");
+            return;
+        };
+
+        let room = self.room();
+        match connection
+            .spawn(async move { room.set_is_direct(is_direct).await })
+            .await
+        {
+            Ok(()) => {
+                self.apply_room_metadata(
+                    is_direct,
+                    self.buffer.cached_display_name(),
+                );
+                self.print_network(if is_direct {
+                    "This room is now a direct message"
+                } else {
+                    "This room is no longer a direct message"
+                });
+            }
+            Err(error) => self.print_error(&format!(
+                "Failed to change the direct message flag: {error}"
+            )),
+        }
+    }
+
     pub fn apply_room_metadata(
         &self,
         is_direct: bool,

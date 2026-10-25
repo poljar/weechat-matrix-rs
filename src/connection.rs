@@ -957,6 +957,18 @@ impl Connection {
                     }
                 }
 
+                // The DM list is account data; when it changes (e.g. a room
+                // converted in another client), refresh every room's metadata.
+                let direct_changed = response.account_data.iter().any(|event| {
+                    event.get_field::<String>("type").ok().flatten().as_deref()
+                        == Some("m.direct")
+                });
+                if direct_changed {
+                    for room in client_ref.joined_rooms() {
+                        Self::queue_room_metadata(sync_channel.clone(), room);
+                    }
+                }
+
                 for (room_id, room) in response.rooms.joined {
                     if let Some(room) = client_ref.get_room(&room_id) {
                         Self::queue_room_metadata(
