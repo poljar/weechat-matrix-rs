@@ -535,6 +535,20 @@ fn make_text_message_content(
     content
 }
 
+/// New content for an edit, rendered like a fresh message.
+fn edit_message_content(
+    input: String,
+    markdown: bool,
+) -> RoomMessageEventContentWithoutRelation {
+    let text = if markdown {
+        TextMessageEventContent::markdown(input)
+    } else {
+        TextMessageEventContent::plain(input)
+    };
+
+    RoomMessageEventContentWithoutRelation::new(MessageType::Text(text))
+}
+
 fn make_emote_message_content(
     body: String,
     thread_root: Option<OwnedEventId>,
@@ -2511,12 +2525,13 @@ impl MatrixRoom {
 
         let room = self.room().clone();
         let error_event_id = event_id.clone();
+        let markdown = self.config.borrow().input().markdown_input();
 
         match connection
             .spawn(async move {
-                let edit = EditedContent::RoomMessage(
-                    RoomMessageEventContentWithoutRelation::text_plain(message),
-                );
+                let edit = EditedContent::RoomMessage(edit_message_content(
+                    message, markdown,
+                ));
                 let content = room
                     .make_edit_event(&event_id, edit)
                     .await
@@ -3916,6 +3931,28 @@ mod tests {
         assert_eq!(
             history_page_marker(&HistoryPageResult::Unavailable),
             "matrix_history_page added=0 exhausted=1 state=unavailable"
+        );
+    }
+
+    #[test]
+    fn edits_render_markdown_when_enabled() {
+        let input = "see [mako](https://matrix.to/#/@mako:example.org)";
+        let formatted =
+            |content: RoomMessageEventContentWithoutRelation| match content
+                .msgtype
+            {
+                MessageType::Text(text) => text.formatted.map(|f| f.body),
+                _ => None,
+            };
+
+        let html = formatted(edit_message_content(input.to_owned(), true))
+            .expect("markdown edit has a formatted body");
+        assert!(
+            html.contains("<a href=\"https://matrix.to/#/@mako:example.org\">")
+        );
+        assert_eq!(
+            formatted(edit_message_content(input.to_owned(), false)),
+            None
         );
     }
 
