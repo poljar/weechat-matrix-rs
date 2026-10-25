@@ -259,6 +259,25 @@ Use /matrix [command] help to find out more.\n",
         }
     }
 
+    fn reconnect_command(&self, args: &ArgMatches) {
+        let server_names = args
+            .values_of("name")
+            .expect("Server names not set but were required");
+
+        for server_name in server_names {
+            if let Some(s) = self.servers.get(server_name) {
+                if s.connected() {
+                    s.disconnect();
+                }
+                if let Err(e) = s.connect() {
+                    Weechat::print(&format!("{:?}", e));
+                }
+            } else {
+                self.server_not_found(server_name)
+            }
+        }
+    }
+
     fn sso_complete_command(&self, args: &ArgMatches) {
         let server_name = args
             .value_of("name")
@@ -379,6 +398,7 @@ Use /matrix [command] help to find out more.\n",
         match args.subcommand() {
             ("connect", Some(subargs)) => self.connect_command(subargs),
             ("disconnect", Some(subargs)) => self.disconnect_command(subargs),
+            ("reconnect", Some(subargs)) => self.reconnect_command(subargs),
             ("sso-complete", Some(subargs)) => {
                 self.sso_complete_command(subargs)
             }
@@ -536,6 +556,16 @@ impl CommandCallback for MatrixCommand {
                         Arg::with_name("name")
                             .value_name("server-name")
                             .required(true),
+                    ),
+            )
+            .subcommand(
+                SubCommand::with_name("reconnect")
+                    .about("Reconnect to Matrix servers.")
+                    .arg(
+                        Arg::with_name("name")
+                            .value_name("server-name")
+                            .required(true)
+                            .multiple(true),
                     ),
             )
             .subcommand(
