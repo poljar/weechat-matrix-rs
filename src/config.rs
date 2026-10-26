@@ -127,6 +127,14 @@ config!(
             RedactionStyle,
         },
 
+        show_redacted_messages: bool {
+            // Description
+            "Show a placeholder for messages that were already redacted when \
+             they were loaded",
+            // Default value
+            true,
+        },
+
         smart_filter_delay: Integer {
             // Description
             "How long a room member can be inactive, in milliseconds, before \
