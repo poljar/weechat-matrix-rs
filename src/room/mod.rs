@@ -3330,8 +3330,8 @@ impl MatrixRoom {
             self.members.get(event.sender()).await.expect(
                 "Rendering a message but the sender isn't in the nicklist",
             );
+        // Redacted events have no content to render.
         let Some(content) = event.original_content() else {
-            tracing::error!("Unhandled redacted event: {event:?}");
             return;
         };
 
@@ -3643,10 +3643,10 @@ impl MatrixRoom {
 
         match &event {
             AnyTimelineEvent::MessageLike(event) => {
+                // Redacted events have no content to render.
                 let content = if let Some(content) = event.original_content() {
                     content
                 } else {
-                    tracing::error!("Unhandled redacted event: {event:?}");
                     return 0;
                 };
                 let send_time = event.origin_server_ts();
