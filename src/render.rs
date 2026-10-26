@@ -681,6 +681,18 @@ impl Render for RedactedMessage {
     }
 }
 
+/// A reaction that was redacted before we saw it.
+pub struct RedactedReaction;
+
+impl Render for RedactedReaction {
+    type RenderContext = WeechatRoomMember;
+    const TAGS: &'static [&'static str] = &["matrix_redacted"];
+
+    fn render(&self, redacter: &Self::RenderContext) -> RenderedContent {
+        redacted_placeholder("Reaction removed by", redacter, self.tags())
+    }
+}
+
 fn redacted_placeholder(
     label: &str,
     redacter: &WeechatRoomMember,

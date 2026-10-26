@@ -135,6 +135,14 @@ config!(
             true,
         },
 
+        show_redacted_reactions: bool {
+            // Description
+            "Show a placeholder for reactions that were already redacted when \
+             they were loaded",
+            // Default value
+            false,
+        },
+
         smart_filter_delay: Integer {
             // Description
             "How long a room member can be inactive, in milliseconds, before \

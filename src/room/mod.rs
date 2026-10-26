@@ -105,7 +105,9 @@ use weechat::{
 use crate::{
     config::{Config, RedactionStyle},
     connection::Connection,
-    render::{RedactedMessage, Render, RenderedEvent, ReplyContext},
+    render::{
+        RedactedMessage, RedactedReaction, Render, RenderedEvent, ReplyContext,
+    },
     server::{InnerServer, MatrixServer, ThreadRoute},
     thread_continuation::ThreadKey,
     utils::{Edit, VerificationEvent},
@@ -3523,17 +3525,28 @@ impl MatrixRoom {
         &self,
         event: &AnySyncMessageLikeEvent,
     ) -> Option<RenderedEvent> {
-        use AnySyncMessageLikeEvent::{RoomEncrypted, RoomMessage, Sticker};
+        use AnySyncMessageLikeEvent::{
+            Reaction, RoomEncrypted, RoomMessage, Sticker,
+        };
         use SyncMessageLikeEvent::Redacted;
 
-        let unsigned = match event {
-            RoomMessage(Redacted(e)) => &e.unsigned,
-            RoomEncrypted(Redacted(e)) => &e.unsigned,
-            Sticker(Redacted(e)) => &e.unsigned,
+        let (unsigned, reaction) = match event {
+            RoomMessage(Redacted(e)) => (&e.unsigned, false),
+            RoomEncrypted(Redacted(e)) => (&e.unsigned, false),
+            Sticker(Redacted(e)) => (&e.unsigned, false),
+            Reaction(Redacted(e)) => (&e.unsigned, true),
             _ => return None,
         };
 
-        if !self.config.borrow().look().show_redacted_messages() {
+        let shown = {
+            let config = self.config.borrow();
+            if reaction {
+                config.look().show_redacted_reactions()
+            } else {
+                config.look().show_redacted_messages()
+            }
+        };
+        if !shown {
             return None;
         }
 
@@ -3545,12 +3558,15 @@ impl MatrixRoom {
         let redacter = self.members.get(redacter.as_ref()).await?;
         let sender = self.members.get(event.sender()).await?;
 
-        Some(RedactedMessage.render_with_prefix(
-            event.origin_server_ts(),
-            event.event_id(),
-            &sender,
-            &redacter,
-        ))
+        let timestamp = event.origin_server_ts();
+        let event_id = event.event_id();
+        Some(if reaction {
+            RedactedReaction
+                .render_with_prefix(timestamp, event_id, &sender, &redacter)
+        } else {
+            RedactedMessage
+                .render_with_prefix(timestamp, event_id, &sender, &redacter)
+        })
     }
 
     pub async fn handle_membership_event(
