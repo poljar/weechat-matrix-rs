@@ -231,6 +231,15 @@ the room or verification buffer:
 The plugin renders in-room SAS verification requests and shows the emoji or
 decimal short authentication string when it is ready.
 
+# Unread State
+
+The hotlist follows the room's unread state on the server, not only what
+arrived while WeeChat was running. The SDK event cache counts unread messages
+from read receipts; whenever that count or the "marked as unread" flag changes,
+the room is added to the hotlist at the message, private, or highlight level,
+or removed from it once read elsewhere. The buffer currently displayed is left
+alone.
+
 # Matrix Spaces
 
 Space buffers use a `+` prefix in their short name, while ordinary room buffers

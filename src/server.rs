@@ -321,6 +321,7 @@ pub struct InnerServer {
     rooms: Rc<RefCell<HashMap<OwnedRoomId, RoomHandle>>>,
     pending_room_metadata:
         RefCell<HashMap<OwnedRoomId, (bool, Option<String>)>>,
+    pending_room_unread: RefCell<HashMap<OwnedRoomId, (u64, u64, bool)>>,
     settings: Rc<RefCell<ServerSettings>>,
     current_settings: Rc<RefCell<ServerSettings>>,
     config: ConfigHandle,
@@ -359,6 +360,7 @@ impl MatrixServer {
             server_name: server_name.clone(),
             rooms: Rc::new(RefCell::new(HashMap::new())),
             pending_room_metadata: RefCell::new(HashMap::new()),
+            pending_room_unread: RefCell::new(HashMap::new()),
             settings: Rc::new(RefCell::new(ServerSettings::new())),
             current_settings: Rc::new(RefCell::new(ServerSettings::new())),
             config: config.clone(),
@@ -1507,6 +1509,13 @@ impl InnerServer {
                 {
                     buffer.apply_room_metadata(is_direct, display_name);
                 }
+                if let Some((unread, mentions, marked_unread)) = self
+                    .pending_room_unread
+                    .borrow_mut()
+                    .remove(buffer.room_id())
+                {
+                    buffer.apply_unread(unread, mentions, marked_unread);
+                }
                 self.switch_restored_upgrade_chain(&buffer);
 
                 // Relay-native frontends select buffers without triggering
@@ -2101,6 +2110,22 @@ impl InnerServer {
             self.pending_room_metadata
                 .borrow_mut()
                 .insert(room_id, (is_direct, display_name));
+        }
+    }
+
+    pub fn receive_room_unread(
+        &self,
+        room_id: OwnedRoomId,
+        unread: u64,
+        mentions: u64,
+        marked_unread: bool,
+    ) {
+        if let Some(room) = self.rooms.borrow().get(&room_id) {
+            room.apply_unread(unread, mentions, marked_unread);
+        } else {
+            self.pending_room_unread
+                .borrow_mut()
+                .insert(room_id, (unread, mentions, marked_unread));
         }
     }
 

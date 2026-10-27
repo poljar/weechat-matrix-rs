@@ -4539,6 +4539,7 @@ dependencies = [
  "futures-util",
  "image",
  "matrix-sdk",
+ "matrix-sdk-base",
  "mime",
  "mime_guess",
  "qrcode",

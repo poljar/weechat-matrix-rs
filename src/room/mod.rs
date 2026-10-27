@@ -55,7 +55,7 @@ use matrix_sdk::{
     attachment::{
         AttachmentConfig, AttachmentInfo, BaseFileInfo, BaseImageInfo,
     },
-    deserialized_responses::AmbiguityChange,
+    deserialized_responses::{AmbiguityChange, TimelineEvent},
     room::{
         edit::EditedContent,
         reply::{EnforceThread, Reply},
@@ -86,6 +86,7 @@ use matrix_sdk::{
             AnyTimelineEvent, OriginalSyncMessageLikeEvent,
             SyncMessageLikeEvent, SyncStateEvent,
         },
+        push::Action,
         room::JoinRule,
         serde::Raw,
         EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomAliasId,
@@ -1450,6 +1451,36 @@ impl MatrixRoom {
             .runtime
             .block_on(room.is_direct())
             .unwrap_or_default()
+    }
+
+    /// Mirror the room's unread state into the WeeChat hotlist, so rooms read
+    /// or marked unread in other clients show up the same way here.
+    pub fn apply_unread(
+        &self,
+        unread: u64,
+        mentions: u64,
+        marked_unread: bool,
+    ) {
+        let buffer_handle = self.buffer_handle();
+        let Ok(buffer) = buffer_handle.upgrade() else {
+            return;
+        };
+
+        if buffer == unsafe { Weechat::weechat() }.current_buffer() {
+            return;
+        }
+
+        let command = if unread == 0 && !marked_unread {
+            "/hotlist remove"
+        } else if mentions > 0 {
+            "/hotlist add highlight"
+        } else if buffer.get_localvar("type").as_deref() == Some("private") {
+            "/hotlist add private"
+        } else {
+            "/hotlist add message"
+        };
+
+        let _ = buffer.run_command(command);
     }
 
     pub fn apply_room_metadata(
@@ -3076,6 +3107,7 @@ impl MatrixRoom {
                     r.end.clone(),
                     fetched,
                 );
+                let first_page = self.latest_event_id.borrow().is_none();
                 let mut added = 0;
                 for event in
                     r.chunk.iter().filter_map(|e| e.raw().deserialize().ok())
@@ -3093,6 +3125,10 @@ impl MatrixRoom {
                         *self.latest_event_id.borrow_mut() = Some(event_id);
                     }
                     added += self.handle_room_event(&event).await;
+                }
+
+                if first_page {
+                    self.flag_unread_history(&r.chunk).await;
                 }
 
                 let mut prev_batch = self.prev_batch.borrow_mut();
@@ -3121,6 +3157,69 @@ impl MatrixRoom {
         Weechat::bar_item_update("matrix_modes");
 
         result
+    }
+
+    /// Backlog lines carry no notify tags, so count the page's messages newer
+    /// than the user's own read receipt and mirror that into the hotlist.
+    async fn flag_unread_history(&self, chunk: &[TimelineEvent]) {
+        let Some(connection) = self.connection.borrow().as_ref().cloned()
+        else {
+            return;
+        };
+        let receipts = connection
+            .own_read_receipts(self.room(), self.own_user_id.clone())
+            .await;
+        // The SDK ran the push rules over the page, so highlights match what
+        // other clients count as mentions.
+        let events: Vec<(AnySyncTimelineEvent, bool)> = chunk
+            .iter()
+            .filter_map(|event| {
+                let highlight = event.push_actions().is_some_and(|actions| {
+                    actions.iter().any(Action::is_highlight)
+                });
+                Some((event.raw().deserialize().ok()?, highlight))
+            })
+            .collect();
+
+        let mut read_until = receipts.iter().filter_map(|(_, ts)| *ts).max();
+        for (event_id, _) in &receipts {
+            if let Some((event, _)) = events
+                .iter()
+                .find(|(event, _)| event.event_id() == event_id)
+            {
+                read_until = read_until.max(Some(event.origin_server_ts()));
+            }
+        }
+
+        let (mut unread, mut mentions) = (0, 0);
+        for (event, highlight) in &events {
+            let AnySyncTimelineEvent::MessageLike(event) = event else {
+                continue;
+            };
+            if read_until.is_some_and(|ts| event.origin_server_ts() <= ts)
+                || event.sender() == &*self.own_user_id
+                || event.is_edit()
+            {
+                continue;
+            }
+            if matches!(
+                event.original_content(),
+                Some(
+                    AnyMessageLikeEventContent::RoomMessage(_)
+                        | AnyMessageLikeEventContent::RoomEncrypted(_)
+                        | AnyMessageLikeEventContent::Sticker(_)
+                )
+            ) {
+                unread += 1;
+                if *highlight {
+                    mentions += 1;
+                }
+            }
+        }
+
+        if unread > 0 {
+            self.apply_unread(unread, mentions, false);
+        }
     }
 
     pub fn print_history_page_result(&self, result: HistoryPageResult) {

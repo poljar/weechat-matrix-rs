@@ -68,5 +68,8 @@ version = "0.18.0"
 # rev = "92192c549b3f53889c23954386743867a73b31b1"
 features = ["markdown", "socks", "qrcode", "sso-login"]
 
+[dependencies.matrix-sdk-base]
+version = "0.18.0"
+
 [profile.dev.package]
 sha2 = { opt-level = 2 }
