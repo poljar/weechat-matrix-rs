@@ -1967,9 +1967,10 @@ impl InnerServer {
         &self,
         room_id: &RoomId,
         event: AnySyncTimelineEvent,
+        highlight: bool,
     ) {
         let room = self.get_or_create_room(room_id);
-        room.handle_sync_room_event(event).await
+        room.handle_sync_room_event(event, highlight).await
     }
 
     pub async fn receive_joined_ephemeral_event(

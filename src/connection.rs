@@ -18,7 +18,7 @@ use matrix_sdk::{
     self,
     authentication::matrix::MatrixSession,
     config::SyncSettings,
-    deserialized_responses::AmbiguityChange,
+    deserialized_responses::{AmbiguityChange, TimelineEvent},
     room::{Messages, MessagesOptions, Receipts, Room},
     ruma::{
         api::client::{
@@ -47,6 +47,7 @@ use matrix_sdk::{
             AnySyncEphemeralRoomEvent, AnySyncStateEvent, AnySyncTimelineEvent,
             AnyToDeviceEvent, SyncStateEvent,
         },
+        push::Action,
         OwnedDeviceId, OwnedEventId, OwnedRoomId, OwnedTransactionId,
         OwnedUserId,
     },
@@ -117,13 +118,25 @@ impl InteractiveAuthInfo {
     }
 }
 
+/// Whether the push rules flag the event as a highlight: a mention, `@room`
+/// or a keyword, as other clients decide it.
+pub fn is_highlight(event: &TimelineEvent) -> bool {
+    event
+        .push_actions()
+        .is_some_and(|actions| actions.iter().any(Action::is_highlight))
+}
+
 pub enum ClientMessage {
     LoginMessage(LoginResponse),
     SessionRestored(OwnedUserId),
     SessionTokensRefreshed(SessionTokens),
     SsoLoginUrl(String),
     SyncState(OwnedRoomId, AnySyncStateEvent),
-    SyncEvent(OwnedRoomId, AnySyncTimelineEvent),
+    SyncEvent {
+        room_id: OwnedRoomId,
+        event: AnySyncTimelineEvent,
+        highlight: bool,
+    },
     EphemeralRoomEvent(OwnedRoomId, AnySyncEphemeralRoomEvent),
     ToDeviceEvent(AnyToDeviceEvent),
     MemberEvent(
@@ -575,8 +588,16 @@ impl Connection {
                     ClientMessage::SsoLoginUrl(url) => {
                         server.receive_sso_url(&url)
                     }
-                    ClientMessage::SyncEvent(r, e) => {
-                        server.receive_joined_timeline_event(&r, e).await
+                    ClientMessage::SyncEvent {
+                        room_id,
+                        event,
+                        highlight,
+                    } => {
+                        server
+                            .receive_joined_timeline_event(
+                                &room_id, event, highlight,
+                            )
+                            .await
                     }
                     ClientMessage::SyncState(r, e) => {
                         server.receive_joined_state_event(&r, e).await
@@ -1018,12 +1039,11 @@ impl Connection {
                         }
                     }
 
-                    for event in room
-                        .timeline
-                        .events
-                        .iter()
-                        .filter_map(|e| e.raw().deserialize().ok())
-                    {
+                    for timeline_event in room.timeline.events.iter() {
+                        let Ok(event) = timeline_event.raw().deserialize()
+                        else {
+                            continue;
+                        };
                         if let AnySyncTimelineEvent::State(
                             AnySyncStateEvent::RoomMember(m),
                         ) = event
@@ -1046,10 +1066,11 @@ impl Connection {
                                 return LoopCtrl::Break;
                             }
                         } else if sync_channel
-                            .send(Ok(ClientMessage::SyncEvent(
-                                room_id.clone(),
+                            .send(Ok(ClientMessage::SyncEvent {
+                                room_id: room_id.clone(),
                                 event,
-                            )))
+                                highlight: is_highlight(timeline_event),
+                            }))
                             .await
                             .is_err()
                         {

@@ -66,6 +66,7 @@ pub enum ReplyContext {
 
 impl RenderedEvent {
     const MSG_TAGS: &'static [&'static str] = &["notify_message"];
+    const HIGHLIGHT_TAGS: &'static [&'static str] = &["notify_highlight"];
     const BACKLOG_TAGS: &'static [&'static str] =
         &["notify_none", "no_highlight"];
     const SELF_TAGS: &'static [&'static str] =
@@ -77,6 +78,10 @@ impl RenderedEvent {
 
     pub fn add_msg_tags(self) -> Self {
         self.add_tags(Self::MSG_TAGS)
+    }
+
+    pub fn add_highlight_tags(self) -> Self {
+        self.add_tags(Self::HIGHLIGHT_TAGS)
     }
 
     pub fn add_backlog_tags(self) -> Self {
@@ -2042,5 +2047,23 @@ mod tests {
         assert!(!rendered.content.lines[0]
             .tags
             .contains(&"notify_message".to_owned()));
+    }
+
+    #[test]
+    fn highlight_tags_force_a_highlight() {
+        let rendered = RenderedEvent {
+            message_timestamp: 0,
+            prefix: "alice\t".to_owned(),
+            content: RenderedContent::new(vec![RenderedLine {
+                tags: vec!["matrix_text".to_owned()],
+                message: "@room meeting now".to_owned(),
+            }]),
+        }
+        .add_msg_tags()
+        .add_highlight_tags();
+
+        let tags = &rendered.content.lines[0].tags;
+        assert!(tags.contains(&"notify_message".to_owned()));
+        assert!(tags.contains(&"notify_highlight".to_owned()));
     }
 }

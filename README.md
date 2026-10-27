@@ -307,6 +307,12 @@ the nicklist, `/names`, and nick completion, set `matrix-rust.look.nick_format`:
 Supported placeholders are `%d` for display name, `%m` for full MXID, `%u` for
 MXID localpart, and `%h` for homeserver.
 
+# Highlights
+
+Messages that the account's push rules flag as highlights (mentions of you,
+`@room`, keywords) carry WeeChat's `notify_highlight` tag, so they highlight
+and reach the hotlist the way they do in Element.
+
 # Helpful Commands
 
 `/help matrix` will print information about the `/matrix` command.

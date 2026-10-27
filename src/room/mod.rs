@@ -104,7 +104,7 @@ use weechat::{
 
 use crate::{
     config::{Config, RedactionStyle},
-    connection::Connection,
+    connection::{is_highlight, Connection},
     render::{Render, RenderedEvent, ReplyContext},
     server::{InnerServer, MatrixServer, ThreadRoute},
     thread_continuation::ThreadKey,
@@ -1882,6 +1882,7 @@ impl MatrixRoom {
     async fn render_sync_message(
         &self,
         event: &AnySyncMessageLikeEvent,
+        highlight: bool,
     ) -> Option<RenderedEvent> {
         // TODO: remove this expect.
         let sender =
@@ -1902,6 +1903,8 @@ impl MatrixRoom {
                 // TODO: the tags are different if the room is a DM.
                 if sender.user_id() == &*self.own_user_id {
                     r.add_self_tags()
+                } else if highlight {
+                    r.add_msg_tags().add_highlight_tags()
                 } else {
                     r.add_msg_tags()
                 }
@@ -2052,7 +2055,10 @@ impl MatrixRoom {
         ) {
             return false;
         }
-        let Some(rendered) = self.render_sync_message(&event).await else {
+        let Some(rendered) = self
+            .render_sync_message(&event, is_highlight(&timeline))
+            .await
+        else {
             return false;
         };
         if !self.buffer.replace_event(event_id, rendered) {
@@ -2158,8 +2164,9 @@ impl MatrixRoom {
                     encrypted.origin_server_ts,
                     &encrypted.content,
                 );
-            } else if let Some(rendered) =
-                self.render_sync_message(&event).await
+            } else if let Some(rendered) = self
+                .render_sync_message(&event, is_highlight(&timeline))
+                .await
             {
                 self.buffer.replace_event(&event_id, rendered);
             }
@@ -3379,7 +3386,7 @@ impl MatrixRoom {
         );
 
         let rendered = self
-            .render_sync_message(&event)
+            .render_sync_message(&event, false)
             .await
             .expect("Sent out an event that we don't know how to render");
 
@@ -3441,7 +3448,11 @@ impl MatrixRoom {
         }
     }
 
-    async fn handle_room_message(&self, event: &AnySyncMessageLikeEvent) {
+    async fn handle_room_message(
+        &self,
+        event: &AnySyncMessageLikeEvent,
+        highlight: bool,
+    ) {
         // If the event has a transaction id it's an event that we sent out
         // ourselves, the content will be in the outgoing message queue and it
         // may have been printed out as a local echo.
@@ -3500,7 +3511,9 @@ impl MatrixRoom {
         ) {
             return;
         } else {
-            if let Some(rendered) = self.render_sync_message(event).await {
+            if let Some(rendered) =
+                self.render_sync_message(event, highlight).await
+            {
                 let thread_root = thread_root_from_event(event);
 
                 if let Some(thread_root) = &thread_root {
@@ -3577,7 +3590,11 @@ impl MatrixRoom {
         }
     }
 
-    pub async fn handle_sync_room_event(&self, event: AnySyncTimelineEvent) {
+    pub async fn handle_sync_room_event(
+        &self,
+        event: AnySyncTimelineEvent,
+        highlight: bool,
+    ) {
         self.set_prev_batch();
 
         *self.latest_event_id.borrow_mut() = Some(match &event {
@@ -3589,7 +3606,7 @@ impl MatrixRoom {
 
         match &event {
             AnySyncTimelineEvent::MessageLike(message) => {
-                self.handle_room_message(message).await
+                self.handle_room_message(message, highlight).await
             }
             AnySyncTimelineEvent::State(event) => {
                 self.handle_sync_state_event(event, false).await
