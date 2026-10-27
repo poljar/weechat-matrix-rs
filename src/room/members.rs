@@ -425,6 +425,14 @@ impl Members {
         self.last_active.insert(user_id.to_owned(), timestamp);
     }
 
+    /// Nicks as shown in the nicklist, with the user each belongs to.
+    pub fn nicks(&self) -> Vec<(String, OwnedUserId)> {
+        self.nicks
+            .iter()
+            .map(|entry| (entry.value().clone(), entry.key().clone()))
+            .collect()
+    }
+
     pub fn names(&self) -> Vec<String> {
         let mut names: Vec<_> = self
             .nicks

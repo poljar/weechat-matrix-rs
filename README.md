@@ -307,6 +307,18 @@ the nicklist, `/names`, and nick completion, set `matrix-rust.look.nick_format`:
 Supported placeholders are `%d` for display name, `%m` for full MXID, `%u` for
 MXID localpart, and `%h` for homeserver.
 
+# Mentions
+
+With `matrix-rust.input.markdown_input` on, a nick completed at the start of a
+message (`nick: hi`) or written as `@nick` anywhere becomes a mention: other
+clients show a pill and notify that user. Nicks are matched against the room's
+members, ignoring case; text in backticks is left alone. `@room` mentions the
+whole room, as far as the room's power levels allow. To complete `@kay` to
+`@Kaylea` (or `@ro` to `@room`) with Tab, add `%(matrix_mentions)` to the
+completion template:
+
+    /set weechat.completion.default_template "%(nicks)|%(irc_channels)|%(matrix_mentions)"
+
 # Helpful Commands
 
 `/help matrix` will print information about the `/matrix` command.
