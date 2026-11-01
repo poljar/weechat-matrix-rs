@@ -3,7 +3,7 @@ use std::{
     future::Future,
     path::PathBuf,
     rc::{Rc, Weak},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use tokio::{
@@ -72,6 +72,7 @@ const SEND_RETRY_DELAYS: [Duration; 4] = [
     Duration::from_secs(5),
     Duration::from_secs(10),
 ];
+const SEND_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 const SYNC_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(1);
 const SYNC_RETRY_MAX_DELAY: Duration = Duration::from_secs(60);
 const ROOM_METADATA_TIMEOUT: Duration = Duration::from_secs(30);
@@ -85,8 +86,18 @@ fn is_retryable_network_error(error: &matrix_sdk::Error) -> bool {
     )
 }
 
-fn send_retry_delay(attempt: usize) -> Option<Duration> {
-    SEND_RETRY_DELAYS.get(attempt).copied()
+/// How long to wait before retry number `attempt`, or `None` once the next
+/// wait would take the total time spent retrying past `retry_for`.
+fn send_retry_delay(
+    attempt: usize,
+    elapsed: Duration,
+    retry_for: Duration,
+) -> Option<Duration> {
+    let delay = SEND_RETRY_DELAYS
+        .get(attempt)
+        .copied()
+        .unwrap_or(SEND_RETRY_MAX_DELAY);
+    (elapsed + delay <= retry_for).then_some(delay)
 }
 
 fn sync_retry_delay(failures: u32) -> Duration {
@@ -329,9 +340,11 @@ impl Connection {
         room: Room,
         content: AnyMessageLikeEventContent,
         transaction_id: Option<OwnedTransactionId>,
+        retry_for: Duration,
     ) -> MatrixResult<send_message_event::v3::Response> {
         self.spawn(async move {
             let mut attempt = 0;
+            let started = Instant::now();
 
             loop {
                 let mut msg = room.send(content.clone());
@@ -339,23 +352,24 @@ impl Connection {
                     msg = msg.with_transaction_id(txn_id.to_owned());
                 }
 
-                match msg.await {
+                let error = match msg.await {
                     Ok(result) => return Ok(result.response),
-                    Err(error)
-                        if is_retryable_network_error(&error)
-                            && send_retry_delay(attempt).is_some() =>
-                    {
-                        let delay = send_retry_delay(attempt)
-                            .expect("delay checked above");
-                        attempt += 1;
-                        error!(
-                            "Matrix message send failed due to a network error, retrying in {}s: {error}",
-                            delay.as_secs()
-                        );
-                        tokio::time::sleep(delay).await;
-                    }
-                    Err(error) => return Err(error),
-                }
+                    Err(error) => error,
+                };
+                let delay = if is_retryable_network_error(&error) {
+                    send_retry_delay(attempt, started.elapsed(), retry_for)
+                } else {
+                    None
+                };
+                let Some(delay) = delay else {
+                    return Err(error);
+                };
+                attempt += 1;
+                error!(
+                    "Matrix message send failed due to a network error, retrying in {}s: {error}",
+                    delay.as_secs()
+                );
+                tokio::time::sleep(delay).await;
             }
         })
         .await
@@ -1130,10 +1144,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn send_retries_are_bounded() {
-        assert_eq!(send_retry_delay(0), Some(Duration::from_secs(1)));
-        assert_eq!(send_retry_delay(3), Some(Duration::from_secs(10)));
-        assert_eq!(send_retry_delay(4), None);
+    fn send_retries_back_off_and_stop_at_the_time_limit() {
+        let limit = Duration::from_secs(300);
+        let zero = Duration::ZERO;
+
+        assert_eq!(
+            send_retry_delay(0, zero, limit),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(
+            send_retry_delay(3, zero, limit),
+            Some(Duration::from_secs(10))
+        );
+        assert_eq!(
+            send_retry_delay(4, zero, limit),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            send_retry_delay(40, zero, limit),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            send_retry_delay(5, Duration::from_secs(270), limit),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(send_retry_delay(5, Duration::from_secs(271), limit), None);
+        assert_eq!(send_retry_delay(0, zero, zero), None);
     }
 
     #[test]

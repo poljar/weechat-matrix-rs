@@ -196,6 +196,16 @@ config!(
             // Default value.
             true,
         },
+
+        send_retry_timeout: Integer {
+            // Description
+            "How long, in seconds, to keep retrying a message that failed \
+             to send because of a network error before giving up",
+            // Default value.
+            300,
+            // Range: no retries to one day.
+            0..86400,
+        },
     },
 
     Section input {
