@@ -2401,6 +2401,7 @@ impl MatrixRoom {
                     room,
                     AnyMessageLikeEventContent::RoomMessage(content),
                     Some(transaction_id.clone()),
+                    self.send_retry_timeout(),
                 )
                 .await
             {
@@ -2440,6 +2441,11 @@ impl MatrixRoom {
                 message
             ));
         }
+    }
+
+    fn send_retry_timeout(&self) -> Duration {
+        let seconds = self.config.borrow().network().send_retry_timeout();
+        Duration::from_secs(seconds.max(0) as u64)
     }
 
     fn print_error(&self, message: &str) {

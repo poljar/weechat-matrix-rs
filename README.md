@@ -291,6 +291,10 @@ A short `bt` from the crashing thread is often not enough to tell whether the
 Matrix plugin, WeeChat itself, another plugin, or shutdown cleanup owns the
 block.
 
+A message that fails to send because of a network error is retried, with
+growing pauses, for `matrix-rust.network.send_retry_timeout` seconds (default
+300) before the plugin gives up and reports the failure in the buffer.
+
 Nick prefix colors for Matrix power levels can be changed with:
 
        /set matrix-rust.color.nick_prefix_admin lightgreen
