@@ -2421,10 +2421,12 @@ impl MatrixRoom {
                     Ok(r.event_id)
                 }
                 Err(error) => {
-                    // TODO: print out an error, remember to modify the local
-                    // echo line if there is one.
-                    self.outgoing_messages.remove(&transaction_id);
-                    Err(format!("Failed to send Matrix message: {error}"))
+                    if let Some((true, _)) =
+                        self.outgoing_messages.remove(&transaction_id)
+                    {
+                        self.buffer.mark_local_echo_failed(&transaction_id);
+                    }
+                    Err(format!("Message not sent: {error}"))
                 }
             }
         } else {
