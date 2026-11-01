@@ -291,6 +291,10 @@ A short `bt` from the crashing thread is often not enough to tell whether the
 Matrix plugin, WeeChat itself, another plugin, or shutdown cleanup owns the
 block.
 
+A message you send is shown dimmed until the server accepts it. If sending
+fails, the line turns the error color and gets the `matrix_send_failed` tag, and
+the buffer notes that the message was not sent; send it again by hand.
+
 Nick prefix colors for Matrix power levels can be changed with:
 
        /set matrix-rust.color.nick_prefix_admin lightgreen

@@ -21,6 +21,9 @@ use crate::{render::RenderedEvent, utils::ToTag};
 
 use super::{maybe_active_room, SharedRoom};
 
+/// Tag on the local echo of a message the server never accepted.
+const SEND_FAILED_TAG: &str = "matrix_send_failed";
+
 #[derive(Clone)]
 pub struct RoomBuffer {
     room: SharedRoom,
@@ -321,6 +324,24 @@ impl RoomBuffer {
         self.thread_buffers.borrow().values().any(|handle| {
             handle.upgrade().is_ok_and(|buffer| {
                 replace_local_echo_in_buffer(&buffer, &uuid_tag, &rendered)
+            })
+        });
+    }
+
+    /// Recolor the local echo of a message the server never accepted and
+    /// tag it `matrix_send_failed`.
+    pub fn mark_local_echo_failed(&self, transaction_id: &TransactionId) {
+        let uuid_tag = Cow::from(format!("matrix_echo_{}", transaction_id));
+
+        if self.buffer_handle().upgrade().is_ok_and(|buffer| {
+            mark_local_echo_failed_in_buffer(&buffer, &uuid_tag)
+        }) {
+            return;
+        }
+
+        self.thread_buffers.borrow().values().any(|handle| {
+            handle.upgrade().is_ok_and(|buffer| {
+                mark_local_echo_failed_in_buffer(&buffer, &uuid_tag)
             })
         });
     }
@@ -1081,6 +1102,34 @@ fn replace_local_echo_in_buffer(
     }
 
     replaced
+}
+
+fn mark_local_echo_failed_in_buffer(
+    buffer: &Buffer,
+    uuid_tag: &Cow<str>,
+) -> bool {
+    let mut marked = false;
+
+    for line in buffer
+        .lines()
+        .rev()
+        .filter(|line| line.tags().contains(uuid_tag))
+    {
+        line.set_message(&format!(
+            "{}{}{}",
+            Weechat::color("chat_prefix_error"),
+            Weechat::remove_color(&line.message()),
+            Weechat::color("reset")
+        ));
+        let mut tags: Vec<String> =
+            line.tags().iter().map(|tag| tag.to_string()).collect();
+        tags.push(SEND_FAILED_TAG.to_owned());
+        let tags: Vec<&str> = tags.iter().map(String::as_str).collect();
+        line.set_tags(&tags);
+        marked = true;
+    }
+
+    marked
 }
 
 #[cfg(test)]
