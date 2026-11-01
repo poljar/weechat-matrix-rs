@@ -109,7 +109,7 @@ use crate::{
     connection::{Connection, InteractiveAuthInfo},
     room::RoomHandle,
     thread_continuation::{ThreadContinuationState, ThreadKey},
-    verification_buffer::VerificationBuffer,
+    verification_buffer::{Verification, VerificationBuffer},
     ConfigHandle, Servers, PLUGIN_NAME,
 };
 
@@ -1112,6 +1112,37 @@ impl InnerServer {
         state.save(&connection).await
     }
 
+    /// Open the buffer for a new verification flow. A server has one
+    /// verification buffer, so the buffers of earlier flows are closed first.
+    fn new_verification_buffer(
+        &self,
+        sender: &UserId,
+        verification: impl Into<Verification>,
+    ) -> Option<VerificationBuffer> {
+        let stale: Vec<VerificationBuffer> = self
+            .verification_buffers
+            .borrow_mut()
+            .drain()
+            .map(|(_, buffer)| buffer)
+            .collect();
+        for buffer in stale {
+            buffer.close();
+        }
+
+        match VerificationBuffer::new(
+            &self.server_name,
+            sender,
+            verification,
+            self.connection.clone(),
+        ) {
+            Ok(buffer) => Some(buffer),
+            Err(error) => {
+                self.print_error(&error);
+                None
+            }
+        }
+    }
+
     pub fn verifications(&self) -> Vec<VerificationBuffer> {
         self.verification_buffers
             .borrow()
@@ -1813,17 +1844,15 @@ impl InnerServer {
                         )
                         .await
                     {
-                        let buffer = VerificationBuffer::new(
-                            &self.server_name,
-                            &e.sender,
-                            request,
-                            self.connection.clone(),
-                        );
-                        buffer.handle_event(&event).await;
-                        self.verification_buffers.borrow_mut().insert(
-                            e.content.transaction_id.to_string(),
-                            buffer,
-                        );
+                        if let Some(buffer) =
+                            self.new_verification_buffer(&e.sender, request)
+                        {
+                            buffer.handle_event(&event).await;
+                            self.verification_buffers.borrow_mut().insert(
+                                e.content.transaction_id.to_string(),
+                                buffer,
+                            );
+                        }
                     }
                 }
             }
@@ -1850,13 +1879,9 @@ impl InnerServer {
                                 if let Some(mut buffer) = buffer {
                                     let _ = buffer.update(sas).await;
                                     buffer.handle_event(&event).await;
-                                } else {
-                                    let buffer = VerificationBuffer::new(
-                                        &self.server_name,
-                                        &e.sender,
-                                        sas,
-                                        self.connection.clone(),
-                                    );
+                                } else if let Some(buffer) =
+                                    self.new_verification_buffer(&e.sender, sas)
+                                {
                                     buffer.handle_event(&event).await;
                                     self.verification_buffers
                                         .borrow_mut()
@@ -2753,15 +2778,13 @@ impl InnerServer {
 
                 if request.room_id().is_none() {
                     let flow_id = request.flow_id().to_owned();
-                    let buffer = VerificationBuffer::new(
-                        &self.server_name,
-                        &user_id,
-                        request,
-                        self.connection.clone(),
-                    );
-                    self.verification_buffers
-                        .borrow_mut()
-                        .insert(flow_id, buffer);
+                    if let Some(buffer) =
+                        self.new_verification_buffer(&user_id, request)
+                    {
+                        self.verification_buffers
+                            .borrow_mut()
+                            .insert(flow_id, buffer);
+                    }
                 }
             }
             Ok(None) => self.print_error(&format!(

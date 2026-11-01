@@ -33,6 +33,7 @@ use crate::{
     render::{
         Render, RenderedContent, StartVerificationContext, VerificationContext,
     },
+    PLUGIN_NAME,
 };
 
 #[derive(Clone)]
@@ -241,13 +242,21 @@ impl VerificationBuffer {
         _sender: &UserId,
         verification: impl Into<Verification>,
         connection: Rc<RefCell<Option<Connection>>>,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let inner = InnerVerificationBuffer {
             verification: Rc::new(RefCell::new(Some(verification.into()))),
             connection,
         };
 
         let buffer_name = format!("{}.verification", server_name);
+
+        // WeeChat refuses a second buffer with the same name, so a buffer
+        // left over from an earlier verification goes first.
+        if let Some(buffer) = (unsafe { Weechat::weechat() })
+            .buffer_search(PLUGIN_NAME, &buffer_name)
+        {
+            buffer.close();
+        }
 
         let buffer_handle = BufferBuilderAsync::new(&buffer_name)
             .input_callback(inner.clone())
@@ -257,11 +266,13 @@ impl VerificationBuffer {
                 Ok(())
             })
             .build()
-            .expect("Can't create new room buffer");
+            .map_err(|_| {
+                format!("Can't create the verification buffer {buffer_name}")
+            })?;
 
-        let buffer = buffer_handle
-            .upgrade()
-            .expect("Can't upgrade newly created buffer");
+        let buffer = buffer_handle.upgrade().map_err(|_| {
+            format!("Can't use the new verification buffer {buffer_name}")
+        })?;
 
         buffer.disable_nicklist();
         buffer.disable_nicklist_groups();
@@ -269,14 +280,22 @@ impl VerificationBuffer {
 
         buffer.set_localvar("server", server_name);
 
-        Self {
+        Ok(Self {
             inner,
             buffer: buffer_handle,
-        }
+        })
     }
 
     pub fn buffer(&self) -> BufferHandle {
         self.buffer.clone()
+    }
+
+    /// Close the WeeChat buffer, cancelling the verification if it is still
+    /// running.
+    pub fn close(&self) {
+        if let Ok(buffer) = self.buffer.upgrade() {
+            buffer.close();
+        }
     }
 
     pub fn release_sdk_state(&self) {
