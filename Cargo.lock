@@ -4542,6 +4542,7 @@ dependencies = [
  "mime",
  "mime_guess",
  "qrcode",
+ "regex",
  "ruma-html",
  "serde",
  "serde_json",

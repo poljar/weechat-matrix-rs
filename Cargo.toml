@@ -47,6 +47,7 @@ uuid = { version = "1.1.2", features = ["v4"] }
 unicode-segmentation = "1.10.0"
 futures-util = "0.3"
 ruma-html = { version = "0.8.0", features = ["matrix"] }
+regex = "1"
 
 # Auto-select version from matrix-sdk
 qrcode = { version = "*", default-features = false }

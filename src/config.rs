@@ -205,6 +205,22 @@ config!(
             // Default value.
             true,
         },
+
+        sed_edit: bool {
+            // Description
+            "Treat a message of the form s/pattern/replacement/ as \
+             /edit /pattern/replacement/",
+            // Default value.
+            true,
+        },
+
+        edit_regex: bool {
+            // Description
+            "Treat /edit patterns as regular expressions instead of \
+             substrings; replacements may refer to groups as $1",
+            // Default value.
+            false,
+        },
     },
 
     Section media {
