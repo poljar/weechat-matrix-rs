@@ -1036,9 +1036,14 @@ impl BufferInputCallbackAsync for MatrixRoom {
                         self.edit_regex(),
                     ) {
                         Ok((event_id, message)) => {
-                            self.send_edit(event_id, message).await
+                            let thread_root = thread_root_localvar(&buffer);
+                            self.send_edit(event_id, message, thread_root).await
                         }
-                        Err(error) => self.print_error(&error),
+                        Err(error) => buffer.print(&format!(
+                            "{}matrix: {}",
+                            Weechat::prefix(Prefix::Error),
+                            error
+                        )),
                     }
                     return;
                 }
@@ -1048,6 +1053,13 @@ impl BufferInputCallbackAsync for MatrixRoom {
             self.send_message(content).await;
         }
     }
+}
+
+/// The thread a thread buffer shows, from its `thread_root` local variable.
+pub(crate) fn thread_root_localvar(buffer: &Buffer) -> Option<OwnedEventId> {
+    buffer
+        .get_localvar("thread_root")
+        .and_then(|root| EventId::parse(root.as_ref()).ok())
 }
 
 /// The `/pattern/replacement/` part of an `s/pattern/replacement/` message.
@@ -2481,6 +2493,28 @@ impl MatrixRoom {
         }
     }
 
+    /// Print an error in the thread buffer of `thread_root`, or in the room
+    /// buffer when there is none.
+    fn print_error_in_thread(
+        &self,
+        thread_root: Option<&EventId>,
+        message: &str,
+    ) {
+        let handle =
+            thread_root.and_then(|root| self.buffer.thread_buffer(root));
+
+        if let Some(Ok(buffer)) = handle.as_ref().map(|handle| handle.upgrade())
+        {
+            buffer.print(&format!(
+                "{}{}",
+                Weechat::prefix(Prefix::Error),
+                message
+            ));
+        } else {
+            self.print_error(message);
+        }
+    }
+
     pub async fn invite_user(&self, user_id: OwnedUserId) {
         let Some(connection) = self.connection.borrow().clone() else {
             self.print_error("Not connected. Please connect first.");
@@ -2532,7 +2566,14 @@ impl MatrixRoom {
         }
     }
 
-    pub async fn send_edit(&self, event_id: OwnedEventId, message: String) {
+    /// Send an edit. Errors print in the thread buffer `thread_root` when
+    /// the edit was typed in one, otherwise in the room buffer.
+    pub async fn send_edit(
+        &self,
+        event_id: OwnedEventId,
+        message: String,
+        thread_root: Option<OwnedEventId>,
+    ) {
         let Some(connection) = self.connection.borrow().clone() else {
             self.print_error("Not connected. Please connect first.");
             return;
@@ -2559,10 +2600,10 @@ impl MatrixRoom {
             .await
         {
             Ok(_) => (),
-            Err(error) => self.print_error(&format!(
-                "Failed to edit {}: {}",
-                error_event_id, error
-            )),
+            Err(error) => self.print_error_in_thread(
+                thread_root.as_deref(),
+                &format!("Failed to edit {}: {}", error_event_id, error),
+            ),
         }
     }
 
