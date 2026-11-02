@@ -81,10 +81,10 @@ use matrix_sdk::{
                 redaction::SyncRoomRedactionEvent,
                 tombstone::RoomTombstoneEventContent,
             },
-            AnyMessageLikeEventContent, AnySyncEphemeralRoomEvent,
-            AnySyncMessageLikeEvent, AnySyncStateEvent, AnySyncTimelineEvent,
-            AnyTimelineEvent, OriginalSyncMessageLikeEvent,
-            SyncMessageLikeEvent, SyncStateEvent,
+            AnyMessageLikeEvent, AnyMessageLikeEventContent,
+            AnySyncEphemeralRoomEvent, AnySyncMessageLikeEvent,
+            AnySyncStateEvent, AnySyncTimelineEvent, AnyTimelineEvent,
+            OriginalSyncMessageLikeEvent, SyncMessageLikeEvent, SyncStateEvent,
         },
         room::JoinRule,
         serde::Raw,
@@ -105,7 +105,9 @@ use weechat::{
 use crate::{
     config::{Config, RedactionStyle},
     connection::Connection,
-    render::{Render, RenderedEvent, ReplyContext},
+    render::{
+        RedactedMessage, RedactedReaction, Render, RenderedEvent, ReplyContext,
+    },
     server::{InnerServer, MatrixServer, ThreadRoute},
     thread_continuation::ThreadKey,
     utils::{Edit, VerificationEvent},
@@ -3330,8 +3332,8 @@ impl MatrixRoom {
             self.members.get(event.sender()).await.expect(
                 "Rendering a message but the sender isn't in the nicklist",
             );
+        // Redacted events have no content to render.
         let Some(content) = event.original_content() else {
-            tracing::error!("Unhandled redacted event: {event:?}");
             return;
         };
 
@@ -3523,28 +3525,48 @@ impl MatrixRoom {
         &self,
         event: &AnySyncMessageLikeEvent,
     ) -> Option<RenderedEvent> {
-        if let AnySyncMessageLikeEvent::RoomMessage(
-            SyncMessageLikeEvent::Redacted(e),
-        ) = event
-        {
-            let redacter = e
-                .unsigned
-                .redacted_because
-                .get_field::<OwnedUserId>("sender")
-                .ok()
-                .flatten()?;
-            let redacter = self.members.get(redacter.as_ref()).await?;
-            let sender = self.members.get(&e.sender).await?;
+        use AnySyncMessageLikeEvent::{
+            Reaction, RoomEncrypted, RoomMessage, Sticker,
+        };
+        use SyncMessageLikeEvent::Redacted;
 
-            Some(e.render_with_prefix(
-                e.origin_server_ts,
-                event.event_id(),
-                &sender,
-                &redacter,
-            ))
-        } else {
-            None
+        let (unsigned, reaction) = match event {
+            RoomMessage(Redacted(e)) => (&e.unsigned, false),
+            RoomEncrypted(Redacted(e)) => (&e.unsigned, false),
+            Sticker(Redacted(e)) => (&e.unsigned, false),
+            Reaction(Redacted(e)) => (&e.unsigned, true),
+            _ => return None,
+        };
+
+        let shown = {
+            let config = self.config.borrow();
+            if reaction {
+                config.look().show_redacted_reactions()
+            } else {
+                config.look().show_redacted_messages()
+            }
+        };
+        if !shown {
+            return None;
         }
+
+        let redacter = unsigned
+            .redacted_because
+            .get_field::<OwnedUserId>("sender")
+            .ok()
+            .flatten()?;
+        let redacter = self.members.get(redacter.as_ref()).await?;
+        let sender = self.members.get(event.sender()).await?;
+
+        let timestamp = event.origin_server_ts();
+        let event_id = event.event_id();
+        Some(if reaction {
+            RedactedReaction
+                .render_with_prefix(timestamp, event_id, &sender, &redacter)
+        } else {
+            RedactedMessage
+                .render_with_prefix(timestamp, event_id, &sender, &redacter)
+        })
     }
 
     pub async fn handle_membership_event(
@@ -3646,8 +3668,7 @@ impl MatrixRoom {
                 let content = if let Some(content) = event.original_content() {
                     content
                 } else {
-                    tracing::error!("Unhandled redacted event: {event:?}");
-                    return 0;
+                    return self.print_redacted_history_event(event).await;
                 };
                 let send_time = event.origin_server_ts();
 
@@ -3706,6 +3727,28 @@ impl MatrixRoom {
         }
 
         0
+    }
+
+    async fn print_redacted_history_event(
+        &self,
+        event: &AnyMessageLikeEvent,
+    ) -> usize {
+        if self.buffer.contains_event(event.event_id()) {
+            return 0;
+        }
+
+        let event = AnySyncMessageLikeEvent::from(event.clone());
+        let Some(rendered) = self.render_redacted_event(&event).await else {
+            return 0;
+        };
+        let line_count = rendered.content.lines.len();
+        self.print_rendered_event_for_relation(
+            Some(event.event_id()),
+            None,
+            rendered.add_backlog_tags(),
+        );
+
+        line_count
     }
 
     pub fn room(&self) -> Room {

@@ -28,14 +28,13 @@ use matrix_sdk::{
                     FileMessageEventContent, ImageMessageEventContent,
                     KeyVerificationRequestEventContent,
                     LocationMessageEventContent, MessageFormat,
-                    NoticeMessageEventContent, RedactedRoomMessageEventContent,
-                    ServerNoticeMessageEventContent, TextMessageEventContent,
-                    VideoMessageEventContent,
+                    NoticeMessageEventContent, ServerNoticeMessageEventContent,
+                    TextMessageEventContent, VideoMessageEventContent,
                 },
                 EncryptedFile, EncryptedFileHash, EncryptedFileHashAlgorithm,
                 EncryptedFileInfo, MediaSource,
             },
-            OriginalSyncStateEvent, RedactedSyncMessageLikeEvent,
+            OriginalSyncStateEvent,
         },
         uint, EventId, MilliSecondsSinceUnixEpoch, MxcUri, OwnedUserId,
         TransactionId, UserId,
@@ -670,28 +669,47 @@ fn encrypted_placeholder_guidance(sender_nick: &str) -> String {
     )
 }
 
-impl Render for RedactedSyncMessageLikeEvent<RedactedRoomMessageEventContent> {
+/// A message, sticker or encrypted event that was redacted before we saw it.
+pub struct RedactedMessage;
+
+impl Render for RedactedMessage {
     type RenderContext = WeechatRoomMember;
     const TAGS: &'static [&'static str] = &["matrix_redacted"];
 
     fn render(&self, redacter: &Self::RenderContext) -> RenderedContent {
-        // TODO: add the redaction reason.
-        let message = format!(
-            "{}<{}Message redacted by: {}{}>{}",
-            Weechat::color("chat_delimiters"),
-            Weechat::color("logger.color.backlog_line"),
-            redacter.nick(),
-            Weechat::color("chat_delimiters"),
-            Weechat::color("reset"),
-        );
-
-        let line = RenderedLine {
-            message,
-            tags: self.tags(),
-        };
-
-        RenderedContent::new(vec![line])
+        redacted_placeholder("Message redacted by", redacter, self.tags())
     }
+}
+
+/// A reaction that was redacted before we saw it.
+pub struct RedactedReaction;
+
+impl Render for RedactedReaction {
+    type RenderContext = WeechatRoomMember;
+    const TAGS: &'static [&'static str] = &["matrix_redacted"];
+
+    fn render(&self, redacter: &Self::RenderContext) -> RenderedContent {
+        redacted_placeholder("Reaction removed by", redacter, self.tags())
+    }
+}
+
+fn redacted_placeholder(
+    label: &str,
+    redacter: &WeechatRoomMember,
+    tags: Vec<String>,
+) -> RenderedContent {
+    // TODO: add the redaction reason.
+    let message = format!(
+        "{}<{}{}: {}{}>{}",
+        Weechat::color("chat_delimiters"),
+        Weechat::color("logger.color.backlog_line"),
+        label,
+        redacter.nick(),
+        Weechat::color("chat_delimiters"),
+        Weechat::color("reset"),
+    );
+
+    RenderedContent::new(vec![RenderedLine { message, tags }])
 }
 
 pub enum StartVerificationContext {
