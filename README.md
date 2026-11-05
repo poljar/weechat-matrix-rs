@@ -318,7 +318,14 @@ MXID localpart, and `%h` for homeserver.
 Room buffers accept normal message input after `/matrix connect [server-name]`
 has completed.
 
-`/matrix media download <mxc-uri> [file]` downloads Matrix media through the logged-in client, including homeservers that require authenticated media. It refuses to overwrite an existing file. When `[file]` is omitted, the media id is saved with the configured prefix, which defaults to `matrix-media-`:
+`/matrix media download <mxc-uri> [file]` downloads Matrix media through the logged-in client, including homeservers that require authenticated media. A file from an encrypted room is shown as an `emxc://` link that carries its decryption key; pass that link instead of an `mxc://` URI and the file is decrypted as it is saved. It refuses to overwrite an existing file. When `[file]` is omitted, the media id is saved with the configured prefix, which defaults to `matrix-media-`.
+
+With `matrix-rust.media.auto_download` on, posted files are downloaded as they arrive, decrypted when the room is encrypted, as `<prefix><media id>-<file name>`. If `matrix-rust.media.publish_command` is set, it runs after every download with the saved file as its argument and the first line it prints replaces the download command in the attachment's line, so a script that uploads the file somewhere and prints a link turns each attachment into a clickable URL. Without a command, the saved path is shown instead. Links are remembered in `<prefix>links.tsv` for `matrix-rust.media.publish_link_days` days (default 12, two days less than a two-week share; 0 for ever), so a file is published once; afterwards, including in the backlog after a restart, the remembered link is shown instead. `/matrix media publish <mxc-uri|emxc-link|index>` publishes a file (again) for a link, where `1` is the latest attachment shown in the buffer and `2` the one before; `/matrix media download` takes the same forms:
+
+       /set matrix-rust.media.auto_download on
+       /set matrix-rust.media.publish_command "publish -q"
+
+The download prefix:
 
        /set matrix-rust.media.download_prefix matrix-media-
 

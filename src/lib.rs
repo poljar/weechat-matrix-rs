@@ -7,6 +7,7 @@ mod completions;
 mod config;
 mod connection;
 mod debug;
+mod emxc;
 mod render;
 mod room;
 mod server;
