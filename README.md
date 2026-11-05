@@ -309,6 +309,9 @@ MXID localpart, and `%h` for homeserver.
 
 # Helpful Commands
 
+Closing a room buffer hides the room; the buffer comes back on the room's next
+message. `/part -yes` leaves the room for good (a bare `/part` only warns).
+
 `/help matrix` will print information about the `/matrix` command.
 
 `/matrix help [command]` will print information for subcommands, such as `/matrix help server`.

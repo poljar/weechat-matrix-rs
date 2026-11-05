@@ -190,6 +190,119 @@ fn build_room_buffer(
         .build()
 }
 
+/// Create the WeeChat buffer of `room` and record it in the room. Used when
+/// the room is first seen and again if the user closed the buffer.
+fn attach_room_buffer(room: &MatrixRoom, server_name: &str, own_nick: &str) {
+    let room_short_name = room.buffer.calculate_buffer_name();
+    let buffer_name = format!("{server_name}.{room_short_name}");
+
+    let buffer_handle = build_room_buffer(&buffer_name, room.clone())
+        .or_else(|_| {
+            if retire_stale_matrix_buffer(&buffer_name, room.room_id()) {
+                build_room_buffer(&buffer_name, room.clone())
+            } else {
+                Err(())
+            }
+        })
+        .or_else(|_| {
+            let suffix = room_id_buffer_suffix(room.room_id());
+            let fallback_name = if suffix.is_empty() {
+                format!("{buffer_name}.room")
+            } else {
+                format!("{buffer_name}.{suffix}")
+            };
+            build_room_buffer(&fallback_name, room.clone())
+        })
+        .expect("Can't create new room buffer");
+
+    let buffer = buffer_handle
+        .upgrade()
+        .expect("Can't upgrade newly created buffer");
+    buffer.set_short_name(&room.buffer.calculate_buffer_name());
+
+    if buffer.short_name() != room_short_name {
+        buffer.set_short_name(&room_short_name);
+    }
+
+    buffer
+        .add_nicklist_group("000|o", "weechat.color.nicklist_group", true, None)
+        .expect("Can't create nicklist group");
+    buffer
+        .add_nicklist_group("001|h", "weechat.color.nicklist_group", true, None)
+        .expect("Can't create nicklist group");
+    buffer
+        .add_nicklist_group("002|v", "weechat.color.nicklist_group", true, None)
+        .expect("Can't create nicklist group");
+    buffer
+        .add_nicklist_group(
+            "999|...",
+            "weechat.color.nicklist_group",
+            true,
+            None,
+        )
+        .expect("Can't create nicklist group");
+
+    buffer.enable_nicklist();
+    buffer.disable_nicklist_groups();
+    buffer.enable_multiline();
+
+    buffer.set_localvar("server", server_name);
+    buffer.set_localvar("nick", own_nick);
+    buffer
+        .run_command("/buffer set highlight_words $nick")
+        .expect("Can't set room buffer highlight words");
+    buffer.set_localvar(
+        "domain",
+        room.room_id()
+            .server_name()
+            .map(|name| name.as_str())
+            .unwrap_or_default(),
+    );
+    buffer.set_localvar("room_id", room.room_id().as_str());
+    buffer.set_localvar("matrix_upload_v1", "1");
+    let sdk_room = room.room();
+    buffer.set_localvar(
+        "matrix_predecessor_room_id",
+        sdk_room
+            .predecessor_room()
+            .as_ref()
+            .map(|predecessor| predecessor.room_id.as_str())
+            .unwrap_or_default(),
+    );
+    buffer.set_localvar(
+        "matrix_replacement_room_id",
+        sdk_room
+            .successor_room()
+            .as_ref()
+            .map(|successor| successor.room_id.as_str())
+            .unwrap_or_default(),
+    );
+    let room_avatar = room.room().avatar_url();
+    buffer.set_localvar(
+        "matrix_avatar_mxc",
+        room_avatar
+            .as_ref()
+            .map(|uri| uri.as_str())
+            .unwrap_or_default(),
+    );
+    buffer.set_localvar("type", "channel");
+
+    if let Some(alias) = room.alias() {
+        buffer.set_localvar("alias", alias.as_str());
+    }
+
+    *room.buffer.inner.borrow_mut() = Some(buffer_handle.clone());
+    room.buffer.update_parent_spaces();
+
+    if room.room().is_space() {
+        buffer.disable_nicklist();
+        buffer.disable_nicklist_groups();
+        buffer.disable_multiline();
+        buffer.disable_log();
+        room.buffer.refresh_space_children();
+    }
+}
+
 fn retire_stale_matrix_buffer(buffer_name: &str, room_id: &RoomId) -> bool {
     let Some(buffer) =
         (unsafe { Weechat::weechat() }).buffer_search("==", buffer_name)
@@ -796,129 +909,7 @@ impl RoomHandle {
             server,
         };
 
-        let room_short_name = room.buffer.calculate_buffer_name();
-        let buffer_name = format!("{server_name}.{room_short_name}");
-
-        let buffer_handle = build_room_buffer(&buffer_name, room.clone())
-            .or_else(|_| {
-                if retire_stale_matrix_buffer(&buffer_name, &room_id) {
-                    build_room_buffer(&buffer_name, room.clone())
-                } else {
-                    Err(())
-                }
-            })
-            .or_else(|_| {
-                let suffix = room_id_buffer_suffix(&room_id);
-                let fallback_name = if suffix.is_empty() {
-                    format!("{buffer_name}.room")
-                } else {
-                    format!("{buffer_name}.{suffix}")
-                };
-                build_room_buffer(&fallback_name, room.clone())
-            })
-            .expect("Can't create new room buffer");
-
-        let buffer = buffer_handle
-            .upgrade()
-            .expect("Can't upgrade newly created buffer");
-        buffer.set_short_name(&room.buffer.calculate_buffer_name());
-
-        if buffer.short_name() != room_short_name {
-            buffer.set_short_name(&room_short_name);
-        }
-
-        buffer
-            .add_nicklist_group(
-                "000|o",
-                "weechat.color.nicklist_group",
-                true,
-                None,
-            )
-            .expect("Can't create nicklist group");
-        buffer
-            .add_nicklist_group(
-                "001|h",
-                "weechat.color.nicklist_group",
-                true,
-                None,
-            )
-            .expect("Can't create nicklist group");
-        buffer
-            .add_nicklist_group(
-                "002|v",
-                "weechat.color.nicklist_group",
-                true,
-                None,
-            )
-            .expect("Can't create nicklist group");
-        buffer
-            .add_nicklist_group(
-                "999|...",
-                "weechat.color.nicklist_group",
-                true,
-                None,
-            )
-            .expect("Can't create nicklist group");
-
-        buffer.enable_nicklist();
-        buffer.disable_nicklist_groups();
-        buffer.enable_multiline();
-
-        buffer.set_localvar("server", server_name);
-        buffer.set_localvar("nick", &own_nick);
-        buffer
-            .run_command("/buffer set highlight_words $nick")
-            .expect("Can't set room buffer highlight words");
-        buffer.set_localvar(
-            "domain",
-            room.room_id()
-                .server_name()
-                .map(|name| name.as_str())
-                .unwrap_or_default(),
-        );
-        buffer.set_localvar("room_id", room.room_id().as_str());
-        buffer.set_localvar("matrix_upload_v1", "1");
-        let sdk_room = room.room();
-        buffer.set_localvar(
-            "matrix_predecessor_room_id",
-            sdk_room
-                .predecessor_room()
-                .as_ref()
-                .map(|predecessor| predecessor.room_id.as_str())
-                .unwrap_or_default(),
-        );
-        buffer.set_localvar(
-            "matrix_replacement_room_id",
-            sdk_room
-                .successor_room()
-                .as_ref()
-                .map(|successor| successor.room_id.as_str())
-                .unwrap_or_default(),
-        );
-        let room_avatar = room.room().avatar_url();
-        buffer.set_localvar(
-            "matrix_avatar_mxc",
-            room_avatar
-                .as_ref()
-                .map(|uri| uri.as_str())
-                .unwrap_or_default(),
-        );
-        buffer.set_localvar("type", "channel");
-
-        if let Some(alias) = room.alias() {
-            buffer.set_localvar("alias", alias.as_str());
-        }
-
-        *room.buffer.inner.borrow_mut() = Some(buffer_handle.clone());
-        room.buffer.update_parent_spaces();
-
-        if room.room().is_space() {
-            buffer.disable_nicklist();
-            buffer.disable_nicklist_groups();
-            buffer.disable_multiline();
-            buffer.disable_log();
-            room.buffer.refresh_space_children();
-        }
+        attach_room_buffer(&room, server_name, &own_nick);
 
         Self { inner: room }
     }
@@ -3577,7 +3568,76 @@ impl MatrixRoom {
         }
     }
 
+    /// Recreate the room buffer if the user closed it. Closing a room buffer
+    /// only hides the room until it has activity; /part leaves it.
+    fn ensure_buffer(&self) {
+        let alive = self
+            .buffer
+            .inner
+            .borrow()
+            .as_ref()
+            .is_some_and(|handle| handle.upgrade().is_ok());
+        if alive {
+            return;
+        }
+
+        let Some(server_name) =
+            self.server.upgrade().map(|server| server.name().to_owned())
+        else {
+            return;
+        };
+
+        attach_room_buffer(self, &server_name, self.own_user_id.localpart());
+        self.buffer.update_buffer_name();
+        self.buffer.set_topic();
+        self.buffer.update_parent_spaces();
+        self.buffer.refresh_space_children();
+        self.restore_members();
+    }
+
+    /// Fill the nicklist of a freshly (re)created buffer from the SDK.
+    fn restore_members(&self) {
+        let Some(connection) = self.connection.borrow().clone() else {
+            return;
+        };
+        let room = self.room().clone();
+        let room_id = self.room_id().to_owned();
+        let members_room = self.clone();
+
+        Weechat::spawn(async move {
+            let members = connection
+                .spawn(async move {
+                    tokio::time::timeout(
+                        ROOM_MEMBER_RESTORE_TIMEOUT,
+                        room.joined_user_ids(),
+                    )
+                    .await
+                })
+                .await;
+
+            match members {
+                Ok(Ok(user_ids)) => {
+                    for user_id in user_ids {
+                        members_room.members.restore_member(user_id).await;
+                    }
+                    members_room.members.update_member_localvars();
+                }
+                Ok(Err(error)) => warn!(
+                    "Couldn't restore room members for {}: {}",
+                    room_id, error
+                ),
+                Err(_) => warn!(
+                    "Timed out restoring room members for {} after {} seconds",
+                    room_id,
+                    ROOM_MEMBER_RESTORE_TIMEOUT.as_secs()
+                ),
+            }
+        })
+        .detach();
+    }
+
     pub async fn handle_sync_room_event(&self, event: AnySyncTimelineEvent) {
+        self.ensure_buffer();
         self.set_prev_batch();
 
         *self.latest_event_id.borrow_mut() = Some(match &event {
@@ -3717,6 +3777,7 @@ impl MatrixRoom {
         event: &AnySyncStateEvent,
         _state_event: bool,
     ) {
+        self.ensure_buffer();
         self.members
             .mark_active(event.sender(), event.origin_server_ts());
 
