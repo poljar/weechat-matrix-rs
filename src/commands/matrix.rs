@@ -49,7 +49,7 @@ impl MatrixCommand {
             .add_argument("join <room-id-or-alias>")
             .add_argument("devices delete|list|set-name")
             .add_argument("keys import|export <file> <passphrase>")
-            .add_argument("media download <mxc-uri> [file]")
+            .add_argument("media download|publish <mxc-uri|emxc-link> [file]")
             .add_argument("verify <contact> <device-id>")
             .add_argument("verification info [contact]")
             .add_argument("disconnect <server-name>")

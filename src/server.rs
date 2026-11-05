@@ -88,9 +88,8 @@ use matrix_sdk::{
             AnyToDeviceEvent, SyncStateEvent,
         },
         DeviceId, DeviceKeyAlgorithm, MilliSecondsSinceUnixEpoch,
-        OwnedDeviceId, OwnedMxcUri, OwnedRoomAliasId, OwnedRoomId,
-        OwnedRoomOrAliasId, OwnedServerName, OwnedUserId, RoomAliasId, RoomId,
-        UserId,
+        OwnedDeviceId, OwnedRoomAliasId, OwnedRoomId, OwnedRoomOrAliasId,
+        OwnedServerName, OwnedUserId, RoomAliasId, RoomId, UserId,
     },
     Client, Error, RoomState, SessionTokens,
 };
@@ -101,10 +100,12 @@ use weechat::{
     Prefix, Weechat,
 };
 
+const PUBLISH_COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 const JOIN_ROOM_TIMEOUT: Duration = Duration::from_secs(120);
 const ROOM_UPGRADE_CHAIN_LIMIT: usize = 32;
 
 use crate::{
+    commands::remember_published_link,
     config::ServerBuffer,
     connection::{Connection, InteractiveAuthInfo},
     room::RoomHandle,
@@ -2339,11 +2340,16 @@ impl InnerServer {
         };
     }
 
+    /// Download `source` to `file`. A quiet download, used for automatic
+    /// ones, reports only the result: the published link, or the path when
+    /// no publish command is set.
     pub async fn download_media(
         &self,
-        uri: OwnedMxcUri,
+        source: MediaSource,
         file: PathBuf,
         output_buffer: Option<BufferHandle>,
+        quiet: bool,
+        media_id: Option<String>,
     ) {
         let connection = if let Some(c) = self.connection() {
             c
@@ -2358,17 +2364,19 @@ impl InnerServer {
 
         let client = connection.client().clone();
         let request = MediaRequestParameters {
-            source: MediaSource::Plain(uri),
+            source,
             format: MediaFormat::File,
         };
         let display_file =
             Self::display_download_path(&file).display().to_string();
 
-        self.print_with_prefix_to(
-            output_buffer.as_ref(),
-            &Weechat::prefix(Prefix::Network),
-            &format!("Downloading media to {}", display_file),
-        );
+        if !quiet {
+            self.print_with_prefix_to(
+                output_buffer.as_ref(),
+                &Weechat::prefix(Prefix::Network),
+                &format!("Downloading media to {}", display_file),
+            );
+        }
 
         match connection
             .spawn(async move {
@@ -2409,14 +2417,31 @@ impl InnerServer {
                         ),
                     );
                 } else {
-                    self.print_with_prefix_to(
-                        output_buffer.as_ref(),
-                        &Weechat::prefix(Prefix::Network),
-                        &format!(
-                            "Successfully downloaded media to {}",
-                            display_file
-                        ),
-                    );
+                    let publish_command =
+                        self.config.borrow().media().publish_command();
+                    if !quiet {
+                        self.print_with_prefix_to(
+                            output_buffer.as_ref(),
+                            &Weechat::prefix(Prefix::Network),
+                            &format!(
+                                "Successfully downloaded media to {}",
+                                display_file
+                            ),
+                        );
+                    } else if publish_command.trim().is_empty() {
+                        self.print_with_prefix_to(
+                            output_buffer.as_ref(),
+                            &Weechat::prefix(Prefix::Network),
+                            &format!("saved {}", display_file),
+                        );
+                    }
+                    self.publish_media(
+                        publish_command,
+                        file,
+                        output_buffer,
+                        media_id,
+                    )
+                    .await;
                 }
             }
             Err(e) => {
@@ -2426,6 +2451,110 @@ impl InnerServer {
                     &format!("Error downloading media {:#?}", e),
                 );
             }
+        }
+    }
+
+    /// Publish an already downloaded file with media.publish_command.
+    pub async fn publish_downloaded_media(
+        &self,
+        file: PathBuf,
+        output_buffer: Option<BufferHandle>,
+        media_id: Option<String>,
+    ) {
+        let command = self.config.borrow().media().publish_command();
+        self.publish_media(command, file, output_buffer, media_id)
+            .await;
+    }
+
+    /// Run media.publish_command on a downloaded file and print the first
+    /// line it writes, normally a link to the file. With a `media_id` the
+    /// link is remembered so the same file is never published twice.
+    async fn publish_media(
+        &self,
+        command: String,
+        file: PathBuf,
+        output_buffer: Option<BufferHandle>,
+        media_id: Option<String>,
+    ) {
+        if command.trim().is_empty() {
+            return;
+        }
+        let Some(connection) = self.connection() else {
+            return;
+        };
+
+        let result = connection
+            .spawn(async move {
+                let run = tokio::task::spawn_blocking(move || {
+                    std::process::Command::new("sh")
+                        .arg("-c")
+                        .arg(format!("{command} \"$0\""))
+                        .arg(&file)
+                        .stdin(std::process::Stdio::null())
+                        .output()
+                        .map_err(|error| error.to_string())
+                });
+                match tokio::time::timeout(PUBLISH_COMMAND_TIMEOUT, run).await {
+                    Ok(Ok(output)) => output,
+                    Ok(Err(error)) => Err(error.to_string()),
+                    Err(_) => Err(format!(
+                        "timed out after {} seconds",
+                        PUBLISH_COMMAND_TIMEOUT.as_secs()
+                    )),
+                }
+            })
+            .await;
+
+        match result {
+            Ok(output) if output.status.success() => {
+                let line = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned();
+                if line.is_empty() {
+                    self.print_with_prefix_to(
+                        output_buffer.as_ref(),
+                        &Weechat::prefix(Prefix::Error),
+                        "The media publish command printed nothing",
+                    );
+                } else {
+                    if let Some(media_id) = media_id {
+                        let prefix =
+                            self.config.borrow().media().download_prefix();
+                        if let Err(error) =
+                            remember_published_link(&prefix, &media_id, &line)
+                        {
+                            tracing::warn!(
+                                "Can't remember the published link: {error}"
+                            );
+                        }
+                    }
+                    self.print_with_prefix_to(
+                        output_buffer.as_ref(),
+                        &Weechat::prefix(Prefix::Network),
+                        &line,
+                    );
+                }
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                self.print_with_prefix_to(
+                    output_buffer.as_ref(),
+                    &Weechat::prefix(Prefix::Error),
+                    &format!(
+                        "The media publish command failed ({}): {}",
+                        output.status,
+                        stderr.lines().last().unwrap_or_default().trim()
+                    ),
+                );
+            }
+            Err(error) => self.print_with_prefix_to(
+                output_buffer.as_ref(),
+                &Weechat::prefix(Prefix::Error),
+                &format!("The media publish command failed: {error}"),
+            ),
         }
     }
 

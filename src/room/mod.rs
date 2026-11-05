@@ -103,6 +103,7 @@ use weechat::{
 };
 
 use crate::{
+    commands::{auto_download_path, published_link},
     config::{Config, RedactionStyle},
     connection::Connection,
     render::{Render, RenderedEvent, ReplyContext},
@@ -3515,7 +3516,99 @@ impl MatrixRoom {
                     thread_root.as_deref(),
                     rendered,
                 );
+                if let AnySyncMessageLikeEvent::RoomMessage(
+                    SyncMessageLikeEvent::Original(message),
+                ) = event
+                {
+                    self.auto_download_media(
+                        &message.content,
+                        thread_root.as_deref(),
+                        false,
+                    )
+                    .await;
+                }
             }
+        }
+    }
+
+    /// With media.auto_download on, fetch a posted file, decrypting it when
+    /// the room is encrypted, into the media download directory, and show
+    /// its published link. A file published before only gets its remembered
+    /// link; backlog never downloads, it only shows remembered links.
+    async fn auto_download_media(
+        &self,
+        content: &RoomMessageEventContent,
+        thread_root: Option<&EventId>,
+        backlog: bool,
+    ) {
+        if !self.config.borrow().media().auto_download() {
+            return;
+        }
+        let (source, name) = match &content.msgtype {
+            MessageType::Image(c) => (c.source.clone(), c.filename.clone()),
+            MessageType::File(c) => (c.source.clone(), c.filename.clone()),
+            MessageType::Video(c) => (c.source.clone(), c.filename.clone()),
+            MessageType::Audio(c) => (c.source.clone(), c.filename.clone()),
+            _ => return,
+        };
+        let name = name.unwrap_or_else(|| content.body().to_owned());
+        let Some(server) = self.server() else {
+            return;
+        };
+        let url = match &source {
+            matrix_sdk::ruma::events::room::MediaSource::Plain(url) => {
+                url.clone()
+            }
+            matrix_sdk::ruma::events::room::MediaSource::Encrypted(file) => {
+                file.url.clone()
+            }
+        };
+        let Ok(media_id) = url.media_id() else {
+            return;
+        };
+        let prefix = self.config.borrow().media().download_prefix();
+        let output_buffer = thread_root
+            .and_then(|root| self.buffer.thread_buffer(root))
+            .or_else(|| Some(self.buffer_handle()));
+
+        let link_days = self.config.borrow().media().publish_link_days();
+        if let Some(link) =
+            published_link(&prefix, media_id, link_days.max(0) as u64)
+        {
+            if let Some(Ok(buffer)) =
+                output_buffer.as_ref().map(|handle| handle.upgrade())
+            {
+                buffer.print(&format!(
+                    "{}{}",
+                    Weechat::prefix(Prefix::Network),
+                    link
+                ));
+            }
+            return;
+        }
+        if backlog {
+            return;
+        }
+
+        let file = auto_download_path(&prefix, media_id, &name);
+        if file.exists() {
+            server
+                .publish_downloaded_media(
+                    file,
+                    output_buffer,
+                    Some(media_id.to_owned()),
+                )
+                .await;
+        } else {
+            server
+                .download_media(
+                    source,
+                    file,
+                    output_buffer,
+                    true,
+                    Some(media_id.to_owned()),
+                )
+                .await;
         }
     }
 
@@ -3697,6 +3790,17 @@ impl MatrixRoom {
                             thread_root.as_deref(),
                             rendered.add_backlog_tags(),
                         );
+                        if let AnyMessageLikeEventContent::RoomMessage(
+                            message,
+                        ) = &content
+                        {
+                            self.auto_download_media(
+                                message,
+                                thread_root.as_deref(),
+                                true,
+                            )
+                            .await;
+                        }
                         return line_count;
                     }
                 }

@@ -216,6 +216,33 @@ config!(
             // Default value.
             "matrix-media-",
         },
+
+        auto_download: bool {
+            // Description.
+            "Download files posted in rooms as they arrive, decrypting files \
+             from encrypted rooms, named <download_prefix><media id>-<file name>",
+            // Default value.
+            false,
+        },
+
+        publish_command: String {
+            // Description.
+            "Command run after every media download with the saved file as \
+             its argument; the first line it prints (for example a link) is \
+             shown under the message. Empty disables it",
+            // Default value.
+            "",
+        },
+
+        publish_link_days: Integer {
+            // Description.
+            "How many days a remembered published link is reused before the \
+             file is published again; 0 keeps links forever",
+            // Default value.
+            14,
+            // Range: forever to ten years.
+            0..3650,
+        },
     },
 );
 

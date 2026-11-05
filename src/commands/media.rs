@@ -4,16 +4,17 @@ use clap::{
     App as Argparse, AppSettings as ArgParseSettings, Arg, ArgMatches,
     SubCommand,
 };
-use matrix_sdk::ruma::{MxcUri, OwnedMxcUri};
+use matrix_sdk::ruma::{events::room::MediaSource, MxcUri, OwnedMxcUri};
 use weechat::{buffer::Buffer, Weechat};
 
-use crate::{BufferOwner, Servers};
+use crate::{emxc::parse_emxc, BufferOwner, Servers};
 
 pub struct MediaCommand;
 
 impl MediaCommand {
     pub const DESCRIPTION: &'static str = "Download Matrix media.";
-    pub const COMPLETION: &'static str = "download %(matrix-media)";
+    pub const COMPLETION: &'static str =
+        "download %(matrix-media) || publish %(matrix-media)";
 
     pub fn run(buffer: &Buffer, servers: &Servers, args: &ArgMatches) {
         let (server, output_buffer) = match servers.buffer_owner(buffer) {
@@ -34,17 +35,30 @@ impl MediaCommand {
         };
 
         match args.subcommand() {
-            ("download", Some(args)) => {
+            (subcommand @ ("download" | "publish"), Some(args)) => {
+                let publish = subcommand == "publish";
                 let uri = args
                     .value_of("mxc-uri")
                     .expect("MXC URI not set but was required");
-                let uri_ref = <&MxcUri>::from(uri);
-
-                if !uri_ref.is_valid() {
-                    Weechat::print("Invalid MXC URI");
-                    return;
-                }
-                let uri = OwnedMxcUri::from(uri);
+                let (source, uri) = if uri.starts_with("emxc://") {
+                    match parse_emxc(uri) {
+                        Ok(file) => {
+                            let uri = file.url.clone();
+                            (MediaSource::Encrypted(Box::new(file)), uri)
+                        }
+                        Err(error) => {
+                            Weechat::print(&error);
+                            return;
+                        }
+                    }
+                } else {
+                    if !<&MxcUri>::from(uri).is_valid() {
+                        Weechat::print("Invalid MXC URI");
+                        return;
+                    }
+                    let uri = OwnedMxcUri::from(uri);
+                    (MediaSource::Plain(uri.clone()), uri)
+                };
 
                 let download_prefix =
                     server.config().borrow().media().download_prefix();
@@ -63,10 +77,27 @@ impl MediaCommand {
                     }
                 };
 
+                let media_id = uri.media_id().ok().map(ToOwned::to_owned);
                 Weechat::spawn(async move {
-                    server
-                        .download_media(uri.into(), file, output_buffer)
-                        .await;
+                    if publish && file.exists() {
+                        server
+                            .publish_downloaded_media(
+                                file,
+                                output_buffer,
+                                media_id,
+                            )
+                            .await;
+                    } else {
+                        server
+                            .download_media(
+                                source,
+                                file,
+                                output_buffer,
+                                false,
+                                media_id,
+                            )
+                            .await;
+                    }
                 })
                 .detach();
             }
@@ -75,18 +106,36 @@ impl MediaCommand {
     }
 
     pub fn subcommands() -> Vec<Argparse<'static, 'static>> {
-        vec![SubCommand::with_name("download")
-            .about("Download the MXC URI through the logged-in Matrix client")
-            .arg(Arg::with_name("mxc-uri").required(true).validator(|uri| {
-                let uri = <&MxcUri>::from(uri.as_str());
+        let uri_arg = || {
+            Arg::with_name("mxc-uri").required(true).validator(|uri| {
+                if uri.starts_with("emxc://") {
+                    return parse_emxc(&uri).map(|_| ());
+                }
 
-                if uri.is_valid() {
+                if <&MxcUri>::from(uri.as_str()).is_valid() {
                     Ok(())
                 } else {
                     Err("The given URI is not a valid MXC URI".to_owned())
                 }
-            }))
-            .arg(Arg::with_name("file").required(false))]
+            })
+        };
+
+        vec![
+            SubCommand::with_name("download")
+                .about(
+                    "Download an mxc:// URI, or decrypt and download an \
+                     emxc:// link, through the logged-in Matrix client",
+                )
+                .arg(uri_arg())
+                .arg(Arg::with_name("file").required(false)),
+            SubCommand::with_name("publish")
+                .about(
+                    "Download the file if needed and run \
+                     media.publish_command on it again, for a new link",
+                )
+                .arg(uri_arg())
+                .arg(Arg::with_name("file").required(false)),
+        ]
     }
 
     pub const SETTINGS: &'static [ArgParseSettings] = &[
@@ -119,6 +168,80 @@ fn default_download_file(uri: &MxcUri, prefix: &str) -> Option<PathBuf> {
         .next()
         .filter(|name| !name.is_empty())
         .map(|name| prefixed_download_path(prefix, name))
+}
+
+/// Where an automatically downloaded file goes: the media id keeps the name
+/// unique, the posted file name keeps it readable.
+pub(crate) fn auto_download_path(
+    prefix: &str,
+    media_id: &str,
+    file_name: &str,
+) -> PathBuf {
+    let file_name = std::path::Path::new(file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+        .map(|name| format!("{media_id}-{name}"))
+        .unwrap_or_else(|| media_id.to_owned());
+
+    prefixed_download_path(prefix, &file_name)
+}
+
+/// The file remembering which media ids were published and where:
+/// `<prefix>links.tsv`, one `media id<TAB>unix time<TAB>link` per line.
+fn published_links_path(prefix: &str) -> PathBuf {
+    prefixed_download_path(prefix, "links.tsv")
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default()
+}
+
+/// The link `media_id` was published at within the last `max_age_days`
+/// days (0: ever), if any.
+pub(crate) fn published_link(
+    prefix: &str,
+    media_id: &str,
+    max_age_days: u64,
+) -> Option<String> {
+    let links = std::fs::read_to_string(published_links_path(prefix)).ok()?;
+    let oldest = if max_age_days == 0 {
+        0
+    } else {
+        unix_now().saturating_sub(max_age_days * 24 * 60 * 60)
+    };
+
+    links
+        .lines()
+        .filter_map(|line| {
+            let (id, rest) = line.split_once('\t')?;
+            let (time, link) = rest.split_once('\t')?;
+            (id == media_id && time.parse::<u64>().ok()? >= oldest)
+                .then(|| link.trim().to_owned())
+        })
+        .next_back()
+}
+
+/// Remember that `media_id` was published at `link` just now.
+pub(crate) fn remember_published_link(
+    prefix: &str,
+    media_id: &str,
+    link: &str,
+) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let path = published_links_path(prefix);
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)?;
+    writeln!(file, "{media_id}\t{}\t{link}", unix_now())
 }
 
 fn prefixed_download_path(prefix: &str, name: &str) -> PathBuf {
@@ -196,6 +319,62 @@ mod tests {
             Some(PathBuf::from("matrix-media-some-media-id")),
             default_download_file(uri, "matrix-media-")
         );
+    }
+
+    #[test]
+    fn auto_download_names_keep_media_id_and_file_name() {
+        assert_eq!(
+            PathBuf::from("matrix-media-abc123-report.pdf"),
+            auto_download_path("matrix-media-", "abc123", "report.pdf")
+        );
+        assert_eq!(
+            PathBuf::from("matrix-media-abc123-passwd"),
+            auto_download_path("matrix-media-", "abc123", "../../etc/passwd")
+        );
+        assert_eq!(
+            PathBuf::from("matrix-media-abc123"),
+            auto_download_path("matrix-media-", "abc123", "..")
+        );
+    }
+
+    #[test]
+    fn published_links_are_remembered_per_media_id() {
+        let dir = std::env::temp_dir().join(format!(
+            "wmrs-links-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let prefix = format!("{}/matrix-media-", dir.display());
+
+        assert_eq!(None, published_link(&prefix, "abc", 14));
+        remember_published_link(&prefix, "abc", "https://x/1").unwrap();
+        remember_published_link(&prefix, "def", "https://x/2").unwrap();
+        assert_eq!(
+            Some("https://x/1".to_owned()),
+            published_link(&prefix, "abc", 14)
+        );
+        assert_eq!(
+            Some("https://x/2".to_owned()),
+            published_link(&prefix, "def", 0)
+        );
+        assert_eq!(None, published_link(&prefix, "ghi", 14));
+
+        // An entry older than the limit is ignored; 0 means forever.
+        std::fs::write(
+            published_links_path(&prefix),
+            "old\t1000\thttps://x/old\n",
+        )
+        .unwrap();
+        assert_eq!(None, published_link(&prefix, "old", 14));
+        assert_eq!(
+            Some("https://x/old".to_owned()),
+            published_link(&prefix, "old", 0)
+        );
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

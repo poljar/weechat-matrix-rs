@@ -550,23 +550,23 @@ fn mxc_to_emxc(
     Ok(emxc_url.to_string())
 }
 
-fn media_download_command(source: &MediaSource) -> Option<String> {
-    match source {
-        MediaSource::Plain(url) => {
-            Some(format!("/matrix media download {} [file]", url.as_str()))
-        }
-        MediaSource::Encrypted(_) => None,
-    }
+/// The command that downloads `source`; an encrypted file is named by its
+/// `emxc://` link, which carries the decryption parameters.
+fn media_download_command(source: &MediaSource, link: &str) -> String {
+    let target = match source {
+        MediaSource::Plain(url) => url.as_str(),
+        MediaSource::Encrypted(_) => link,
+    };
+
+    format!("/matrix media download {target} [file]")
 }
 
-fn media_download_message<C: HasUrlOrFile>(content: &C) -> Option<String> {
-    media_download_command(content.source()).map(|command| {
-        format!(
-            "attached `{}`, authenticated download: {}",
-            content.body(),
-            command
-        )
-    })
+fn media_download_message<C: HasUrlOrFile>(content: &C, link: &str) -> String {
+    format!(
+        "attached `{}`, authenticated download: {}",
+        content.body(),
+        media_download_command(content.source(), link)
+    )
 }
 
 fn media_tags<C: HasUrlOrFile>(content: &C) -> Vec<String> {
@@ -607,16 +607,7 @@ impl<C: HasUrlOrFile> Render for C {
         }
         .unwrap_or_else(|_| self.resolve_url().to_string());
 
-        let message = media_download_message(self).unwrap_or_else(|| {
-            format!(
-                "{color_delimiter}<{color_reset}{}{color_delimiter}>\
-                    [{color_reset}{}{color_delimiter}]{color_reset}",
-                self.body(),
-                mxc_url,
-                color_delimiter = Weechat::color("color_delimiter"),
-                color_reset = Weechat::color("reset")
-            )
-        });
+        let message = media_download_message(self, &mxc_url);
 
         let line = RenderedLine {
             message,
@@ -1668,11 +1659,8 @@ mod tests {
         ));
 
         assert_eq!(
-            Some(
-                "/matrix media download mxc://matrix.org/some-media-id [file]"
-                    .to_owned()
-            ),
-            media_download_command(&source)
+            "/matrix media download mxc://matrix.org/some-media-id [file]",
+            media_download_command(&source, "unused")
         );
     }
 
@@ -1684,12 +1672,9 @@ mod tests {
         );
 
         assert_eq!(
-            Some(
-                "attached `image.png`, authenticated download: /matrix media \
-                 download mxc://matrix.org/some-media-id [file]"
-                    .to_owned()
-            ),
-            media_download_message(&content)
+            "attached `image.png`, authenticated download: /matrix media \
+             download mxc://matrix.org/some-media-id [file]",
+            media_download_message(&content, "unused")
         );
     }
 
@@ -1724,11 +1709,14 @@ mod tests {
     }
 
     #[test]
-    fn test_encrypted_media_has_no_plain_download_command() {
+    fn test_encrypted_media_download_command_uses_the_emxc_link() {
         let (encrypt_info, _, _, _) = encrypted_file_fixture();
         let source = MediaSource::Encrypted(Box::new(encrypt_info));
 
-        assert_eq!(None, media_download_command(&source));
+        assert_eq!(
+            "/matrix media download emxc://x/y?key=k [file]",
+            media_download_command(&source, "emxc://x/y?key=k")
+        );
     }
 
     #[test]
