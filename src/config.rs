@@ -237,9 +237,10 @@ config!(
         publish_link_days: Integer {
             // Description.
             "How many days a remembered published link is reused before the \
-             file is published again; 0 keeps links forever",
+             file is published again, a little less than the link's own \
+             lifetime; 0 keeps links forever",
             // Default value.
-            14,
+            12,
             // Range: forever to ten years.
             0..3650,
         },

@@ -53,7 +53,8 @@ use matrix_upload::MatrixUploadCommand;
 use me::MeCommand;
 use media::MediaCommand;
 pub(crate) use media::{
-    auto_download_path, published_link, remember_published_link,
+    auto_download_path, published_link, published_media_text,
+    remember_published_link,
 };
 use mention_send::MentionSendCommand;
 use moderation::ModerationCommand;

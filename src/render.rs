@@ -579,11 +579,24 @@ fn media_tags<C: HasUrlOrFile>(content: &C) -> Vec<String> {
         ),
     ];
 
-    if let MediaSource::Plain(uri) = content.source() {
-        tags.push(format!(
+    match content.source() {
+        MediaSource::Plain(uri) => tags.push(format!(
             "matrix_media_uri_{}",
             URL_SAFE_NO_PAD.encode(uri.as_str())
-        ));
+        )),
+        // The emxc link carries what a download needs; its host part is
+        // ignored when it is parsed, so any homeserver will do here.
+        MediaSource::Encrypted(file) => {
+            if let Ok(link) = Url::parse("emxc://homeserver").and_then(|hs| {
+                mxc_to_emxc(content.resolve_url(), &hs, file)
+                    .map_err(|_| url::ParseError::EmptyHost)
+            }) {
+                tags.push(format!(
+                    "matrix_media_emxc_{}",
+                    URL_SAFE_NO_PAD.encode(&link)
+                ));
+            }
+        }
     }
 
     tags

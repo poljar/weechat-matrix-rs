@@ -3575,14 +3575,8 @@ impl MatrixRoom {
         if let Some(link) =
             published_link(&prefix, media_id, link_days.max(0) as u64)
         {
-            if let Some(Ok(buffer)) =
-                output_buffer.as_ref().map(|handle| handle.upgrade())
-            {
-                buffer.print(&format!(
-                    "{}{}",
-                    Weechat::prefix(Prefix::Network),
-                    link
-                ));
+            if !self.buffer.set_media_link(media_id, &link) {
+                server.print_media_link(&output_buffer, &link);
             }
             return;
         }
@@ -3591,25 +3585,29 @@ impl MatrixRoom {
         }
 
         let file = auto_download_path(&prefix, media_id, &name);
-        if file.exists() {
-            server
-                .publish_downloaded_media(
-                    file,
-                    output_buffer,
-                    Some(media_id.to_owned()),
-                )
-                .await;
+        let file = if file.exists() {
+            Some(file)
         } else {
             server
-                .download_media(
-                    source,
-                    file,
-                    output_buffer,
-                    true,
-                    Some(media_id.to_owned()),
-                )
-                .await;
+                .download_media(source, file, &output_buffer, true)
+                .await
+        };
+        let Some(file) = file else {
+            return;
+        };
+        if let Some(link) = server
+            .publish_media(file, &output_buffer, Some(media_id))
+            .await
+        {
+            if !self.buffer.set_media_link(media_id, &link) {
+                server.print_media_link(&output_buffer, &link);
+            }
         }
+    }
+
+    /// Show `link` in the line of the attachment with `media_id`.
+    pub fn set_media_link(&self, media_id: &str, link: &str) -> bool {
+        self.buffer.set_media_link(media_id, link)
     }
 
     async fn render_redacted_event(

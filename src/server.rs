@@ -2340,17 +2340,15 @@ impl InnerServer {
         };
     }
 
-    /// Download `source` to `file`. A quiet download, used for automatic
-    /// ones, reports only the result: the published link, or the path when
-    /// no publish command is set.
+    /// Download `source` to `file` and return the path on success. A quiet
+    /// download, used for automatic ones, reports nothing on its own.
     pub async fn download_media(
         &self,
         source: MediaSource,
         file: PathBuf,
-        output_buffer: Option<BufferHandle>,
+        output_buffer: &Option<BufferHandle>,
         quiet: bool,
-        media_id: Option<String>,
-    ) {
+    ) -> Option<PathBuf> {
         let connection = if let Some(c) = self.connection() {
             c
         } else {
@@ -2359,7 +2357,7 @@ impl InnerServer {
                 &Weechat::prefix(Prefix::Error),
                 "You must be connected to execute this command",
             );
-            return;
+            return None;
         };
 
         let client = connection.client().clone();
@@ -2378,110 +2376,95 @@ impl InnerServer {
             );
         }
 
-        match connection
+        let content = match connection
             .spawn(async move {
                 client.media().get_media_content(&request, true).await
             })
             .await
         {
-            Ok(content) => {
-                if let Some(parent) = file.parent() {
-                    if !parent.as_os_str().is_empty() {
-                        if let Err(e) = std::fs::create_dir_all(parent) {
-                            self.print_with_prefix_to(
-                                output_buffer.as_ref(),
-                                &Weechat::prefix(Prefix::Error),
-                                &format!(
-                                    "Error creating media directory {}: {:#?}",
-                                    parent.display(),
-                                    e
-                                ),
-                            );
-                            return;
-                        }
-                    }
-                }
-
-                if let Err(e) = std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&file)
-                    .and_then(|mut file| file.write_all(&content))
-                {
-                    self.print_with_prefix_to(
-                        output_buffer.as_ref(),
-                        &Weechat::prefix(Prefix::Error),
-                        &format!(
-                            "Error writing media to {}: {:#?}",
-                            display_file, e
-                        ),
-                    );
-                } else {
-                    let publish_command =
-                        self.config.borrow().media().publish_command();
-                    if !quiet {
-                        self.print_with_prefix_to(
-                            output_buffer.as_ref(),
-                            &Weechat::prefix(Prefix::Network),
-                            &format!(
-                                "Successfully downloaded media to {}",
-                                display_file
-                            ),
-                        );
-                    } else if publish_command.trim().is_empty() {
-                        self.print_with_prefix_to(
-                            output_buffer.as_ref(),
-                            &Weechat::prefix(Prefix::Network),
-                            &format!("saved {}", display_file),
-                        );
-                    }
-                    self.publish_media(
-                        publish_command,
-                        file,
-                        output_buffer,
-                        media_id,
-                    )
-                    .await;
-                }
-            }
+            Ok(content) => content,
             Err(e) => {
                 self.print_with_prefix_to(
                     output_buffer.as_ref(),
                     &Weechat::prefix(Prefix::Error),
                     &format!("Error downloading media {:#?}", e),
                 );
+                return None;
+            }
+        };
+
+        if let Some(parent) = file.parent() {
+            if !parent.as_os_str().is_empty() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    self.print_with_prefix_to(
+                        output_buffer.as_ref(),
+                        &Weechat::prefix(Prefix::Error),
+                        &format!(
+                            "Error creating media directory {}: {:#?}",
+                            parent.display(),
+                            e
+                        ),
+                    );
+                    return None;
+                }
             }
         }
-    }
 
-    /// Publish an already downloaded file with media.publish_command.
-    pub async fn publish_downloaded_media(
-        &self,
-        file: PathBuf,
-        output_buffer: Option<BufferHandle>,
-        media_id: Option<String>,
-    ) {
-        let command = self.config.borrow().media().publish_command();
-        self.publish_media(command, file, output_buffer, media_id)
-            .await;
-    }
-
-    /// Run media.publish_command on a downloaded file and print the first
-    /// line it writes, normally a link to the file. With a `media_id` the
-    /// link is remembered so the same file is never published twice.
-    async fn publish_media(
-        &self,
-        command: String,
-        file: PathBuf,
-        output_buffer: Option<BufferHandle>,
-        media_id: Option<String>,
-    ) {
-        if command.trim().is_empty() {
-            return;
+        if let Err(e) = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&file)
+            .and_then(|mut file| file.write_all(&content))
+        {
+            self.print_with_prefix_to(
+                output_buffer.as_ref(),
+                &Weechat::prefix(Prefix::Error),
+                &format!("Error writing media to {}: {:#?}", display_file, e),
+            );
+            return None;
         }
-        let Some(connection) = self.connection() else {
-            return;
-        };
+
+        if !quiet {
+            self.print_with_prefix_to(
+                output_buffer.as_ref(),
+                &Weechat::prefix(Prefix::Network),
+                &format!("Successfully downloaded media to {}", display_file),
+            );
+        }
+
+        Some(file)
+    }
+
+    /// Print a published link (or the saved path) under an attachment.
+    pub fn print_media_link(
+        &self,
+        output_buffer: &Option<BufferHandle>,
+        link: &str,
+    ) {
+        self.print_with_prefix_to(
+            output_buffer.as_ref(),
+            &Weechat::prefix(Prefix::Network),
+            link,
+        );
+    }
+
+    /// Run media.publish_command on a downloaded file and return the first
+    /// line it writes, normally a link to the file; errors are printed.
+    /// With a `media_id` the link is remembered so the same file is never
+    /// published twice. Without a command, returns the saved path.
+    pub async fn publish_media(
+        &self,
+        file: PathBuf,
+        output_buffer: &Option<BufferHandle>,
+        media_id: Option<&str>,
+    ) -> Option<String> {
+        let command = self.config.borrow().media().publish_command();
+        if command.trim().is_empty() {
+            return Some(
+                Self::display_download_path(&file).display().to_string(),
+            );
+        }
+        let connection = self.connection()?;
 
         let result = connection
             .spawn(async move {
@@ -2519,24 +2502,19 @@ impl InnerServer {
                         &Weechat::prefix(Prefix::Error),
                         "The media publish command printed nothing",
                     );
-                } else {
-                    if let Some(media_id) = media_id {
-                        let prefix =
-                            self.config.borrow().media().download_prefix();
-                        if let Err(error) =
-                            remember_published_link(&prefix, &media_id, &line)
-                        {
-                            tracing::warn!(
-                                "Can't remember the published link: {error}"
-                            );
-                        }
-                    }
-                    self.print_with_prefix_to(
-                        output_buffer.as_ref(),
-                        &Weechat::prefix(Prefix::Network),
-                        &line,
-                    );
+                    return None;
                 }
+                if let Some(media_id) = media_id {
+                    let prefix = self.config.borrow().media().download_prefix();
+                    if let Err(error) =
+                        remember_published_link(&prefix, media_id, &line)
+                    {
+                        tracing::warn!(
+                            "Can't remember the published link: {error}"
+                        );
+                    }
+                }
+                Some(line)
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2549,12 +2527,16 @@ impl InnerServer {
                         stderr.lines().last().unwrap_or_default().trim()
                     ),
                 );
+                None
             }
-            Err(error) => self.print_with_prefix_to(
-                output_buffer.as_ref(),
-                &Weechat::prefix(Prefix::Error),
-                &format!("The media publish command failed: {error}"),
-            ),
+            Err(error) => {
+                self.print_with_prefix_to(
+                    output_buffer.as_ref(),
+                    &Weechat::prefix(Prefix::Error),
+                    &format!("The media publish command failed: {error}"),
+                );
+                None
+            }
         }
     }
 

@@ -17,7 +17,11 @@ use weechat::{
     Prefix, Weechat,
 };
 
-use crate::{render::RenderedEvent, utils::ToTag};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+
+use crate::{
+    commands::published_media_text, render::RenderedEvent, utils::ToTag,
+};
 
 use super::{maybe_active_room, SharedRoom};
 
@@ -201,6 +205,53 @@ impl RoomBuffer {
     }
 
     /// Return whether an event is already rendered in the buffer.
+    /// Rewrite the line of the attachment with `media_id` so it shows
+    /// `link` instead of the download command. Returns whether a line was
+    /// found, in the room buffer or a thread buffer.
+    pub fn set_media_link(&self, media_id: &str, link: &str) -> bool {
+        let rewrite = |buffer: &Buffer| {
+            let mut found = false;
+            for line in buffer.lines().rev() {
+                let tags = line.tags();
+                let is_media =
+                    tags.iter().any(|tag| tag.as_ref() == "matrix_media");
+                let mentions_media = tags.iter().any(|tag| {
+                    tag.as_ref()
+                        .strip_prefix("matrix_media_emxc_")
+                        .or_else(|| {
+                            tag.as_ref().strip_prefix("matrix_media_uri_")
+                        })
+                        .and_then(|encoded| {
+                            URL_SAFE_NO_PAD.decode(encoded).ok()
+                        })
+                        .is_some_and(|decoded| {
+                            String::from_utf8_lossy(&decoded).contains(media_id)
+                        })
+                });
+                if !is_media || !mentions_media {
+                    continue;
+                }
+                let message = Weechat::remove_color(&line.message());
+                line.set_message(&published_media_text(&message, link));
+                found = true;
+            }
+            found
+        };
+
+        let in_room = self
+            .buffer_handle()
+            .upgrade()
+            .is_ok_and(|buffer| rewrite(&buffer));
+        let mut found = in_room;
+        for handle in self.thread_buffers.borrow().values() {
+            if let Ok(buffer) = handle.upgrade() {
+                found |= rewrite(&buffer);
+            }
+        }
+
+        found
+    }
+
     pub fn contains_event(&self, event_id: &EventId) -> bool {
         let event_id_tag = Cow::from(event_id.to_tag());
 
