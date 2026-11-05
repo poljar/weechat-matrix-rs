@@ -13,6 +13,7 @@ mod buffer_switch;
 mod devices;
 mod dm;
 mod edit;
+mod event_selector;
 mod ignore;
 mod invite;
 mod join;

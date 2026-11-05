@@ -4,7 +4,6 @@ use clap::{
 };
 use url::Url;
 
-use matrix_sdk::ruma::EventId;
 use weechat::{
     buffer::Buffer,
     hooks::{Command, CommandCallback, CommandSettings},
@@ -12,6 +11,7 @@ use weechat::{
 };
 
 use super::{
+    event_selector::select_event,
     join::{print_no_join_server_error, JoinCommand},
     parse_and_run,
     verification::VerificationCommand,
@@ -57,7 +57,7 @@ impl MatrixCommand {
             .add_argument("sso-complete <server-name> <login-token>")
             .add_argument("history")
             .add_argument("read")
-            .add_argument("thread <event-id>")
+            .add_argument("thread <event-id|index|/pattern/>")
             .add_argument("threads list [all|participated]|more|open <index>")
             .add_argument("version")
             .add_argument("help <matrix-command> [<matrix-subcommand>]")
@@ -70,7 +70,9 @@ impl MatrixCommand {
 sso-complete: Finish SSO login with a copied loginToken.
      history: Load an older page of messages in the current room.
         read: Mark the current room as read.
-      thread: Open a thread buffer and load its complete history.
+      thread: Open a thread buffer on an event and load its complete \
+              history. Pick the event by ID, by index (1 = latest, 4 = four \
+              back) or by /pattern/.
      threads: List the threads of the current room.
      version: Show version information about weechat-matrix.
      devices: {}
@@ -300,17 +302,23 @@ Use /matrix [command] help to find out more.\n",
             ));
             return;
         };
-        let event_id = args
-            .value_of("event-id")
-            .expect("Event ID not set but was required");
-        let Ok(event_id) = EventId::parse(event_id) else {
-            Weechat::print(&format!(
-                "{}{}: Invalid Matrix event ID: {}",
-                Weechat::prefix(Prefix::Error),
-                PLUGIN_NAME,
-                event_id,
-            ));
-            return;
+        // A /pattern/ may contain spaces, which the parser split into words.
+        let argument = args
+            .values_of("event")
+            .expect("Event not set but was required")
+            .collect::<Vec<_>>()
+            .join(" ");
+        let event_id = match select_event(buffer, &argument) {
+            Ok(event_id) => event_id,
+            Err(error) => {
+                Weechat::print(&format!(
+                    "{}{}: {}",
+                    Weechat::prefix(Prefix::Error),
+                    PLUGIN_NAME,
+                    error,
+                ));
+                return;
+            }
         };
 
         if let Some(handle) = room.open_thread_buffer(&event_id) {
@@ -573,10 +581,12 @@ impl CommandCallback for MatrixCommand {
             .subcommand(
                 SubCommand::with_name("thread")
                     .about("Open a thread buffer and load its history.")
+                    .setting(ArgParseSettings::AllowLeadingHyphen)
                     .arg(
-                        Arg::with_name("event-id")
-                            .value_name("event-id")
-                            .required(true),
+                        Arg::with_name("event")
+                            .value_name("event-id|index|/pattern/")
+                            .required(true)
+                            .multiple(true),
                     ),
             )
             .subcommand(
