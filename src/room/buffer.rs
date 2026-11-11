@@ -597,7 +597,8 @@ impl RoomBuffer {
 
         let input = buffer.input();
         let children = self.space_children.borrow();
-        let visible = filter_space_children(&children, &input);
+        let visible =
+            filter_space_children(&children, space_child_filter_query(&input));
 
         buffer.clear();
         buffer.set_title(&format!(
@@ -713,6 +714,14 @@ fn filter_space_children<'a>(
                 || child.room_id.as_str().to_lowercase().contains(&query)
         })
         .collect()
+}
+
+fn space_child_filter_query(input: &str) -> &str {
+    if input.starts_with('/') && !input.starts_with("//") {
+        ""
+    } else {
+        input
+    }
 }
 
 fn select_space_child<'a>(
@@ -1090,8 +1099,9 @@ mod tests {
     use super::{
         filter_space_children, format_buffer_name, format_thread_buffer_name,
         line_sort_key, reply_sender_id_from_tags, room_display_name,
-        sanitize_thread_id, select_space_child, space_child_selection,
-        RoomBuffer, SpaceChildInfo, SpaceChildSelection,
+        sanitize_thread_id, select_space_child, space_child_filter_query,
+        space_child_selection, RoomBuffer, SpaceChildInfo,
+        SpaceChildSelection,
     };
 
     fn space_child(
@@ -1237,6 +1247,25 @@ mod tests {
         assert_eq!(by_name[0].1.room_id, room_id!("!beta:example.org"));
         assert_eq!(by_id.len(), 1);
         assert_eq!(by_id[0].1.room_id, room_id!("!alpha:example.org"));
+    }
+
+    #[test]
+    fn space_commands_do_not_filter_children_but_escaped_slashes_do() {
+        let children = [
+            space_child(room_id!("!alpha:example.org"), "Alpha", true),
+            space_child(room_id!("!beta:example.org"), "Beta", false),
+        ];
+
+        let command_query =
+            filter_space_children(&children, space_child_filter_query("/go"));
+        let escaped_query = filter_space_children(
+            &children,
+            space_child_filter_query("//literal"),
+        );
+
+        assert_eq!(command_query.len(), 2);
+        assert_eq!(space_child_filter_query("//literal"), "//literal");
+        assert!(escaped_query.is_empty());
     }
 
     #[test]
