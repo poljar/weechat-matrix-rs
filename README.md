@@ -231,6 +231,30 @@ the room or verification buffer:
 The plugin renders in-room SAS verification requests and shows the emoji or
 decimal short authentication string when it is ready.
 
+# Reactions
+
+Reactions are shown after the message they belong to, with a count per
+emoji; reactions you added are highlighted:
+
+       <alice> lunch at noon? [👍2 😄1]
+
+To react, send `+` followed by an emoji or a `:shortcode:`. A number in front
+picks the nth most recent message instead of the latest; `-` removes your
+reaction:
+
+       +👍
+       +:thumbsup:
+       3+:smile:
+       -:thumbsup:
+
+To complete shortcodes with Tab, add the `matrix_emojis` completion to the
+default template:
+
+       /set weechat.completion.default_template "%(nicks)|%(irc_channels)|%(matrix_emojis)"
+
+Shortcodes in messages, `/me` emotes and edits are replaced with the emoji
+before sending (`matrix-rust.input.emoji_shortcodes`, on by default).
+
 # Matrix Spaces
 
 Space buffers use a `+` prefix in their short name, while ordinary room buffers

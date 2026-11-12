@@ -363,6 +363,24 @@ impl RoomBuffer {
         }
     }
 
+    /// Replace the suffix `old` with `new` on the last line of `event_id`,
+    /// in the room buffer and any thread buffer showing it. Returns whether a
+    /// line was found.
+    pub fn set_event_suffix(&self, event_id: &EventId, old: &str, new: &str) -> bool {
+        let event_id_tag = event_id.to_tag();
+        let mut found = self.buffer_handle().upgrade().is_ok_and(|buffer| {
+            set_event_suffix_in_buffer(&buffer, &event_id_tag, old, new)
+        });
+
+        for handle in self.thread_buffers.borrow().values() {
+            found |= handle.upgrade().is_ok_and(|buffer| {
+                set_event_suffix_in_buffer(&buffer, &event_id_tag, old, new)
+            });
+        }
+
+        found
+    }
+
     pub fn redact_event_lines<F, G>(
         &self,
         event_id_tag: &Cow<str>,
@@ -855,6 +873,25 @@ where
         modify_line(line, redacted_tag.clone(), redact_rest_line);
     }
 
+    true
+}
+
+fn set_event_suffix_in_buffer(
+    buffer: &Buffer,
+    event_id_tag: &str,
+    old: &str,
+    new: &str,
+) -> bool {
+    let Some(line) = buffer
+        .lines()
+        .rfind(|line| line.tags().iter().any(|tag| tag == event_id_tag))
+    else {
+        return false;
+    };
+
+    let message = line.message();
+    let base = message.strip_suffix(old).unwrap_or(&message);
+    line.set_message(&format!("{base}{new}"));
     true
 }
 

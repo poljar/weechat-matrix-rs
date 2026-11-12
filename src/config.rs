@@ -205,6 +205,14 @@ config!(
             // Default value.
             true,
         },
+
+        emoji_shortcodes: bool {
+            // Description
+            "Replace :shortcode: with the emoji in sent messages, emotes \
+             and edits",
+            // Default value.
+            true,
+        },
     },
 
     Section media {
