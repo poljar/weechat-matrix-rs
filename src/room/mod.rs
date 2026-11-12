@@ -111,6 +111,7 @@ use crate::{
     connection::Connection,
     render::{Render, RenderedEvent, ReplyContext},
     server::{InnerServer, MatrixServer, ThreadRoute},
+    shortcodes::expand_shortcodes,
     thread_continuation::ThreadKey,
     utils::{Edit, VerificationEvent},
     PLUGIN_NAME,
@@ -1091,11 +1092,20 @@ impl MatrixRoom {
         });
 
         make_text_message_content(
-            input,
+            self.expand_shortcodes(input),
             self.config.borrow().input().markdown_input(),
             thread_root,
             latest_thread_event,
         )
+    }
+
+    /// Replace `:shortcode:`s in typed text if `input.emoji_shortcodes` is on.
+    fn expand_shortcodes(&self, input: String) -> String {
+        if self.config.borrow().input().emoji_shortcodes() {
+            expand_shortcodes(&input)
+        } else {
+            input
+        }
     }
 
     fn server(&self) -> Option<MatrixServer> {
@@ -1225,6 +1235,7 @@ impl MatrixRoom {
     }
 
     pub async fn send_emote(&self, buffer: &Buffer<'_>, body: String) {
+        let body = self.expand_shortcodes(body);
         let thread_root = thread_root_from_buffer(buffer);
         let latest_thread_event = thread_root.as_ref().and_then(|root| {
             self.latest_thread_event_ids.borrow().get(root).cloned()
@@ -2643,6 +2654,7 @@ impl MatrixRoom {
     }
 
     pub async fn send_edit(&self, event_id: OwnedEventId, message: String) {
+        let message = self.expand_shortcodes(message);
         let Some(connection) = self.connection.borrow().clone() else {
             self.print_error("Not connected. Please connect first.");
             return;

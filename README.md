@@ -252,6 +252,9 @@ default template:
 
        /set weechat.completion.default_template "%(nicks)|%(irc_channels)|%(matrix_emojis)"
 
+Shortcodes in messages, `/me` emotes and edits are replaced with the emoji
+before sending (`matrix-rust.input.emoji_shortcodes`, on by default).
+
 # Matrix Spaces
 
 Space buffers use a `+` prefix in their short name, while ordinary room buffers
