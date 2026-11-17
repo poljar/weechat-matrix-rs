@@ -55,11 +55,14 @@ fn buffer_target(command: &str) -> Option<&str> {
     is_buffer_target(target).then_some(target)
 }
 
+/// Whether `target` can be a buffer short name rather than a core `/buffer`
+/// subcommand or option. Short names may contain spaces.
 pub(crate) fn is_buffer_target(target: &str) -> bool {
-    !target.is_empty()
-        && !target.contains(char::is_whitespace)
-        && !target.starts_with('-')
-        && !is_core_buffer_subcommand(target)
+    let first_word = target.split_whitespace().next().unwrap_or_default();
+
+    !first_word.is_empty()
+        && !first_word.starts_with('-')
+        && !is_core_buffer_subcommand(first_word)
 }
 
 fn is_core_buffer_subcommand(target: &str) -> bool {
@@ -98,6 +101,11 @@ mod tests {
     }
 
     #[test]
+    fn extracts_buffer_argument_with_spaces() {
+        assert_eq!(buffer_target("/buffer Kaz Nam "), Some("Kaz Nam"));
+    }
+
+    #[test]
     fn leaves_subcommands_to_weechat() {
         assert_eq!(buffer_target("/buffer move 1"), None);
         assert_eq!(buffer_target("/buffer clear"), None);
@@ -108,7 +116,8 @@ mod tests {
     fn recognizes_resolvable_buffer_targets() {
         assert!(is_buffer_target("#OSGeo"));
         assert!(!is_buffer_target(""));
-        assert!(!is_buffer_target("matrix room"));
+        assert!(is_buffer_target("matrix room"));
+        assert!(!is_buffer_target("close 3"));
         assert!(!is_buffer_target("list"));
     }
 }

@@ -78,7 +78,7 @@ impl CompletionCallback for BufferShortNamesCompletion {
             completion.add_with_options(
                 &short_name,
                 false,
-                CompletionPosition::Sorted,
+                CompletionPosition::End,
             );
         }
 
@@ -345,13 +345,24 @@ fn extract_mxc_uris(message: &str) -> Vec<String> {
         .collect()
 }
 
-fn buffer_completion_candidates<I>(short_names: I) -> BTreeSet<String>
+/// Short names that `/buffer` can switch to, in buffer number order, which
+/// is the order the buffer list shows them in.
+fn buffer_completion_candidates<I>(short_names: I) -> Vec<String>
 where
-    I: IntoIterator<Item = String>,
+    I: IntoIterator<Item = (i32, String)>,
 {
+    let mut short_names: Vec<_> = short_names
+        .into_iter()
+        .filter(|(_, short_name)| is_buffer_target(short_name))
+        .collect();
+    short_names.sort();
+
+    let mut seen = BTreeSet::new();
     short_names
         .into_iter()
-        .filter(|short_name| is_buffer_target(short_name))
+        .filter_map(|(_, short_name)| {
+            seen.insert(short_name.clone()).then_some(short_name)
+        })
         .collect()
 }
 
@@ -430,16 +441,21 @@ mod tests {
     }
 
     #[test]
-    fn completes_only_resolvable_matrix_short_names() {
+    fn completes_matrix_short_names_in_buffer_order() {
         assert_eq!(
             buffer_completion_candidates([
-                "#matrix:example.org".to_owned(),
-                "#matrix:example.org".to_owned(),
-                "".to_owned(),
-                "matrix room".to_owned(),
-                "list".to_owned(),
+                (7, "#matrix:example.org".to_owned()),
+                (9, "#matrix:example.org".to_owned()),
+                (3, "".to_owned()),
+                (5, "Kaz Nam".to_owned()),
+                (2, "Kaylea".to_owned()),
+                (4, "list".to_owned()),
             ]),
-            BTreeSet::from(["#matrix:example.org".to_owned()]),
+            vec![
+                "Kaylea".to_owned(),
+                "Kaz Nam".to_owned(),
+                "#matrix:example.org".to_owned(),
+            ],
         );
     }
 

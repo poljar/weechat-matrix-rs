@@ -1489,7 +1489,7 @@ impl MatrixRoom {
         self.buffer.buffer_handle()
     }
 
-    pub fn buffer_short_names(&self) -> Vec<String> {
+    pub fn buffer_short_names(&self) -> Vec<(i32, String)> {
         self.buffer.short_names()
     }
 
