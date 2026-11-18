@@ -1,6 +1,6 @@
 use clap::{App as Argparse, AppSettings as ArgParseSettings, Arg};
 use matrix_sdk::ruma::{EventId, OwnedEventId};
-use regex::Regex;
+use fancy_regex::{Captures, Regex};
 use weechat::{
     buffer::Buffer,
     hooks::{Command, CommandCallback, CommandSettings},
@@ -12,48 +12,197 @@ use crate::{room::thread_root_localvar, Servers};
 
 const EVENT_ID_TAG_PREFIX: &str = "matrix_id_";
 
-/// The pattern of a `/pattern/` or `/pattern/replacement/` argument.
-enum Pattern<'a> {
-    Substring(&'a str),
-    Regex(Regex),
-}
+/// A Perl-style pattern: `\/` is a literal slash and `flags` are the
+/// letters after the last slash (`i`, `m`, `s`, `x`; `g` is handled by the
+/// caller).
+struct Pattern(Regex);
 
-impl<'a> Pattern<'a> {
-    fn new(pattern: &'a str, regex: bool) -> Result<Self, String> {
-        if regex {
-            Regex::new(pattern).map(Self::Regex).map_err(|error| {
-                format!("Invalid pattern /{pattern}/: {error}")
-            })
+impl Pattern {
+    /// With `regex` off, `pattern` is literal text.
+    fn new(pattern: &str, flags: &str, regex: bool) -> Result<Self, String> {
+        let inline: String =
+            flags.chars().filter(|flag| "imsx".contains(*flag)).collect();
+        let source = pattern.replace("\\/", "/");
+        let source = if regex {
+            source
         } else {
-            Ok(Self::Substring(pattern))
-        }
+            fancy_regex::escape(&source).into_owned()
+        };
+        let source = if inline.is_empty() {
+            source
+        } else {
+            format!("(?{inline}){source}")
+        };
+
+        Regex::new(&source)
+            .map(Self)
+            .map_err(|error| format!("Invalid pattern /{pattern}/: {error}"))
     }
 
     fn is_match(&self, message: &str) -> bool {
-        match self {
-            Self::Substring(pattern) => message.contains(pattern),
-            Self::Regex(regex) => regex.is_match(message),
-        }
+        self.0.is_match(message).unwrap_or(false)
     }
 
-    fn replace_all(&self, message: &str, replacement: &str) -> String {
-        match self {
-            Self::Substring(pattern) => message.replace(pattern, replacement),
-            Self::Regex(regex) => {
-                regex.replace_all(message, replacement).into_owned()
+    /// Replace the first match in `message`, or every match if `global`.
+    fn substitute(
+        &self,
+        message: &str,
+        replacement: &Replacement,
+        global: bool,
+    ) -> Result<String, String> {
+        let mut output = String::with_capacity(message.len());
+        let mut last = 0;
+
+        for captures in self.0.captures_iter(message) {
+            let captures = captures
+                .map_err(|error| format!("Pattern failed to match: {error}"))?;
+            let Some(matched) = captures.get(0) else {
+                continue;
+            };
+            output.push_str(&message[last..matched.start()]);
+            replacement.expand(&captures, &mut output);
+            last = matched.end();
+            if !global {
+                break;
+            }
+        }
+        output.push_str(&message[last..]);
+
+        Ok(output)
+    }
+}
+
+/// One piece of a parsed replacement.
+#[derive(Debug, Eq, PartialEq)]
+enum ReplacementPart {
+    Literal(String),
+    Group(usize),
+    Named(String),
+}
+
+/// A Perl-style replacement: `$1`, `${1}`, `\1`, `${name}` and `$&` refer
+/// to groups; `\/`, `\\`, `\$`, `\n` and `\t` are escapes.
+#[derive(Debug, Eq, PartialEq)]
+struct Replacement(Vec<ReplacementPart>);
+
+impl Replacement {
+    /// With `regex` off, only `\/` is special.
+    fn new(text: &str, regex: bool) -> Self {
+        if !regex {
+            let literal = text.replace("\\/", "/");
+            return Self(vec![ReplacementPart::Literal(literal)]);
+        }
+
+        let mut parts = Vec::new();
+        let mut literal = String::new();
+        let flush = |literal: &mut String, parts: &mut Vec<_>| {
+            if !literal.is_empty() {
+                parts.push(ReplacementPart::Literal(std::mem::take(literal)));
+            }
+        };
+        let mut chars = text.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            match (c, chars.peek().copied()) {
+                ('\\', Some(next)) => {
+                    chars.next();
+                    match next {
+                        'n' => literal.push('\n'),
+                        't' => literal.push('\t'),
+                        '1'..='9' => {
+                            flush(&mut literal, &mut parts);
+                            let group = next as usize - '0' as usize;
+                            parts.push(ReplacementPart::Group(group));
+                        }
+                        other => literal.push(other),
+                    }
+                }
+                ('$', Some('&')) => {
+                    chars.next();
+                    flush(&mut literal, &mut parts);
+                    parts.push(ReplacementPart::Group(0));
+                }
+                ('$', Some(next)) if next.is_ascii_digit() => {
+                    let mut digits = String::new();
+                    while let Some(digit) =
+                        chars.next_if(|c| c.is_ascii_digit())
+                    {
+                        digits.push(digit);
+                    }
+                    flush(&mut literal, &mut parts);
+                    parts.push(ReplacementPart::Group(
+                        digits.parse().unwrap_or(usize::MAX),
+                    ));
+                }
+                ('$', Some('{')) => {
+                    let rest: String = chars.clone().skip(1).collect();
+                    if let Some((name, _)) = rest.split_once('}') {
+                        for _ in 0..name.chars().count() + 2 {
+                            chars.next();
+                        }
+                        flush(&mut literal, &mut parts);
+                        parts.push(match name.parse() {
+                            Ok(group) => ReplacementPart::Group(group),
+                            Err(_) => ReplacementPart::Named(name.to_owned()),
+                        });
+                    } else {
+                        literal.push('$');
+                    }
+                }
+                (other, _) => literal.push(other),
+            }
+        }
+        flush(&mut literal, &mut parts);
+
+        Self(parts)
+    }
+
+    fn expand(&self, captures: &Captures<'_, str>, output: &mut String) {
+        for part in &self.0 {
+            let group = match part {
+                ReplacementPart::Literal(text) => {
+                    output.push_str(text);
+                    continue;
+                }
+                ReplacementPart::Group(index) => captures.get(*index),
+                ReplacementPart::Named(name) => captures.name(name),
+            };
+            if let Some(group) = group {
+                output.push_str(group.as_str());
             }
         }
     }
 }
 
+/// Split `text` at its first `/` that is not escaped as `\/`.
+pub(crate) fn split_at_slash(text: &str) -> Option<(&str, &str)> {
+    let mut escaped = false;
+    for (index, c) in text.char_indices() {
+        match c {
+            '/' if !escaped => {
+                return Some((&text[..index], &text[index + 1..]))
+            }
+            '\\' => escaped = !escaped,
+            _ => escaped = false,
+        }
+    }
+    None
+}
+
+/// Whether `flags` holds only substitution flags.
+pub(crate) fn are_flags(flags: &str) -> bool {
+    flags.chars().all(|flag| "gimsx".contains(flag))
+}
+
 /// What the text of an edit asks for.
 #[derive(Debug, Eq, PartialEq)]
 enum EditText<'a> {
-    /// `/pattern/replacement/` or `s/pattern/replacement/`: replace the
-    /// matched text and keep the rest of the message.
+    /// `/pattern/replacement/flags` or `s/pattern/replacement/flags`:
+    /// replace the matched text and keep the rest of the message.
     Replace {
         pattern: &'a str,
         replacement: &'a str,
+        flags: &'a str,
     },
     /// `/pattern/ message`: replace the whole matching message.
     PatternThenMessage { pattern: &'a str, message: &'a str },
@@ -72,7 +221,7 @@ fn parse_edit_text(text: &str) -> Result<EditText<'_>, String> {
         return Ok(EditText::Message(text));
     };
 
-    let Some((pattern, rest)) = body.split_once('/') else {
+    let Some((pattern, rest)) = split_at_slash(body) else {
         // `s/word` can only be a message; `/word` is a broken pattern.
         return if sed {
             Ok(EditText::Message(text))
@@ -88,11 +237,14 @@ fn parse_edit_text(text: &str) -> Result<EditText<'_>, String> {
         return Err("The edit pattern cannot be empty.".to_owned());
     }
 
-    if let Some(replacement) = rest.strip_suffix('/') {
-        return Ok(EditText::Replace {
-            pattern,
-            replacement,
-        });
+    if let Some((replacement, flags)) = split_at_slash(rest) {
+        if are_flags(flags) {
+            return Ok(EditText::Replace {
+                pattern,
+                replacement,
+                flags,
+            });
+        }
     }
 
     if rest.is_empty() {
@@ -105,8 +257,9 @@ fn parse_edit_text(text: &str) -> Result<EditText<'_>, String> {
             message: message.trim_start(),
         }),
         _ => Err(format!(
-            "Unterminated replacement in {text}; use /pattern/replacement/ \
-             or /pattern/ message."
+            "Unterminated replacement or unknown flags in {text}; use \
+             /pattern/replacement/ with flags from gimsx, or /pattern/ \
+             message."
         )),
     }
 }
@@ -124,15 +277,18 @@ impl EditCommand {
                 "event-id: The Matrix event ID to edit.
     index: 1-based recent unredacted event index. 1, 0, or -1 select the latest \
            event; 2 or -2 select the event before that.
-  pattern: A case-sensitive substring enclosed in slashes, or a regular \
-           expression with matrix-rust.input.edit_regex on. The most recent \
-           unredacted message matching it is selected.
-  message: New plain-text message body. The shorthand /pattern/replacement/ \
-           (or s/pattern/replacement/) selects the most recent matching \
-           message and replaces that text, spaces included; an empty \
-           replacement deletes it. An unclosed pattern is an error, not a \
-           message. Typing s/pattern/replacement/ as a message does the same \
-           (matrix-rust.input.sed_edit).",
+  pattern: A Perl-style regular expression enclosed in slashes (literal \
+           text with matrix-rust.input.edit_regex off); write a literal \
+           slash as \\/. The most recent unredacted message \
+           matching it is selected.
+  message: New plain-text message body. The shorthand \
+           /pattern/replacement/flags (or s/pattern/replacement/flags) \
+           selects the most recent matching message and replaces the first \
+           match; an empty replacement deletes it. Flags: g replaces every \
+           match, i ignores case, m, s and x as in Perl. The replacement \
+           may use $1, \\1, ${name} and $&. An unclosed pattern is an \
+           error, not a message. Typing s/pattern/replacement/ as a \
+           message does the same (matrix-rust.input.sed_edit).",
             );
 
         Command::new(
@@ -197,7 +353,7 @@ impl EditCommand {
     /// with the event's whole text.
     fn event_matching_pattern(
         buffer: &Buffer,
-        pattern: &Pattern<'_>,
+        pattern: &Pattern,
     ) -> Option<(OwnedEventId, String)> {
         let event_id = buffer.lines().rev().find_map(|line| {
             let tags = line.tags();
@@ -259,20 +415,26 @@ impl EditCommand {
                 EditText::Replace {
                     pattern,
                     replacement,
+                    flags,
                 },
             ) => {
                 let original = Self::message_of_event(buffer, &event_id)
                     .ok_or_else(|| {
                         format!("Event {event_id} is not shown in this buffer.")
                     })?;
-                let matcher = Pattern::new(pattern, regex)?;
+                let matcher = Pattern::new(pattern, flags, regex)?;
                 if !matcher.is_match(&original) {
                     return Err(format!(
                         "Event {event_id} does not match /{pattern}/."
                     ));
                 }
+                let message = matcher.substitute(
+                    &original,
+                    &Replacement::new(replacement, regex),
+                    flags.contains('g'),
+                )?;
 
-                (event_id, matcher.replace_all(&original, replacement))
+                (event_id, message)
             }
             (Some(event_id), EditText::Message(message)) => {
                 (event_id, message.to_owned())
@@ -287,20 +449,26 @@ impl EditCommand {
                 EditText::Replace {
                     pattern,
                     replacement,
+                    flags,
                 },
             ) => {
-                let matcher = Pattern::new(pattern, regex)?;
+                let matcher = Pattern::new(pattern, flags, regex)?;
                 let (event_id, original) = Self::event_matching_pattern(
                     buffer, &matcher,
                 )
                 .ok_or_else(|| {
                     format!("No unredacted Matrix event matches /{pattern}/.")
                 })?;
+                let message = matcher.substitute(
+                    &original,
+                    &Replacement::new(replacement, regex),
+                    flags.contains('g'),
+                )?;
 
-                (event_id, matcher.replace_all(&original, replacement))
+                (event_id, message)
             }
             (None, EditText::PatternThenMessage { pattern, message }) => {
-                let matcher = Pattern::new(pattern, regex)?;
+                let matcher = Pattern::new(pattern, "", regex)?;
                 let (event_id, _) = Self::event_matching_pattern(
                     buffer, &matcher,
                 )
@@ -379,7 +547,9 @@ impl CommandCallback for EditCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_edit_text, EditCommand, EditText, Pattern};
+    use super::{
+        parse_edit_text, EditCommand, EditText, Pattern, Replacement,
+    };
 
     #[test]
     fn edit_index_accepts_recent_event_forms() {
@@ -397,6 +567,7 @@ mod tests {
             Ok(EditText::Replace {
                 pattern: "teh",
                 replacement: "the",
+                flags: "",
             }),
             parse_edit_text("/teh/the/")
         );
@@ -404,6 +575,7 @@ mod tests {
             Ok(EditText::Replace {
                 pattern: ", if it's based on an MA thesis, ",
                 replacement: ", ",
+                flags: "",
             }),
             parse_edit_text("s/, if it's based on an MA thesis, /, /")
         );
@@ -411,8 +583,17 @@ mod tests {
             Ok(EditText::Replace {
                 pattern: " mako",
                 replacement: "",
+                flags: "",
             }),
             parse_edit_text("/ mako//")
+        );
+        assert_eq!(
+            Ok(EditText::Replace {
+                pattern: "and\\/or",
+                replacement: "a\\/b",
+                flags: "gi",
+            }),
+            parse_edit_text("s/and\\/or/a\\/b/gi")
         );
     }
 
@@ -438,6 +619,8 @@ mod tests {
         assert!(parse_edit_text("/teh").is_err());
         assert!(parse_edit_text("/teh/the").is_err());
         assert!(parse_edit_text("s/teh/the").is_err());
+        assert!(parse_edit_text("s/teh/the/q").is_err());
+        assert!(parse_edit_text("s/a/b\\/").is_err());
         assert_eq!(
             Err("The edit pattern cannot be empty.".to_owned()),
             parse_edit_text("//the/")
@@ -448,36 +631,71 @@ mod tests {
         );
     }
 
+    fn substitute(
+        pattern: &str,
+        replacement: &str,
+        flags: &str,
+        message: &str,
+    ) -> String {
+        Pattern::new(pattern, flags, true)
+            .unwrap()
+            .substitute(
+                message,
+                &Replacement::new(replacement, true),
+                flags.contains('g'),
+            )
+            .unwrap()
+    }
+
     #[test]
-    fn substring_patterns_replace_every_occurrence() {
-        let pattern = Pattern::Substring("teh");
+    fn substitution_replaces_the_first_match_unless_global() {
+        assert_eq!(
+            "the cat ate teh kibble",
+            substitute("teh", "the", "", "teh cat ate teh kibble")
+        );
         assert_eq!(
             "the cat ate the kibble",
-            pattern.replace_all("teh cat ate teh kibble", "the")
+            substitute("teh", "the", "g", "teh cat ate teh kibble")
         );
+        assert_eq!("hi there", substitute(" mako", "", "", "hi mako there"));
+    }
+
+    #[test]
+    fn substitution_follows_perl_syntax() {
+        assert_eq!("b a", substitute(r"(\w+) (\w+)", r"$2 \1", "", "a b"));
+        assert_eq!("[a] b", substitute(r"\w+", "[$&]", "", "a b"));
         assert_eq!(
-            "hi there",
-            Pattern::Substring(" mako").replace_all("hi mako there", "")
+            "x-1",
+            substitute(r"(?<n>\d)(?<l>\w)", "${l}-${n}", "", "1x")
+        );
+        assert_eq!("the the", substitute(r"(\w+) \1", "$1", "", "the the the"));
+        assert_eq!("X", substitute("teh", "X", "i", "TEH"));
+        assert_eq!("a or b", substitute(r"and\/or", "or", "", "a and/or b"));
+        assert_eq!("a/b", substitute("-", r"\/", "", "a-b"));
+        assert_eq!("$5", substitute("cost", r"\$5", "", "cost"));
+        assert_eq!("bar", substitute("foo(?=bar)", "", "", "foobar"));
+        assert!(Pattern::new("(", "", true).is_err());
+    }
+
+    #[test]
+    fn literal_mode_takes_pattern_and_replacement_as_text() {
+        let pattern = Pattern::new("a.b (", "g", false).unwrap();
+        assert!(!pattern.is_match("axb ("));
+        assert_eq!(
+            "$1 and $1",
+            pattern
+                .substitute(
+                    "a.b ( and a.b (",
+                    &Replacement::new("$1", false),
+                    true
+                )
+                .unwrap()
         );
     }
 
     #[test]
-    fn regex_patterns_match_and_replace_with_groups() {
-        let pattern = Pattern::new(r"(\w+) cat", true).unwrap();
-
-        assert!(pattern.is_match("teh cat ate"));
-        assert!(!pattern.is_match("cat"));
-        assert_eq!(
-            "teh dog ate teh kibble",
-            pattern.replace_all("teh cat ate teh kibble", "$1 dog")
-        );
-        assert!(Pattern::new("(", true).is_err());
-        assert!(Pattern::new("(", false).unwrap().is_match("a ( b"));
-    }
-
-    #[test]
-    fn edit_pattern_matches_message_substrings() {
-        let pattern = Pattern::Substring("/edit");
+    fn edit_pattern_matches_message_text() {
+        let pattern = Pattern::new("/edit", "", true).unwrap();
         assert!(pattern.is_match("Something like /edit /pattern/replacement/"));
         assert!(!pattern.is_match("Something like /reply /pattern/"));
     }

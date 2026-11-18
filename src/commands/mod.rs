@@ -43,7 +43,7 @@ use buffer_switch::BufferSwitchCommand;
 pub(crate) use buffer_switch::is_buffer_target;
 use devices::DevicesCommand;
 use dm::DirectMessageCommand;
-pub(crate) use edit::EditCommand;
+pub(crate) use edit::{are_flags, split_at_slash, EditCommand};
 use ignore::IgnoreCommand;
 use invite::InviteCommand;
 use join::JoinCommand;

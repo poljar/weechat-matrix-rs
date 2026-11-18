@@ -208,18 +208,19 @@ config!(
 
         sed_edit: bool {
             // Description
-            "Treat a message of the form s/pattern/replacement/ as \
-             /edit /pattern/replacement/",
+            "Treat a message of the form s/pattern/replacement/flags as \
+             /edit /pattern/replacement/flags",
             // Default value.
             true,
         },
 
         edit_regex: bool {
             // Description
-            "Treat /edit patterns as regular expressions instead of \
-             substrings; replacements may refer to groups as $1",
+            "Treat /edit and s/// patterns as Perl-style regular \
+             expressions; when off, the pattern and replacement are literal \
+             text",
             // Default value.
-            false,
+            true,
         },
     },
 

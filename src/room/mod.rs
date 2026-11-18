@@ -1064,10 +1064,12 @@ pub(crate) fn thread_root_localvar(buffer: &Buffer) -> Option<OwnedEventId> {
 
 /// The `/pattern/replacement/` part of an `s/pattern/replacement/` message.
 fn sed_edit_arguments(input: &str) -> Option<&str> {
+    use crate::commands::{are_flags, split_at_slash};
+
     let arguments = input.strip_prefix('s')?;
-    let inner = arguments.strip_prefix('/')?.strip_suffix('/')?;
-    let (pattern, replacement) = inner.split_once('/')?;
-    (!pattern.is_empty() && !replacement.contains('/')).then_some(arguments)
+    let (pattern, rest) = split_at_slash(arguments.strip_prefix('/')?)?;
+    let (_, flags) = split_at_slash(rest)?;
+    (!pattern.is_empty() && are_flags(flags)).then_some(arguments)
 }
 
 impl MatrixRoom {
@@ -3859,6 +3861,11 @@ mod tests {
         use super::sed_edit_arguments;
         assert_eq!(Some("/teh/the/"), sed_edit_arguments("s/teh/the/"));
         assert_eq!(Some("/ mako//"), sed_edit_arguments("s/ mako//"));
+        assert_eq!(
+            Some("/and\\/or/a\\/b/gi"),
+            sed_edit_arguments("s/and\\/or/a\\/b/gi")
+        );
+        assert_eq!(None, sed_edit_arguments("s/a/b\\/"));
         for input in ["s/teh/the", "s//the/", "s/a/b/c/", "say s/a/b/", "sed"] {
             assert_eq!(None, sed_edit_arguments(input), "{input}");
         }
