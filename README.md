@@ -307,6 +307,34 @@ the nicklist, `/names`, and nick completion, set `matrix-rust.look.nick_format`:
 Supported placeholders are `%d` for display name, `%m` for full MXID, `%u` for
 MXID localpart, and `%h` for homeserver.
 
+# Editing
+
+`/edit text` replaces the most recent message. `/edit /old/new/` (or `/edit
+s/old/new/`) rewrites the most recent message matching `old`, spaces
+included; an empty replacement deletes the text, and `/edit /old/ text`
+replaces the whole matching message. An unclosed pattern is an error, not a
+new message body. A message of the form `s/old/new/` does the same as
+`/edit /old/new/` (`matrix-rust.input.sed_edit`); its errors print in the
+buffer you typed in.
+
+Substitutions follow Perl: the pattern is a regular expression, only the
+first match is replaced, and flags go after the last slash:
+
+       s/teh/the/          first "teh"
+       s/teh/the/g         every "teh"
+       s/teh/the/gi        ignoring case
+       s/and\/or/or/       \/ is a literal slash
+       s/(\w+) (\w+)/$2 $1/  groups, also \1, ${name} and $&
+       s/(\w+) \1/$1/      backreference in the pattern
+
+With `matrix-rust.input.edit_regex` off, the pattern and replacement are
+literal text; `\\/` and the flags still work.
+
+Flags are `g`, `i`, `m`, `s` and `x`. Lookahead and lookbehind work. The
+engine is the Rust `fancy-regex` crate, not PCRE itself, so some Perl
+features are missing: other delimiters (`s|a|b|`), the `e` and `r` flags,
+case changes in the replacement (`\U`, `\L`), recursion and callouts.
+
 # Helpful Commands
 
 `/help matrix` will print information about the `/matrix` command.

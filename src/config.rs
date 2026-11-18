@@ -205,6 +205,23 @@ config!(
             // Default value.
             true,
         },
+
+        sed_edit: bool {
+            // Description
+            "Treat a message of the form s/pattern/replacement/flags as \
+             /edit /pattern/replacement/flags",
+            // Default value.
+            true,
+        },
+
+        edit_regex: bool {
+            // Description
+            "Treat /edit and s/// patterns as Perl-style regular \
+             expressions; when off, the pattern and replacement are literal \
+             text",
+            // Default value.
+            true,
+        },
     },
 
     Section media {
