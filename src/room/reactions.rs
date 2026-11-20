@@ -151,7 +151,10 @@ pub struct ReactionInput {
     /// 1-based index of the message, counted from the most recent.
     pub index: usize,
     pub change: ReactionChange,
+    /// The emoji in its fully qualified form.
     pub key: String,
+    /// The emoji as typed, if it was not fully qualified.
+    pub typed_key: Option<String>,
 }
 
 /// Parse wee-slack style reaction input: `[N]+emoji` or `[N]-emoji`, where
@@ -181,12 +184,21 @@ pub fn parse_reaction_input(input: &str) -> Option<ReactionInput> {
     } else if !emoji.is_empty()
         && emoji.chars().all(|c| !c.is_ascii() && !c.is_alphanumeric())
     {
-        emoji.to_owned()
+        // "❤" (U+2764) and "❤️" (U+2764 U+FE0F) are different reaction keys;
+        // other clients send the qualified one.
+        emojis::get(emoji).map_or(emoji, |known| known.as_str()).to_owned()
     } else {
         return None;
     };
+    let typed_key = (key != emoji && !emoji.starts_with(':'))
+        .then(|| emoji.to_owned());
 
-    Some(ReactionInput { index, change, key })
+    Some(ReactionInput {
+        index,
+        change,
+        key,
+        typed_key,
+    })
 }
 
 #[cfg(test)]
@@ -294,11 +306,11 @@ mod tests {
     fn parses_reaction_input() {
         assert_eq!(
             parse_reaction_input("+👍"),
-            Some(ReactionInput { index: 1, change: ReactionChange::Add, key: "👍".to_owned() })
+            Some(ReactionInput { index: 1, change: ReactionChange::Add, key: "👍".to_owned(), typed_key: None })
         );
         assert_eq!(
             parse_reaction_input("3-👍"),
-            Some(ReactionInput { index: 3, change: ReactionChange::Remove, key: "👍".to_owned() })
+            Some(ReactionInput { index: 3, change: ReactionChange::Remove, key: "👍".to_owned(), typed_key: None })
         );
         assert_eq!(
             parse_reaction_input("2+:smile:").map(|r| (r.index, r.key)),
@@ -315,6 +327,20 @@ mod tests {
                 name
             );
         }
+    }
+
+    #[test]
+    fn qualifies_bare_emoji() {
+        let input = parse_reaction_input("+\u{2764}").unwrap();
+        assert_eq!(input.key, "\u{2764}\u{fe0f}");
+        assert_eq!(input.typed_key.as_deref(), Some("\u{2764}"));
+
+        let input = parse_reaction_input("+:heart:").unwrap();
+        assert_eq!(input.key, "\u{2764}\u{fe0f}");
+        assert_eq!(input.typed_key, None);
+
+        let input = parse_reaction_input("-👍").unwrap();
+        assert_eq!((input.key.as_str(), input.typed_key), ("👍", None));
     }
 
     #[test]

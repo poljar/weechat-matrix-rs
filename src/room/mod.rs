@@ -1629,10 +1629,20 @@ impl MatrixRoom {
             self.print_error(&format!("No message at index {}", input.index));
             return;
         };
-        let own =
-            self.reactions
-                .borrow()
-                .own_reaction(&target, &input.key, &self.own_user_id);
+        let own = {
+            let reactions = self.reactions.borrow();
+            let own = |key: &str| {
+                reactions.own_reaction(&target, key, &self.own_user_id)
+            };
+            // A reaction sent as typed, before keys were qualified, can
+            // still be removed.
+            own(&input.key).or_else(|| match input.change {
+                ReactionChange::Remove => {
+                    input.typed_key.as_deref().and_then(own)
+                }
+                ReactionChange::Add => None,
+            })
+        };
 
         match input.change {
             ReactionChange::Add => {
