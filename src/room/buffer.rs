@@ -17,7 +17,7 @@ use weechat::{
     Prefix, Weechat,
 };
 
-use crate::{render::RenderedEvent, utils::ToTag};
+use crate::{config::Config, render::RenderedEvent, utils::ToTag};
 
 use super::{maybe_active_room, SharedRoom};
 
@@ -29,6 +29,7 @@ pub struct RoomBuffer {
     room_metadata: Rc<RefCell<Option<(bool, Option<String>)>>>,
     thread_buffers: Rc<RefCell<HashMap<OwnedEventId, BufferHandle>>>,
     space_children: Rc<RefCell<Vec<SpaceChildInfo>>>,
+    config: Rc<RefCell<Config>>,
 }
 
 struct LineCopy {
@@ -52,8 +53,13 @@ impl<'a> From<BufferLine<'a>> for LineCopy {
 }
 
 impl RoomBuffer {
-    pub fn new(room: SharedRoom, runtime: Handle) -> Self {
+    pub fn new(
+        room: SharedRoom,
+        runtime: Handle,
+        config: Rc<RefCell<Config>>,
+    ) -> Self {
         Self {
+            config,
             room,
             runtime,
             inner: Rc::new(RefCell::new(None)),
@@ -61,6 +67,22 @@ impl RoomBuffer {
             thread_buffers: Rc::new(RefCell::new(HashMap::new())),
             space_children: Rc::new(RefCell::new(Vec::new())),
         }
+    }
+
+    /// The prefix for the lines after the first of a multi-line message,
+    /// or `None` if every line repeats the sender.
+    pub fn continuation_prefix(&self) -> Option<String> {
+        let config = self.config.borrow();
+        let look = config.look();
+
+        look.multiline_nick_once().then(|| {
+            let mark = look.multiline_prefix();
+            if mark.is_empty() {
+                " ".to_owned()
+            } else {
+                mark.to_string()
+            }
+        })
     }
 
     pub fn buffer_handle(&self) -> BufferHandle {
@@ -432,12 +454,19 @@ impl RoomBuffer {
         use std::cmp::Ordering;
         let date = lines.get(0).map(|l| l.date()).unwrap_or_default();
 
-        for (line, new) in lines.iter().zip(event.content.lines.iter()) {
+        let continuation = self.continuation_prefix();
+
+        for (index, (line, new)) in
+            lines.iter().zip(event.content.lines.iter()).enumerate()
+        {
             let data = LineData {
                 // Our prefixes always come with a \t character, but when we
                 // replace stuff we're able to replace the prefix and the
                 // message separately, so trim the whitespace in the prefix.
-                prefix: Some(event.prefix.trim_end()),
+                prefix: Some(match &continuation {
+                    Some(mark) if index > 0 => mark.as_str(),
+                    _ => event.prefix.trim_end(),
+                }),
                 message: Some(&new.message),
                 ..Default::default()
             };
@@ -454,8 +483,14 @@ impl RoomBuffer {
                 }
             }
             Ordering::Less => {
-                for line in &event.content.lines[lines.len()..] {
-                    let message = format!("{}{}", &event.prefix, &line.message);
+                for (index, line) in
+                    event.content.lines.iter().enumerate().skip(lines.len())
+                {
+                    let message = format!(
+                        "{}{}",
+                        line_prefix(event, index, continuation.as_deref()),
+                        &line.message
+                    );
                     let tags: Vec<&str> =
                         line.tags.iter().map(|t| t.as_str()).collect();
                     buffer.print_date_tags(date, &tags, &message)
@@ -1039,17 +1074,39 @@ impl RoomBuffer {
         let buffer = self.buffer_handle();
 
         if let Ok(buffer) = buffer.upgrade() {
-            print_rendered_event_to_buffer(&buffer, &rendered);
+            print_rendered_event_to_buffer(
+                &buffer,
+                &rendered,
+                self.continuation_prefix().as_deref(),
+            );
         }
+    }
+}
+
+/// The prefix, tab included, for line `index` of `rendered`. Lines after
+/// the first get `continuation` if there is one.
+fn line_prefix<'a>(
+    rendered: &'a RenderedEvent,
+    index: usize,
+    continuation: Option<&str>,
+) -> Cow<'a, str> {
+    match continuation {
+        Some(mark) if index > 0 => Cow::from(format!("{mark}\t")),
+        _ => Cow::from(rendered.prefix.as_str()),
     }
 }
 
 pub fn print_rendered_event_to_buffer(
     buffer: &Buffer,
     rendered: &RenderedEvent,
+    continuation: Option<&str>,
 ) {
-    for line in &rendered.content.lines {
-        let message = format!("{}{}", &rendered.prefix, &line.message);
+    for (index, line) in rendered.content.lines.iter().enumerate() {
+        let message = format!(
+            "{}{}",
+            line_prefix(rendered, index, continuation),
+            &line.message
+        );
         let tags: Vec<&str> = line.tags.iter().map(|t| t.as_str()).collect();
         buffer.print_date_tags(rendered.message_timestamp, &tags, &message)
     }
