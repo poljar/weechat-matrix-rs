@@ -24,6 +24,7 @@ pub struct Completions {
     room_members: CompletionHook,
     media: CompletionHook,
     nicks: CompletionHook,
+    emojis: CompletionHook,
 }
 
 impl Completions {
@@ -37,6 +38,7 @@ impl Completions {
             room_members: RoomMembersCompletion::create()?,
             media: MediaCompletion::create(servers.clone())?,
             nicks: NicksCompletion::create(servers)?,
+            emojis: EmojisCompletion::create()?,
         })
     }
 }
@@ -82,6 +84,64 @@ impl CompletionCallback for BufferShortNamesCompletion {
             );
         }
 
+        Ok(())
+    }
+}
+
+struct EmojisCompletion;
+
+impl EmojisCompletion {
+    fn create() -> Result<CompletionHook, ()> {
+        CompletionHook::new(
+            "matrix_emojis",
+            "Completion for emoji shortcodes, e.g. after + or - for reactions",
+            EmojisCompletion,
+        )
+    }
+}
+
+/// The part of `word` before the emoji name, e.g. "3+:" for "3+:smi", if
+/// `word` is an emoji shortcode being typed.
+fn emoji_completion_prefix(word: &str) -> Option<&str> {
+    let after_digits = word.trim_start_matches(|c: char| c.is_ascii_digit());
+    let after_change = after_digits
+        .strip_prefix(['+', '-'])
+        .unwrap_or(after_digits);
+    if after_change.len() < after_digits.len() || after_digits.len() == word.len() {
+        let name = after_change.strip_prefix(':')?;
+        if name.contains(':') {
+            return None;
+        }
+        Some(&word[..word.len() - name.len()])
+    } else {
+        None
+    }
+}
+
+impl CompletionCallback for EmojisCompletion {
+    fn callback(
+        &mut self,
+        _weechat: &Weechat,
+        _buffer: &Buffer,
+        _completion_name: Cow<str>,
+        completion: &Completion,
+    ) -> Result<(), ()> {
+        let Some(base_word) = completion.base_word() else {
+            return Ok(());
+        };
+        let Some(prefix) = emoji_completion_prefix(&base_word) else {
+            return Ok(());
+        };
+
+        for emoji in emojis::iter() {
+            for shortcode in emoji.shortcodes() {
+                completion.add_with_options(
+                    &format!("{prefix}{shortcode}:"),
+                    false,
+                    CompletionPosition::Sorted,
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -357,6 +417,17 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn emoji_completion_prefix_forms() {
+        use super::emoji_completion_prefix;
+        assert_eq!(emoji_completion_prefix(":smi"), Some(":"));
+        assert_eq!(emoji_completion_prefix("+:smi"), Some("+:"));
+        assert_eq!(emoji_completion_prefix("3-:"), Some("3-:"));
+        assert_eq!(emoji_completion_prefix("smile"), None);
+        assert_eq!(emoji_completion_prefix("3:smi"), None);
+        assert_eq!(emoji_completion_prefix(":smile:x"), None);
+    }
+
     use super::*;
 
     #[test]
