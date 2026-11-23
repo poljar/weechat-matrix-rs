@@ -328,7 +328,7 @@ first match is replaced, and flags go after the last slash:
        s/(\w+) \1/$1/      backreference in the pattern
 
 With `matrix-rust.input.edit_regex` off, the pattern and replacement are
-literal text; `\\/` and the flags still work.
+literal text; `\/` and the flags still work.
 
 Flags are `g`, `i`, `m`, `s` and `x`. Lookahead and lookbehind work. The
 engine is the Rust `fancy-regex` crate, not PCRE itself, so some Perl
