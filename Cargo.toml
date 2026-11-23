@@ -54,6 +54,7 @@ image = { version = "*", default-features = false, features = ["jpeg"] }
 mime = "0.3"
 mime_guess = "2.0"
 sha2 = "0.10"
+fancy-regex = "0.20.2"
 
 [dependencies.weechat]
 git = "https://github.com/poljar/rust-weechat"
