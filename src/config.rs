@@ -156,6 +156,22 @@ config!(
             // Default value.
             "%d",
         },
+
+        multiline_nick_once: bool {
+            // Description.
+            "Show the sender only on the first line of a multi-line \
+             message; the other lines get look.multiline_prefix",
+            // Default value.
+            true,
+        },
+
+        multiline_prefix: String {
+            // Description.
+            "Prefix for the lines after the first of a multi-line message \
+             when look.multiline_nick_once is on; empty for a blank prefix",
+            // Default value.
+            "",
+        },
     },
 
     Section color {

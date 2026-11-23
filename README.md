@@ -307,6 +307,15 @@ the nicklist, `/names`, and nick completion, set `matrix-rust.look.nick_format`:
 Supported placeholders are `%d` for display name, `%m` for full MXID, `%u` for
 MXID localpart, and `%h` for homeserver.
 
+A multi-line message shows its sender on the first line only, so it can be
+told apart from several one-line messages. The other lines get a blank
+prefix, or the text in `matrix-rust.look.multiline_prefix`:
+
+       /set matrix-rust.look.multiline_prefix "."
+
+Set `matrix-rust.look.multiline_nick_once` to `off` to repeat the sender on
+every line.
+
 # Helpful Commands
 
 `/help matrix` will print information about the `/matrix` command.

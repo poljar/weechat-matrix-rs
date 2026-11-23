@@ -748,7 +748,7 @@ impl RoomHandle {
     ) -> Self {
         let room = Rc::new(RefCell::new(Some(room)));
         let sdk_room = active_room(&room);
-        let buffer = RoomBuffer::new(room.clone(), runtime.clone());
+        let buffer = RoomBuffer::new(room.clone(), runtime.clone(), config.clone());
         let members = Members::new(
             room.clone(),
             runtime.clone(),
@@ -1837,7 +1837,11 @@ impl MatrixRoom {
             if let Some(rendered) =
                 self.thread_root_renders.borrow().get(thread_root)
             {
-                print_rendered_event_to_buffer(&buffer, rendered);
+                print_rendered_event_to_buffer(
+                    &buffer,
+                    rendered,
+                    self.buffer.continuation_prefix().as_deref(),
+                );
             }
         }
 
@@ -1864,7 +1868,11 @@ impl MatrixRoom {
             thread_root.and_then(|root| self.get_or_create_thread_buffer(root))
         {
             if let Ok(buffer) = handle.upgrade() {
-                print_rendered_event_to_buffer(&buffer, &rendered);
+                print_rendered_event_to_buffer(
+                    &buffer,
+                    &rendered,
+                    self.buffer.continuation_prefix().as_deref(),
+                );
             } else {
                 self.buffer.print_rendered_event(rendered);
             }
